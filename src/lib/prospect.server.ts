@@ -297,6 +297,7 @@ export async function prospectar(
   municipio: string,
   uf: string,
   onEvent?: (evt: ProgressEvent) => void,
+  ibgeId?: number,
 ): Promise<ProspectResult> {
   const emit: Emit = (level, etapa, message, data) => {
     onEvent?.({
@@ -318,8 +319,42 @@ export async function prospectar(
 
   const fc = getFirecrawl();
 
+  // Etapa paralela: Querido Diário (só roda se temos o código IBGE).
+  let diarioExcerpts: DiarioExcerpt[] = [];
+  let diarioPromise: Promise<void> = Promise.resolve();
+  if (ibgeId) {
+    emit("info", "diario", `Consultando Querido Diário (cód. IBGE ${ibgeId}) em paralelo...`);
+    diarioPromise = (async () => {
+      const r = await buscarDiario(
+        ibgeId,
+        '"secretário de educação" OR "secretária de educação" OR "secretario municipal de educação"',
+        { size: 5, sinceDays: 730 },
+      );
+      if (!r.ok) {
+        emit("warn", "diario", `Diário Oficial indisponível (${r.reason})`);
+        return;
+      }
+      if (r.excerpts.length === 0) {
+        emit("info", "diario", "Sem menções recentes ao Secretário de Educação no diário municipal");
+        return;
+      }
+      diarioExcerpts = r.excerpts;
+      emit(
+        "success",
+        "diario",
+        `Encontrei ${r.excerpts.length} trecho(s) no diário oficial mencionando a Educação`,
+        { excerpts: r.excerpts.slice(0, 3) },
+      );
+    })();
+  } else {
+    emit("info", "diario", "Sem código IBGE — pulando consulta ao Querido Diário");
+  }
+
   // Etapa 1: Educação
   emit("info", "educacao", "Etapa 1 de 3 — procurando a Secretaria de Educação");
+  // Aguarda o diário terminar (em paralelo com a busca acima já tendo sido despachada).
+  await diarioPromise;
+  const diarioBlock = formatExcerptsForPrompt(diarioExcerpts);
   const e1 = await runEtapa(
     fc,
     `prefeitura municipal ${municipio} ${uf} secretaria de educação contato secretário`,
@@ -328,6 +363,7 @@ export async function prospectar(
     municipio,
     uf,
     emit,
+    diarioBlock || undefined,
   );
   if (e1 && hasUsefulContact(e1.extracted)) {
     emit("success", "educacao", "Contato direto da Educação encontrado — parando aqui");
@@ -341,6 +377,7 @@ export async function prospectar(
       fonte: fonteLabel("educacao"),
       fonteUrl: e1.url,
       contexto: e1.extracted.contexto,
+      nomeFonte: e1.extracted.secretario && diarioExcerpts.length > 0 ? "diario" : "site",
     };
     onEvent?.({ kind: "final", result, ts: Date.now() });
     return result;
