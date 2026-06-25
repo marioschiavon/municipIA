@@ -287,7 +287,15 @@ async function extractWithAI(
         ? "Contato institucional GERAL da prefeitura (ouvidoria, fale-conosco, secretaria geral, telefone/e-mail principal)."
         : "Contato do Gabinete do Prefeito ou do próprio Prefeito (último recurso).";
 
-  const hints = extractContactsRegex(markdown);
+  const hintsMd = extractContactsRegex(markdown);
+  const hintsExtra = extraMarkdown ? extractContactsRegex(extraMarkdown) : { emails: [], telefones: [] };
+  const hints = {
+    emails: Array.from(new Set([...hintsExtra.emails, ...hintsMd.emails])),
+    telefones: Array.from(new Set([...hintsExtra.telefones, ...hintsMd.telefones])),
+  };
+  if (extraMarkdown && (hintsExtra.emails.length || hintsExtra.telefones.length)) {
+    emit("info", etapa, `Snippets do Google já trouxeram ${hintsExtra.emails.length} e-mail(s) e ${hintsExtra.telefones.length} tel por regex`, hintsExtra);
+  }
   const hintsBlock =
     hints.emails.length || hints.telefones.length
       ? `\nPISTAS pré-extraídas por regex (use SOMENTE se também aparecerem no conteúdo abaixo, e descarte falsos positivos):\n  e-mails: ${hints.emails.join(", ") || "—"}\n  telefones: ${hints.telefones.join(", ") || "—"}\n`
