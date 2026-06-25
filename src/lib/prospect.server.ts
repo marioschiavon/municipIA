@@ -1,5 +1,5 @@
 import Firecrawl from "@mendable/firecrawl-js";
-import { generateText, Output } from "ai";
+import { generateObject } from "ai";
 import { z } from "zod";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 import { fetchHtml, htmlToMarkdown, extractContactsRegex } from "./scraper.server";
@@ -12,24 +12,33 @@ import type {
 
 export type { Hierarquia, ProspectResult };
 
+const ConfiancaEnum = z.enum(["alta", "media", "baixa"]);
+const ConfiancaLoose = z
+  .union([ConfiancaEnum, z.string()])
+  .transform((v) => {
+    const s = String(v).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    if (["alta", "high", "alto"].includes(s)) return "alta" as const;
+    if (["baixa", "low", "baixo"].includes(s)) return "baixa" as const;
+    return "media" as const;
+  });
+
 const ExtractSchema = z.object({
-  secretario: z
-    .string()
-    .nullable()
-    .describe("Nome completo do(a) secretário(a) de Educação, se aparecer literalmente; senão null"),
-  cargo: z.string().nullable().describe("Cargo/título exato encontrado; null se não encontrado"),
-  emails: z.array(z.string()).describe("E-mails de contato encontrados (literalmente no texto)"),
-  telefones: z
-    .array(z.string())
-    .describe("Telefones de contato encontrados (literalmente, formato brasileiro)"),
-  contexto: z
-    .string()
-    .nullable()
-    .describe("1 frase explicando o que foi achado (ex.: 'E-mail institucional da SEMED')"),
-  confianca: z.enum(["alta", "media", "baixa"]).describe("Quão confiante você está nos dados"),
+  secretario: z.string().nullable().optional().default(null),
+  cargo: z.string().nullable().optional().default(null),
+  emails: z.array(z.string()).optional().default([]),
+  telefones: z.array(z.string()).optional().default([]),
+  contexto: z.string().nullable().optional().default(null),
+  confianca: ConfiancaLoose.default("baixa"),
 });
 
-type Extracted = z.infer<typeof ExtractSchema>;
+type Extracted = {
+  secretario: string | null;
+  cargo: string | null;
+  emails: string[];
+  telefones: string[];
+  contexto: string | null;
+  confianca: "alta" | "media" | "baixa";
+};
 
 type EtapaTag = Hierarquia | "init" | "fallback" | "final";
 
