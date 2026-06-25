@@ -495,16 +495,21 @@ export async function prospectar(
   const contentA = inlineMdA || mdSiteEducacao || "";
   const combinedA = [snippetsA, contentA].filter(Boolean).join("\n\n");
   if (contentA) mdSiteEducacao = contentA;
+  const onlySnippets = !contentA && !!snippetsA;
+  if (onlySnippets) {
+    emit("info", "nome", "Sem markdown da página — vou extrair nome/contatos direto dos snippets do Google");
+  }
 
   // Espera o diário terminar antes de montar prompt
   await diarioPromise;
   const diarioBlock = formatExcerptsForPrompt(diarioExcerpts);
 
   // A3: tenta extração COMPLETA (snippets + markdown) — atalho feliz
-  if (combinedA && urlSiteEducacao) {
+  if (combinedA) {
+    const urlForExtract = urlSiteEducacao ?? topA?.url ?? "(snippets do Google)";
     const full = await extractWithAI(
       combinedA,
-      urlSiteEducacao,
+      urlForExtract,
       "educacao",
       municipio,
       uf,
@@ -514,10 +519,17 @@ export async function prospectar(
     );
     if (full?.secretario && !nomeSecretario) {
       nomeSecretario = full.secretario;
-      nomeFonte = inlineMdA ? "site" : contentA === inlineMdA ? "site" : "site";
+      nomeFonte = onlySnippets ? "snippet" : "site";
     }
     if (full && hasUsefulContact(full) && full.secretario) {
-      emit("success", "educacao", "Atalho feliz: nome + contato direto (snippets + site oficial)");
+      const viaSnippet = onlySnippets;
+      emit(
+        "success",
+        "educacao",
+        viaSnippet
+          ? "Atalho feliz: nome + contato extraídos direto dos snippets do Google"
+          : "Atalho feliz: nome + contato direto (snippets + site oficial)",
+      );
       const result: ProspectResult = {
         status: "found",
         hierarquia: "educacao",
@@ -525,10 +537,10 @@ export async function prospectar(
         cargo: full.cargo,
         emails: full.emails,
         telefones: full.telefones,
-        fonte: fonteLabel("educacao"),
+        fonte: viaSnippet ? "Snippet do Google" : fonteLabel("educacao"),
         fonteUrl: urlSiteEducacao,
-        contexto: full.contexto,
-        nomeFonte,
+        contexto: full.contexto ?? (viaSnippet ? "Dados extraídos do resumo dos resultados do Google." : null),
+        nomeFonte: viaSnippet ? "snippet" : nomeFonte,
       };
       onEvent?.({ kind: "final", result, ts: Date.now() });
       return result;
