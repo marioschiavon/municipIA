@@ -287,7 +287,15 @@ async function extractWithAI(
         ? "Contato institucional GERAL da prefeitura (ouvidoria, fale-conosco, secretaria geral, telefone/e-mail principal)."
         : "Contato do Gabinete do Prefeito ou do próprio Prefeito (último recurso).";
 
-  const hints = extractContactsRegex(markdown);
+  const hintsMd = extractContactsRegex(markdown);
+  const hintsExtra = extraMarkdown ? extractContactsRegex(extraMarkdown) : { emails: [], telefones: [] };
+  const hints = {
+    emails: Array.from(new Set([...hintsExtra.emails, ...hintsMd.emails])),
+    telefones: Array.from(new Set([...hintsExtra.telefones, ...hintsMd.telefones])),
+  };
+  if (extraMarkdown && (hintsExtra.emails.length || hintsExtra.telefones.length)) {
+    emit("info", etapa, `Snippets do Google já trouxeram ${hintsExtra.emails.length} e-mail(s) e ${hintsExtra.telefones.length} tel por regex`, hintsExtra);
+  }
   const hintsBlock =
     hints.emails.length || hints.telefones.length
       ? `\nPISTAS pré-extraídas por regex (use SOMENTE se também aparecerem no conteúdo abaixo, e descarte falsos positivos):\n  e-mails: ${hints.emails.join(", ") || "—"}\n  telefones: ${hints.telefones.join(", ") || "—"}\n`
@@ -487,16 +495,21 @@ export async function prospectar(
   const contentA = inlineMdA || mdSiteEducacao || "";
   const combinedA = [snippetsA, contentA].filter(Boolean).join("\n\n");
   if (contentA) mdSiteEducacao = contentA;
+  const onlySnippets = !contentA && !!snippetsA;
+  if (onlySnippets) {
+    emit("info", "nome", "Sem markdown da página — vou extrair nome/contatos direto dos snippets do Google");
+  }
 
   // Espera o diário terminar antes de montar prompt
   await diarioPromise;
   const diarioBlock = formatExcerptsForPrompt(diarioExcerpts);
 
   // A3: tenta extração COMPLETA (snippets + markdown) — atalho feliz
-  if (combinedA && urlSiteEducacao) {
+  if (combinedA) {
+    const urlForExtract = urlSiteEducacao ?? topA?.url ?? "(snippets do Google)";
     const full = await extractWithAI(
       combinedA,
-      urlSiteEducacao,
+      urlForExtract,
       "educacao",
       municipio,
       uf,
@@ -506,10 +519,17 @@ export async function prospectar(
     );
     if (full?.secretario && !nomeSecretario) {
       nomeSecretario = full.secretario;
-      nomeFonte = inlineMdA ? "site" : contentA === inlineMdA ? "site" : "site";
+      nomeFonte = onlySnippets ? "snippet" : "site";
     }
     if (full && hasUsefulContact(full) && full.secretario) {
-      emit("success", "educacao", "Atalho feliz: nome + contato direto (snippets + site oficial)");
+      const viaSnippet = onlySnippets;
+      emit(
+        "success",
+        "educacao",
+        viaSnippet
+          ? "Atalho feliz: nome + contato extraídos direto dos snippets do Google"
+          : "Atalho feliz: nome + contato direto (snippets + site oficial)",
+      );
       const result: ProspectResult = {
         status: "found",
         hierarquia: "educacao",
@@ -517,10 +537,10 @@ export async function prospectar(
         cargo: full.cargo,
         emails: full.emails,
         telefones: full.telefones,
-        fonte: fonteLabel("educacao"),
+        fonte: viaSnippet ? "Snippet do Google" : fonteLabel("educacao"),
         fonteUrl: urlSiteEducacao,
-        contexto: full.contexto,
-        nomeFonte,
+        contexto: full.contexto ?? (viaSnippet ? "Dados extraídos do resumo dos resultados do Google." : null),
+        nomeFonte: viaSnippet ? "snippet" : nomeFonte,
       };
       onEvent?.({ kind: "final", result, ts: Date.now() });
       return result;
@@ -533,10 +553,11 @@ export async function prospectar(
   }
 
   // Se ainda não temos nome E temos conteúdo, faz extração focada em nome
-  if (!nomeSecretario && combinedA && urlSiteEducacao) {
+  if (!nomeSecretario && combinedA) {
+    const urlForName = urlSiteEducacao ?? topA?.url ?? "(snippets do Google)";
     const n = await extractNomeWithAI(
       combinedA,
-      urlSiteEducacao,
+      urlForName,
       municipio,
       uf,
       diarioBlock,
@@ -544,7 +565,7 @@ export async function prospectar(
     );
     if (n?.secretario) {
       nomeSecretario = n.secretario;
-      nomeFonte = inlineMdA && !mdSiteEducacao ? "snippet" : "site";
+      nomeFonte = onlySnippets ? "snippet" : "site";
     }
   }
 
@@ -581,7 +602,14 @@ export async function prospectar(
         nomeSecretario,
       );
       if (ext && hasUsefulContact(ext)) {
-        emit("success", "contato-secretario", "Achei contato vinculado ao nome — finalizando");
+        const viaSnippetB = !inlineMd;
+        emit(
+          "success",
+          "contato-secretario",
+          viaSnippetB
+            ? "Achei contato vinculado ao nome direto no snippet do Google — finalizando"
+            : "Achei contato vinculado ao nome — finalizando",
+        );
         const result: ProspectResult = {
           status: "found",
           hierarquia: "educacao",
@@ -589,10 +617,14 @@ export async function prospectar(
           cargo: ext.cargo,
           emails: ext.emails,
           telefones: ext.telefones,
-          fonte: fonteLabel("educacao"),
+          fonte: viaSnippetB ? "Snippet do Google" : fonteLabel("educacao"),
           fonteUrl: u,
-          contexto: ext.contexto ?? `Contato encontrado em busca dirigida pelo nome ("${nomeSecretario}").`,
-          nomeFonte,
+          contexto:
+            ext.contexto ??
+            (viaSnippetB
+              ? `Contato extraído do resumo do Google em busca dirigida ("${nomeSecretario}").`
+              : `Contato encontrado em busca dirigida pelo nome ("${nomeSecretario}").`),
+          nomeFonte: viaSnippetB && !nomeFonte ? "snippet" : nomeFonte,
         };
         onEvent?.({ kind: "final", result, ts: Date.now() });
         return result;
