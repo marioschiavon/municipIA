@@ -30,12 +30,15 @@ const ExtractSchema = z.object({
 
 type Extracted = z.infer<typeof ExtractSchema>;
 
+type EtapaTag = Hierarquia | "init" | "fallback" | "final";
+
 type Emit = (
   level: ProgressLevel,
-  etapa: ProgressEvent extends { etapa: infer E } ? E : never,
+  etapa: EtapaTag,
   message: string,
   data?: unknown,
 ) => void;
+
 
 function getFirecrawl() {
   const key = process.env.FIRECRAWL_API_KEY;
