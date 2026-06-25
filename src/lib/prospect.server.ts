@@ -602,7 +602,14 @@ export async function prospectar(
         nomeSecretario,
       );
       if (ext && hasUsefulContact(ext)) {
-        emit("success", "contato-secretario", "Achei contato vinculado ao nome — finalizando");
+        const viaSnippetB = !inlineMd;
+        emit(
+          "success",
+          "contato-secretario",
+          viaSnippetB
+            ? "Achei contato vinculado ao nome direto no snippet do Google — finalizando"
+            : "Achei contato vinculado ao nome — finalizando",
+        );
         const result: ProspectResult = {
           status: "found",
           hierarquia: "educacao",
@@ -610,10 +617,14 @@ export async function prospectar(
           cargo: ext.cargo,
           emails: ext.emails,
           telefones: ext.telefones,
-          fonte: fonteLabel("educacao"),
+          fonte: viaSnippetB ? "Snippet do Google" : fonteLabel("educacao"),
           fonteUrl: u,
-          contexto: ext.contexto ?? `Contato encontrado em busca dirigida pelo nome ("${nomeSecretario}").`,
-          nomeFonte,
+          contexto:
+            ext.contexto ??
+            (viaSnippetB
+              ? `Contato extraído do resumo do Google em busca dirigida ("${nomeSecretario}").`
+              : `Contato encontrado em busca dirigida pelo nome ("${nomeSecretario}").`),
+          nomeFonte: viaSnippetB && !nomeFonte ? "snippet" : nomeFonte,
         };
         onEvent?.({ kind: "final", result, ts: Date.now() });
         return result;
