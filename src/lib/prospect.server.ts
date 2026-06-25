@@ -41,7 +41,7 @@ type Extracted = {
   confianca: "alta" | "media" | "baixa";
 };
 
-type EtapaTag = Hierarquia | "init" | "fallback" | "final";
+type EtapaTag = Hierarquia | "init" | "fallback" | "final" | "diario";
 
 type Emit = (
   level: ProgressLevel,
