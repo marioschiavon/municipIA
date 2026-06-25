@@ -174,6 +174,12 @@ async function extractWithAI(
         ? "Contato institucional GERAL da prefeitura (ouvidoria, fale-conosco, secretaria geral, telefone/e-mail principal)."
         : "Contato do Gabinete do Prefeito ou do próprio Prefeito (último recurso).";
 
+  const hints = extractContactsRegex(markdown);
+  const hintsBlock =
+    hints.emails.length || hints.telefones.length
+      ? `\nPISTAS pré-extraídas por regex (use SOMENTE se também aparecerem no conteúdo abaixo, e descarte falsos positivos):\n  e-mails: ${hints.emails.join(", ") || "—"}\n  telefones: ${hints.telefones.join(", ") || "—"}\n`
+      : "";
+
   const prompt = `Você é um analista que extrai contatos institucionais de páginas oficiais da prefeitura de ${municipio}/${uf}.
 
 ALVO PRINCIPAL DO PROJETO:
@@ -196,12 +202,14 @@ REGRAS RÍGIDAS:
 - Se a página claramente não traz nada útil para esta etapa, devolva arrays vazios e confianca = "baixa".
 
 URL analisada: ${url}
-
+${hintsBlock}
 Conteúdo (markdown):
 """
 ${markdown}
 """`;
-  emit("info", etapa, "Pedindo para a IA extrair os contatos desta página...");
+  emit("info", etapa, "Pedindo para a IA extrair os contatos desta página...", {
+    pistas: hints,
+  });
   try {
     const { experimental_output } = await generateText({
       model: provider("google/gemini-3-flash-preview"),
