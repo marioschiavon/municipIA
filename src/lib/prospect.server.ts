@@ -281,12 +281,14 @@ async function runEtapa(
   municipio: string,
   uf: string,
   emit: Emit,
+  extraMarkdown?: string,
 ): Promise<{ extracted: Extracted; url: string } | null> {
   const url = await searchFirstUrl(fc, query, prefer, emit, etapa);
   if (!url) return null;
   const md = await scrapeMarkdown(fc, url, emit, etapa);
   if (!md) return null;
-  const extracted = await extractWithAI(md, url, etapa, municipio, uf, emit);
+  const fullMd = extraMarkdown ? `${extraMarkdown}\n\n### Conteúdo do site\n${md}` : md;
+  const extracted = await extractWithAI(fullMd, url, etapa, municipio, uf, emit);
   if (!extracted) return null;
   return { extracted, url };
 }
