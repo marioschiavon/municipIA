@@ -1,8 +1,8 @@
 // Cliente do Querido Diário (Open Knowledge Brasil).
 // API pública, sem chave. Indexa diários oficiais municipais com OCR.
-// Docs: https://queridodiario.ok.org.br/api/docs
+// Docs: https://api.queridodiario.ok.org.br/docs
 
-const BASE = "https://queridodiario.ok.org.br/api/gazettes";
+const BASE = "https://api.queridodiario.ok.org.br/gazettes";
 
 export type DiarioExcerpt = {
   data: string;
