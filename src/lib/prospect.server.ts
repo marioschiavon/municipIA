@@ -497,7 +497,7 @@ export async function prospectar(
     emit(
       "info",
       "contato-secretario",
-      `Estágio B — buscando contatos de "${nomeSecretario}" (${nomeFonte === "diario" ? "via Diário Oficial" : "via site oficial"})`,
+      `Estágio B — buscando contatos de "${nomeSecretario}" (${(nomeFonte as string | null) === "diario" ? "via Diário Oficial" : "via site oficial"})`,
     );
     const queries = [
       `"${nomeSecretario}" secretário educação ${municipio} ${uf} e-mail telefone`,
@@ -644,7 +644,7 @@ export async function prospectar(
       cargo: null,
       emails: [],
       telefones: [],
-      fonte: nomeFonte === "diario" ? "Querido Diário" : "Site oficial",
+      fonte: (nomeFonte as string | null) === "diario" ? "Querido Diário" : "Site oficial",
       fonteUrl: urlSiteEducacao,
       contexto: "Nome identificado, mas não localizamos e-mail/telefone associados.",
       nomeFonte,
