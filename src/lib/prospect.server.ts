@@ -415,16 +415,28 @@ function fonteLabel(etapa: Hierarquia) {
       : "Gabinete do Prefeito (último recurso)";
 }
 
-/** Tenta extrair um nome a partir dos trechos do diário oficial sem chamar IA. */
-function nomeDoDiario(excerpts: DiarioExcerpt[]): string | null {
+/** Tenta extrair um nome a partir dos trechos do diário oficial sem chamar IA.
+ *  Excerpts já vêm ordenados do mais novo para o mais antigo. */
+function nomeDoDiario(
+  excerpts: DiarioExcerpt[],
+): { nome: string; data: string; ageDays: number; conflito?: string } | null {
   if (excerpts.length === 0) return null;
   const re =
     /secret[áa]ri[oa](?:\s+municipal)?\s+(?:de\s+)?educa[çc][ãa]o[^.,;:\n]{0,30}?[,:\-–]\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ]+(?:\s+(?:de|da|do|dos|das|e)\s+|\s+)[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ]+){0,3})/i;
+  let escolhido: { nome: string; data: string; ageDays: number } | null = null;
+  let anterior: string | null = null;
   for (const ex of excerpts) {
     const m = ex.trecho.match(re);
-    if (m) return m[1].trim();
+    if (!m) continue;
+    const nome = m[1].trim();
+    if (!escolhido) {
+      escolhido = { nome, data: ex.data, ageDays: ex.ageDays };
+    } else if (nome.toLowerCase() !== escolhido.nome.toLowerCase() && !anterior) {
+      anterior = nome;
+    }
   }
-  return null;
+  if (!escolhido) return null;
+  return { ...escolhido, conflito: anterior ?? undefined };
 }
 
 export async function prospectar(
