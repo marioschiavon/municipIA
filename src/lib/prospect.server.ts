@@ -84,41 +84,78 @@ function shortHost(url: string): string {
   }
 }
 
-async function searchFirstUrl(
+type SearchCandidate = {
+  url: string;
+  title: string;
+  description: string;
+  markdown: string | null;
+};
+
+function isBlockedHost(url: string): boolean {
+  return /(?:instagram\.com|facebook\.com|youtube\.com|tiktok\.com|twitter\.com|x\.com)/i.test(url);
+}
+
+async function searchCandidates(
   fc: Firecrawl,
   query: string,
-  prefer: (url: string) => boolean,
   emit: Emit,
   etapa: EtapaTag,
-): Promise<string | null> {
+  withScrape = true,
+): Promise<SearchCandidate[]> {
   emit("info", etapa, `Pesquisando no Google via Firecrawl: "${query}"`);
   try {
-    const res = await fc.search(query, { limit: 6 });
-    const web = (res as { web?: Array<{ url: string; title?: string }> }).web ?? [];
-    emit("info", etapa, `Recebi ${web.length} resultado(s) do buscador`, {
-      candidatos: web.map((r) => r.url),
+    const res = withScrape
+      ? await fc.search(query, {
+          limit: 5,
+          scrapeOptions: { formats: ["markdown"], onlyMainContent: true },
+        })
+      : await fc.search(query, { limit: 5 });
+    const web =
+      (res as { web?: Array<{ url: string; title?: string; description?: string; markdown?: string }> })
+        .web ?? [];
+    const cands: SearchCandidate[] = web
+      .filter((r) => r.url && !isBlockedHost(r.url))
+      .map((r) => ({
+        url: r.url,
+        title: r.title ?? "",
+        description: r.description ?? "",
+        markdown: r.markdown && r.markdown.length > 80 ? r.markdown.slice(0, 6000) : null,
+      }));
+    emit("info", etapa, `Recebi ${cands.length} candidato(s) úteis do buscador`, {
+      candidatos: cands.map((c) => ({
+        url: c.url,
+        snippet: `${c.title} — ${c.description}`.slice(0, 200),
+        temMarkdown: !!c.markdown,
+      })),
     });
-    if (web.length === 0) {
-      emit("warn", etapa, "Nenhum resultado retornado pelo buscador");
-      return null;
+    if (cands.length === 0) {
+      emit("warn", etapa, "Nenhum resultado utilizável retornado pelo buscador");
     }
-    const preferred = web.find((r) => prefer(r.url));
-    const chosen = (preferred ?? web[0]).url ?? null;
-    if (chosen) {
-      emit(
-        "success",
-        etapa,
-        preferred
-          ? `Escolhi um site .gov.br: ${shortHost(chosen)}`
-          : `Sem .gov.br preferencial, vou tentar: ${shortHost(chosen)}`,
-        { url: chosen },
-      );
-    }
-    return chosen;
+    return cands;
   } catch (e) {
     emit("error", etapa, "Erro na busca do Firecrawl", String(e));
-    return null;
+    return [];
   }
+}
+
+function snippetsBlock(cands: SearchCandidate[]): string {
+  if (cands.length === 0) return "";
+  const lines = cands.map(
+    (c, i) =>
+      `[${i + 1}] ${c.title}\n    URL: ${c.url}\n    Resumo: ${c.description || "(sem resumo)"}`,
+  );
+  return `### Resultados do Google (snippets — frequentemente já trazem nome/contato)\n${lines.join("\n")}\n`;
+}
+
+function preferGov(cands: SearchCandidate[], extra?: (u: string) => boolean): SearchCandidate[] {
+  const score = (c: SearchCandidate) => {
+    let s = 0;
+    if (/\.gov\.br/i.test(c.url)) s += 10;
+    if (extra && extra(c.url)) s += 5;
+    if (c.markdown) s += 2;
+    return -s; // sort ascending = best first when negated
+  };
+  return [...cands].sort((a, b) => score(a) - score(b));
 }
 
 async function scrapeMarkdown(
