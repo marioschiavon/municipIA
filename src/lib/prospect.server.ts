@@ -864,6 +864,7 @@ export async function prospectar(
       fonteUrl: urlSiteEducacao,
       contexto: "Nome identificado, mas não localizamos e-mail/telefone associados.",
       nomeFonte,
+      dataReferencia: dataReferenciaGlobal,
     };
     onEvent?.({ kind: "final", result, ts: Date.now() });
     return result;
