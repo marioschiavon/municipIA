@@ -697,7 +697,7 @@ export async function prospectar(
       `"${nomeSecretario}" secretaria municipal educação ${municipio} contato`,
     ];
     for (const q of queries) {
-      const cands = await searchCandidates(fc, q, emit, "contato-secretario");
+      const cands = await searchCandidates(fc, q, emit, "contato-secretario", true, "qdr:y");
       const ranked = preferGov(cands);
       if (ranked.length === 0) continue;
       const inlineMd = ranked
@@ -741,6 +741,7 @@ export async function prospectar(
               ? `Contato extraído do resumo do Google em busca dirigida ("${nomeSecretario}").`
               : `Contato encontrado em busca dirigida pelo nome ("${nomeSecretario}").`),
           nomeFonte: viaSnippetB && !nomeFonte ? "snippet" : nomeFonte,
+          dataReferencia: ext.dataReferencia ?? dataReferenciaGlobal,
         };
         onEvent?.({ kind: "final", result, ts: Date.now() });
         return result;
