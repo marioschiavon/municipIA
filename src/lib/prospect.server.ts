@@ -1029,6 +1029,12 @@ export async function prospectar(
       }
     }
     if (!ext || !hasUsefulContact(ext)) return null;
+    // Correção 4: para cidades grandes, NÃO devolver parcial com emails vazios
+    // (anti-contam zerou tudo). Devolver null força o próximo fallback a tentar.
+    if (ext.emails.length === 0 && LARGE_MUNI_SLUGS.has(slug)) {
+      emit("warn", etapa, `Cidade grande (${slug}) + emails=[] após anti-contam — recusando parcial vazio, próximo fallback`);
+      return null;
+    }
     return {
       status: "partial",
       hierarquia: etapa,
