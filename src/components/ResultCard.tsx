@@ -234,6 +234,13 @@ export function ResultCard({ municipio, uf, state, slow }: Props) {
               value={result.telefones.join(", ")}
             />
           )}
+          {result.horarioAtendimento && (
+            <Field
+              icon={<Clock className="h-4 w-4" />}
+              label="Horário de atendimento"
+              value={result.horarioAtendimento}
+            />
+          )}
           {result.fonte && (
             <Field
               icon={<ExternalLink className="h-4 w-4" />}
