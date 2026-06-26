@@ -5,7 +5,9 @@ const Input = z.object({
   municipio: z.string().min(1),
   uf: z.string().length(2),
   ibgeId: z.number().int().positive().optional(),
+  useDiario: z.boolean().optional().default(false),
 });
+
 
 export const Route = createFileRoute("/api/prospect")({
   server: {
