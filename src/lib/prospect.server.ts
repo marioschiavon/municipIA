@@ -159,9 +159,18 @@ async function googleSearch(
     if (tbs) baseOpts.tbs = tbs;
     if (withScrape) baseOpts.scrapeOptions = { formats: ["markdown"], onlyMainContent: true };
     const res = await fc.search(query, baseOpts as Parameters<Firecrawl["search"]>[1]);
-    const web =
-      (res as { web?: Array<{ url: string; title?: string; description?: string; markdown?: string }> })
-        .web ?? [];
+    const resObj = res as { web?: Array<{ url: string; title?: string; description?: string; markdown?: string }> };
+    const hasWebProp = Object.prototype.hasOwnProperty.call(resObj, "web");
+    const web = resObj.web ?? [];
+    if (!hasWebProp || web.length === 0) {
+      let rawDump = "";
+      try {
+        rawDump = JSON.stringify(res).slice(0, 500);
+      } catch {
+        rawDump = String(res).slice(0, 500);
+      }
+      emit("warn", etapa, `Firecrawl search retornou vazio (hasWeb=${hasWebProp}, len=${web.length}) — payload bruto:`, { query, rawPreview: rawDump });
+    }
     const cands: SearchCandidate[] = web
       .filter((r) => r.url && !isBlockedHost(r.url))
       .map((r) => ({
