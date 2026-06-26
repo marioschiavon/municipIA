@@ -612,21 +612,36 @@ export async function prospectar(
   }
 
   if (snippetsNome) {
-    let nomeRes = await extractNomeWithAI(snippetsNome, topNome?.url ?? "(snippets)", municipio, uf, emit, {
+    const nomeRes = await extractNomeWithAI(snippetsNome, topNome?.url ?? "(snippets)", municipio, uf, emit, {
       diarioBlock,
     });
-    // Retry: se confiança baixa, tenta de novo com APENAS snippets de .gov.br
-    if (nomeRes && nomeRes.confianca === "baixa") {
-      const govOnly = rankedNome.filter((c) => /\.gov\.br/i.test(c.url));
-      if (govOnly.length > 0) {
-        const govSnippets = snippetsBlock(govOnly);
-        emit("info", "nome", `Confiança baixa — re-tentando só com ${govOnly.length} snippet(s) .gov.br`);
-        const retry = await extractNomeWithAI(govSnippets, govOnly[0].url, municipio, uf, emit, { diarioBlock });
-        if (retry?.secretario && retry.confianca !== "baixa") nomeRes = retry;
-        else if (retry?.secretario && !nomeRes.secretario) nomeRes = retry;
-      }
-    }
+
+    // ---- Promoção determinística da confiança (não depende da IA) ----
+    // Conta ocorrências literais do nome nos snippets do Google. Se aparecer em
+    // .gov.br do próprio município → "alta". Se aparecer em ≥2 snippets → "media".
+    // Só descarta se confiança ficar "baixa" E o nome não aparecer em nenhum snippet.
+    let confianca: "alta" | "media" | "baixa" = nomeRes?.confianca ?? "baixa";
+    let appearsCount = 0;
+    let appearsInOwnGov = false;
     if (nomeRes?.secretario) {
+      const nomeLow = nomeRes.secretario.toLowerCase().trim();
+      for (const c of rankedNome) {
+        const blob = `${c.title ?? ""} ${c.description ?? ""}`.toLowerCase();
+        if (!blob.includes(nomeLow)) continue;
+        appearsCount += 1;
+        const host = shortHost(c.url).toLowerCase();
+        if (/\.gov\.br$/.test(host) && host.includes(slug)) appearsInOwnGov = true;
+      }
+      if (appearsInOwnGov) confianca = "alta";
+      else if (appearsCount >= 2 && confianca === "baixa") confianca = "media";
+      emit("info", "nome", `Confiança ajustada: IA=${nomeRes.confianca} → ${confianca} (aparições=${appearsCount}, govPróprio=${appearsInOwnGov})`);
+    }
+
+    const aceitaNome = !!nomeRes?.secretario && (confianca !== "baixa" || appearsCount >= 1);
+    if (nomeRes?.secretario && !aceitaNome) {
+      emit("warn", "nome", `Descartando nome "${nomeRes.secretario}" — não aparece em nenhum snippet e confiança baixa`);
+    }
+    if (aceitaNome && nomeRes?.secretario) {
       if (nomeSecretario && nomeRes.secretario.toLowerCase().trim() !== nomeSecretario.toLowerCase().trim()) {
         emit("warn", "nome", `Conflito: diário=${nomeSecretario} / snippet=${nomeRes.secretario} — adotando snippet (mais atual)`);
       }
