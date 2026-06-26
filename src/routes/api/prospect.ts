@@ -26,7 +26,7 @@ export const Route = createFileRoute("/api/prospect")({
             headers: { "Content-Type": "application/json" },
           });
         }
-        const { municipio, uf, ibgeId } = parsed.data;
+        const { municipio, uf, ibgeId, useDiario } = parsed.data;
 
         const { prospectar } = await import("@/lib/prospect.server");
         const encoder = new TextEncoder();
@@ -37,7 +37,8 @@ export const Route = createFileRoute("/api/prospect")({
               controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
             };
             try {
-              await prospectar(municipio, uf, (evt) => send(evt), ibgeId);
+              await prospectar(municipio, uf, (evt) => send(evt), ibgeId, { useDiario });
+
             } catch (e) {
               send({
                 kind: "progress",
