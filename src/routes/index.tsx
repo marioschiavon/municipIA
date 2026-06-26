@@ -408,6 +408,22 @@ function Index() {
                   </span>
                 </span>
               </label>
+              <label className="mt-2 flex cursor-pointer items-start gap-2 border-t border-slate-200 pt-2">
+                <input
+                  type="checkbox"
+                  checked={useDiario}
+                  onChange={(e) => setUseDiario(e.target.checked)}
+                  disabled={running}
+                  className="mt-0.5 h-3.5 w-3.5 cursor-pointer"
+                />
+                <span>
+                  <span className="font-medium">Consultar Diário Oficial</span>
+                  <span className="block text-[11px] text-slate-500">
+                    Querido Diário (mais lento, ~2s extra). Útil em cidades com pouca info no Google.
+                  </span>
+                </span>
+              </label>
+
               <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-[11px] text-slate-500">
                 <span>
                   {cacheCount > 0
