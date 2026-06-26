@@ -164,12 +164,16 @@ function snippetsBlock(cands: SearchCandidate[]): string {
 }
 
 function preferGov(cands: SearchCandidate[], extra?: (u: string) => boolean): SearchCandidate[] {
+  const OTHER_SECRETARIAS = /(esporte|saude|sa[uú]de|obras|tr[âa]nsito|transito|turismo|cultura|assistencia|assist[êe]ncia|meio[-_.\s]?ambiente|fazenda|planejamento|habitacao|habita[çc][ãa]o|agricultura)/i;
   const score = (c: SearchCandidate) => {
     let s = 0;
+    const blob = `${c.url} ${c.title ?? ""} ${c.description ?? ""}`;
     if (/\.gov\.br/i.test(c.url)) s += 10;
     if (/\.leg\.br/i.test(c.url)) s += 6;
     if (extra && extra(c.url)) s += 5;
     if (c.markdown) s += 2;
+    // Penaliza fortemente páginas claramente de OUTRAS secretarias.
+    if (OTHER_SECRETARIAS.test(blob) && !/(educa|seduc|sme|smed)/i.test(blob)) s -= 8;
     return -s;
   };
   return [...cands].sort((a, b) => score(a) - score(b));
