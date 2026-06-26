@@ -345,9 +345,14 @@ async function extractWithAI(
   municipio: string,
   uf: string,
   emit: Emit,
-  opts: { nomeAlvo?: string | null; diarioBlock?: string; modo?: "snippets" | "site" } = {},
+  opts: {
+    nomeAlvo?: string | null;
+    diarioBlock?: string;
+    modo?: "snippets" | "site";
+    topHost?: string;
+  } = {},
 ): Promise<Extracted | null> {
-  const { nomeAlvo = null, diarioBlock = "", modo = "site" } = opts;
+  const { nomeAlvo = null, diarioBlock = "", modo = "site", topHost } = opts;
   const provider = getProvider();
 
   const focoEtapa = nomeAlvo
@@ -376,10 +381,14 @@ REGRAS GERAIS:
 
 REGRAS DE E-MAIL (CRÍTICO — não erre isso):
 - PRIORIZE e-mails específicos da Educação: começam com "seduc@", "sme@", "smed@", "educacao@", "educa@", ou domínio "educacao.{municipio}.gov.br".
+- PROIBIDO devolver e-mail de ESCOLA, COLÉGIO, EMEF, EMEI, CMEI, CRECHE, CEI ou Conselho/Biblioteca. Esses são unidades, NÃO são a Secretaria. Se só houver e-mail de escola/CMEI, devolva "emails": [] e deixe o próximo estágio buscar o contato geral.
 - EVITE e-mails genéricos da prefeitura ("ouvidoria@", "faleconosco@", "contato@", "imprensa@", "gabinete@", "prefeito@") — só os devolva se forem os ÚNICOS presentes.
 - Quando houver um e-mail bom de Educação no texto, NÃO inclua os genéricos.
 - Ordene "emails" do MAIS ESPECÍFICO (Educação) para o MAIS GENÉRICO.
 - Mesma regra vale para telefones: prefira o ramal/linha direta da Secretaria de Educação ao da central da prefeitura.
+
+HORÁRIO DE ATENDIMENTO:
+- Preencha "horarioAtendimento" SOMENTE se aparecer literalmente no texto (ex.: "Segunda a Sexta, 8h às 17h", "Seg–Sex 08:00–17:00"). Senão null.
 
 DATA: preencha "dataReferencia" (ex.: "${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}") quando o texto indicar; senão null.
 
@@ -407,14 +416,18 @@ Responda APENAS com JSON válido seguindo o schema.`;
     if (beforeE !== out.emails.length || beforeT !== out.telefones.length) {
       emit("warn", etapa, `Descartei ${beforeE - out.emails.length} e-mail(s) e ${beforeT - out.telefones.length} tel sem correspondência literal no texto`);
     }
-    // Ranking final de e-mails (Educação primeiro, genéricos por último/cortados).
+    // Filtro escola/CMEI + ranking final (Educação primeiro, genéricos por último).
+    const beforeSchool = out.emails.length;
     if (out.emails.length > 0) {
-      out.emails = filterEmailsForFinal(out.emails, municipio, uf);
+      out.emails = filterEmailsForFinal(out.emails, municipio, uf, topHost);
+    }
+    if (beforeSchool !== out.emails.length) {
+      emit("warn", etapa, `Descartei ${beforeSchool - out.emails.length} e-mail(s) de escola/CMEI`);
     }
     emit(
       out.confianca === "baixa" ? "warn" : "success",
       etapa,
-      `IA respondeu — ${out.emails.length} email · ${out.telefones.length} tel · confiança ${out.confianca}${out.dataReferencia ? ` · ref ${out.dataReferencia}` : ""}`,
+      `IA respondeu — ${out.emails.length} email · ${out.telefones.length} tel · confiança ${out.confianca}${out.horarioAtendimento ? ` · 🕒` : ""}${out.dataReferencia ? ` · ref ${out.dataReferencia}` : ""}`,
       out,
     );
     return out;
@@ -425,11 +438,12 @@ Responda APENAS com JSON válido seguindo o schema.`;
       const fallback: Extracted = {
         secretario: nomeAlvo ?? null,
         cargo: null,
-        emails: filterEmailsForFinal(hints.emails.slice(0, 8), municipio, uf),
+        emails: filterEmailsForFinal(hints.emails.slice(0, 8), municipio, uf, topHost),
         telefones: hints.telefones.slice(0, 5),
         contexto: "IA falhou — contatos por regex",
         confianca: "baixa",
         dataReferencia: null,
+        horarioAtendimento: null,
       };
       return fallback;
     }
