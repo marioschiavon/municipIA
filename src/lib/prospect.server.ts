@@ -1100,11 +1100,12 @@ export async function prospectar(
     }
   }
 
-  // Estágio 3.4 — Tentativa exclusiva com RAG Web Browser (se disponível)
+  // Estágio 3.5 — Tentativa exclusiva com RAG Web Browser (última tentativa RAG)
   {
-    const ragBlockLate = await awaitRagBlock(30_000, "Estágio 3.4");
+    const ragBlockLate = await awaitRagBlock(90_000, "Estágio 3.5");
+    const ragPagesNow = getRagPages();
     if (ragBlockLate) {
-      const ext = await extractWithAI(ragBlockLate, ragPages[0]?.url ?? "(rag)", "educacao", municipio, uf, emit, {
+      const ext = await extractWithAI(ragBlockLate, ragPagesNow[0]?.url ?? "(rag)", "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         modo: "site",
         topHost,
@@ -1121,17 +1122,18 @@ export async function prospectar(
             emails: ext.emails,
             telefones: ext.telefones,
             fonte: "RAG Web Browser (Apify)",
-            fonteUrl: ragPages[0]?.url ?? null,
+            fonteUrl: ragPagesNow[0]?.url ?? null,
             contexto: ext.contexto,
             nomeFonte,
             dataReferencia: ext.dataReferencia ?? dataReferenciaGlobal,
             horarioAtendimento: ext.horarioAtendimento ?? null,
           });
         }
-        if (!melhorParcial) melhorParcial = { ext, url: ragPages[0]?.url ?? null, via: "RAG Web Browser" };
+        if (!melhorParcial) melhorParcial = { ext, url: ragPagesNow[0]?.url ?? null, via: "RAG Web Browser" };
       }
     }
   }
+
 
 
   // Devolve parcial bom de Educação se houver
