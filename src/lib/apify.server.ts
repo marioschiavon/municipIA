@@ -22,7 +22,7 @@ const ACTOR_ID = "apify~website-content-crawler";
 
 export async function crawlSite(
   startUrl: string,
-  opts: { timeoutMs?: number; maxRequests?: number; maxDepth?: number } = {},
+  opts: { timeoutMs?: number; maxRequests?: number; maxDepth?: number; useGlobs?: boolean } = {},
 ): Promise<ApifyCrawlResult> {
   const started = Date.now();
   const token = process.env.APIFY_TOKEN;
