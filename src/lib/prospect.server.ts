@@ -1017,7 +1017,8 @@ export async function prospectar(
     emit("info", "educacao", `Estágio 3.3 — scrape de ${shortHost(top3.url)}`);
     const md = await gScrape(fc, top3.url, emit, "educacao", { hardTimeoutMs: 8000 });
     if (md) {
-      const ext = await extractWithAI(`### Site\n${md}`, top3.url, "educacao", municipio, uf, emit, {
+      const combined = [`### Site\n${md}`, ragBlockS3].filter(Boolean).join("\n\n");
+      const ext = await extractWithAI(combined, top3.url, "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         modo: "site",
         topHost,
