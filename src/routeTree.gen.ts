@@ -11,7 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as DebugRouteImport } from './routes/debug'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as DebugApifyRouteImport } from './routes/debug.apify'
 import { Route as ApiProspectRouteImport } from './routes/api/prospect'
+import { Route as ApiDebugApifyRouteImport } from './routes/api/debug.apify'
 
 const DebugRoute = DebugRouteImport.update({
   id: '/debug',
@@ -23,40 +25,68 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DebugApifyRoute = DebugApifyRouteImport.update({
+  id: '/apify',
+  path: '/apify',
+  getParentRoute: () => DebugRoute,
+} as any)
 const ApiProspectRoute = ApiProspectRouteImport.update({
   id: '/api/prospect',
   path: '/api/prospect',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDebugApifyRoute = ApiDebugApifyRouteImport.update({
+  id: '/api/debug/apify',
+  path: '/api/debug/apify',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/debug': typeof DebugRoute
+  '/debug': typeof DebugRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
+  '/debug/apify': typeof DebugApifyRoute
+  '/api/debug/apify': typeof ApiDebugApifyRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/debug': typeof DebugRoute
+  '/debug': typeof DebugRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
+  '/debug/apify': typeof DebugApifyRoute
+  '/api/debug/apify': typeof ApiDebugApifyRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/debug': typeof DebugRoute
+  '/debug': typeof DebugRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
+  '/debug/apify': typeof DebugApifyRoute
+  '/api/debug/apify': typeof ApiDebugApifyRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/debug' | '/api/prospect'
+  fullPaths:
+    | '/'
+    | '/debug'
+    | '/api/prospect'
+    | '/debug/apify'
+    | '/api/debug/apify'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/debug' | '/api/prospect'
-  id: '__root__' | '/' | '/debug' | '/api/prospect'
+  to: '/' | '/debug' | '/api/prospect' | '/debug/apify' | '/api/debug/apify'
+  id:
+    | '__root__'
+    | '/'
+    | '/debug'
+    | '/api/prospect'
+    | '/debug/apify'
+    | '/api/debug/apify'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  DebugRoute: typeof DebugRoute
+  DebugRoute: typeof DebugRouteWithChildren
   ApiProspectRoute: typeof ApiProspectRoute
+  ApiDebugApifyRoute: typeof ApiDebugApifyRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -75,6 +105,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/debug/apify': {
+      id: '/debug/apify'
+      path: '/apify'
+      fullPath: '/debug/apify'
+      preLoaderRoute: typeof DebugApifyRouteImport
+      parentRoute: typeof DebugRoute
+    }
     '/api/prospect': {
       id: '/api/prospect'
       path: '/api/prospect'
@@ -82,13 +119,31 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiProspectRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/debug/apify': {
+      id: '/api/debug/apify'
+      path: '/api/debug/apify'
+      fullPath: '/api/debug/apify'
+      preLoaderRoute: typeof ApiDebugApifyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
+interface DebugRouteChildren {
+  DebugApifyRoute: typeof DebugApifyRoute
+}
+
+const DebugRouteChildren: DebugRouteChildren = {
+  DebugApifyRoute: DebugApifyRoute,
+}
+
+const DebugRouteWithChildren = DebugRoute._addFileChildren(DebugRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  DebugRoute: DebugRoute,
+  DebugRoute: DebugRouteWithChildren,
   ApiProspectRoute: ApiProspectRoute,
+  ApiDebugApifyRoute: ApiDebugApifyRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
