@@ -1037,7 +1037,7 @@ export async function prospectar(
             fonte: "RAG Web Browser (Apify)",
             fonteUrl: ragTopUrl,
             contexto: e.contexto,
-            nomeFonte: nomeFonte ?? (e.secretario ? "RAG" : null),
+            nomeFonte: nomeFonte ?? (e.secretario ? "site" : null),
             dataReferencia: e.dataReferencia ?? dataReferenciaGlobal,
             horarioAtendimento: e.horarioAtendimento ?? null,
           });
