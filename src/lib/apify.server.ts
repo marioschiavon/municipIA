@@ -151,17 +151,20 @@ async function runActorSync(
 // apify/rag-web-browser: recebe query, faz Google + scrape dos top N, devolve markdown limpo.
 export async function ragBrowse(
   query: string,
-  opts: { maxResults?: number; timeoutMs?: number } = {},
+  opts: { maxResults?: number; timeoutMs?: number; startUrls?: string[] } = {},
 ): Promise<ApifyCrawlResult> {
-  const timeoutMs = opts.timeoutMs ?? 90_000;
-  const input = {
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+  const input: Record<string, unknown> = {
     query,
     maxResults: opts.maxResults ?? 5,
     outputFormats: ["markdown"],
-    requestTimeoutSecs: 25,
+    requestTimeoutSecs: 30,
     scrapingTool: "browser-playwright",
     removeCookieWarnings: true,
   };
+  if (opts.startUrls && opts.startUrls.length > 0) {
+    input.startUrls = opts.startUrls.map((url) => ({ url }));
+  }
   const r = await runActorSync("apify~rag-web-browser", input, timeoutMs);
   if (!r.ok) return r;
   const pages: ApifyPage[] = r.items.map((it) => {
@@ -176,6 +179,7 @@ export async function ragBrowse(
   }).filter((p) => p.url);
   return { ok: true, pages, elapsedMs: r.elapsedMs, requestsUsed: pages.length };
 }
+
 
 // ---------- Google Search Scraper ----------
 // apify/google-search-scraper: só SERP (title, url, snippet). Sem scrape das páginas.
