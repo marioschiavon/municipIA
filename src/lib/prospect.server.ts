@@ -943,6 +943,7 @@ export async function prospectar(
   // ESTÁGIO 3 — CONTATO INSTITUCIONAL DA SECRETARIA (sem o nome)
   // ============================================================
   emit("info", "educacao", "Estágio 3 — contato institucional da Secretaria de Educação");
+  const ragBlockS3 = await awaitRagBlock(6000, "Estágio 3");
 
   const r3a = await tentarContato(
     `"secretaria municipal de educação" ${municipio} ${uf} (email OR contato OR telefone)`,
