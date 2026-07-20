@@ -644,6 +644,34 @@ export async function prospectar(
     emit("info", "diario", "Querido Diário desligado nesta busca");
   }
 
+  // RAG Web Browser (Apify) em background — pega markdown limpo de top resultados
+  // com Playwright, ajudando quando snippets não bastam. Timeout curto no await.
+  let ragPages: ApifyPage[] = [];
+  const ragQuery = `prefeitura ${municipio} ${uf} secretaria municipal de educação secretário contato email telefone`;
+  emit("info", "init", `RAG Web Browser (Apify) em background: "${ragQuery.slice(0, 80)}"`);
+  const ragPromise: Promise<void> = (async () => {
+    const r = await ragBrowse(ragQuery, { maxResults: 4, timeoutMs: 60_000 });
+    if (!r.ok) {
+      emit("warn", "init", `RAG indisponível (${r.reason}) — seguindo sem ele`);
+      return;
+    }
+    ragPages = r.pages.filter((p) => p.markdown && p.markdown.length > 200);
+    emit("success", "init", `RAG trouxe ${ragPages.length} página(s) em ${(r.elapsedMs / 1000).toFixed(1)}s`);
+  })().catch((e) => emit("warn", "init", `RAG erro: ${String(e)}`));
+
+  // Helper: aguarda até `ms` pelo RAG e devolve markdown consolidado (top páginas).
+  const awaitRagBlock = async (ms: number, label: string): Promise<string> => {
+    await Promise.race([ragPromise, new Promise<void>((r) => setTimeout(r, ms))]);
+    if (ragPages.length === 0) return "";
+    const block = ragPages
+      .slice(0, 3)
+      .map((p, i) => `[RAG ${i + 1}] ${p.title ?? ""}\nURL: ${p.url}\n${p.markdown.slice(0, 4000)}`)
+      .join("\n\n---\n\n");
+    emit("info", "educacao", `${label} — anexando ${Math.min(3, ragPages.length)} página(s) do RAG ao prompt`);
+    return `### Páginas recuperadas via RAG Web Browser\n${block}\n`;
+  };
+
+
   // ============================================================
   // ESTÁGIO 1 — NOME ATUAL (apenas nome, sem contato)
   // ============================================================
