@@ -1008,7 +1008,47 @@ export async function prospectar(
   // ESTÁGIO 3 — CONTATO INSTITUCIONAL DA SECRETARIA (sem o nome)
   // ============================================================
   emit("info", "educacao", "Estágio 3 — contato institucional da Secretaria de Educação");
-  const ragBlockS3 = await awaitRagBlock(6000, "Estágio 3");
+
+  // Estágio 3.0 — RAG-first: aguarda até 60s pelo RAG e tenta extração imediata.
+  // Se resultado for confiável (nome OU e-mail específico), fecha aqui sem cair
+  // em scrapes lentos do Firecrawl que já falharam antes.
+  {
+    const ragEarly = await awaitRagBlock(60_000, "Estágio 3.0 (RAG-first)");
+    if (ragEarly) {
+      const ragTopUrl = getRagPages()[0]?.url ?? "(rag)";
+      const ext = await extractWithAI(ragEarly, ragTopUrl, "educacao", municipio, uf, emit, {
+        nomeAlvo: nomeSecretario,
+        diarioBlock,
+        modo: "site",
+        topHost,
+      });
+      if (isRagResultTrustworthy(ext)) {
+        const e = ext!;
+        const hasGood = e.emails.some((x) => !GENERIC_LOCAL.test(x)) || e.telefones.length > 0;
+        if (hasGood) {
+          emit("success", "educacao", `✨ RAG-first fechou (${Date.now() - t0}ms)`);
+          return sendFinal({
+            status: "found",
+            hierarquia: "educacao",
+            secretario: e.secretario ?? nomeSecretario,
+            cargo: e.cargo ?? cargoSecretario,
+            emails: e.emails,
+            telefones: e.telefones,
+            fonte: "RAG Web Browser (Apify)",
+            fonteUrl: ragTopUrl,
+            contexto: e.contexto,
+            nomeFonte: nomeFonte ?? (e.secretario ? "RAG" : null),
+            dataReferencia: e.dataReferencia ?? dataReferenciaGlobal,
+            horarioAtendimento: e.horarioAtendimento ?? null,
+          });
+        }
+        if (!melhorParcial) melhorParcial = { ext: e, url: ragTopUrl, via: "RAG Web Browser (Apify)" };
+      }
+    }
+  }
+
+  const ragBlockS3 = await awaitRagBlock(2000, "Estágio 3");
+
 
   const r3a = await tentarContato(
     `"secretaria municipal de educação" ${municipio} ${uf} (email OR contato OR telefone)`,
