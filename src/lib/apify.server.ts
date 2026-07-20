@@ -158,8 +158,9 @@ export async function ragBrowse(
     query,
     maxResults: opts.maxResults ?? 5,
     outputFormats: ["markdown"],
-    requestTimeoutSecs: 20,
-    scrapingTool: "raw-http",
+    requestTimeoutSecs: 25,
+    scrapingTool: "browser-playwright",
+    removeCookieWarnings: true,
   };
   const r = await runActorSync("apify~rag-web-browser", input, timeoutMs);
   if (!r.ok) return r;
