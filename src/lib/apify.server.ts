@@ -32,7 +32,8 @@ export async function crawlSite(
   const maxRequests = opts.maxRequests ?? 8;
   const maxDepth = opts.maxDepth ?? 2;
 
-  const input = {
+  const useGlobs = opts.useGlobs ?? true;
+  const input: Record<string, unknown> = {
     startUrls: [{ url: startUrl }],
     crawlerType: "playwright:adaptive",
     maxCrawlDepth: maxDepth,
@@ -45,7 +46,9 @@ export async function crawlSite(
     initialConcurrency: 3,
     maxConcurrency: 5,
     requestTimeoutSecs: 20,
-    includeUrlGlobs: [
+  };
+  if (useGlobs) {
+    input.includeUrlGlobs = [
       { glob: "**/educacao/**" },
       { glob: "**/educa/**" },
       { glob: "**/sme/**" },
@@ -59,8 +62,8 @@ export async function crawlSite(
       { glob: "**/endereco*" },
       { glob: "**/enderecos*" },
       { glob: startUrl.replace(/\/$/, "") + "/*" },
-    ],
-  };
+    ];
+  }
 
   const url = `https://api.apify.com/v2/acts/${ACTOR_ID}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}&timeout=${Math.floor(timeoutMs / 1000)}&format=json`;
 
