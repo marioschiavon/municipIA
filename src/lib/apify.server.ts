@@ -82,6 +82,13 @@ export async function crawlSite(
       return { ok: false, reason: `HTTP ${res.status}: ${body.slice(0, 300)}`, elapsedMs };
     }
     const data = (await res.json()) as Array<Record<string, unknown>>;
+    // eslint-disable-next-line no-console
+    console.log("[apify] raw items:", Array.isArray(data) ? data.length : "not-array", "sample keys:", Array.isArray(data) && data[0] ? Object.keys(data[0]).slice(0, 20) : []);
+    if (Array.isArray(data) && data[0]) {
+      const s = data[0];
+      // eslint-disable-next-line no-console
+      console.log("[apify] sample item url/loadedUrl/text.len/markdown.len:", s.url, s.loadedUrl, typeof s.text === "string" ? s.text.length : null, typeof s.markdown === "string" ? s.markdown.length : null);
+    }
     const pages: ApifyPage[] = (Array.isArray(data) ? data : []).map((r) => ({
       url: String(r.url ?? r.loadedUrl ?? ""),
       title: (r.metadata as { title?: string } | undefined)?.title ?? (r.title as string | undefined) ?? null,
