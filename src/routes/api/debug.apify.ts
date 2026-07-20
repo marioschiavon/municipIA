@@ -29,6 +29,7 @@ export const Route = createFileRoute("/api/debug/apify")({
         const result = await crawlSite(parsed.data.url, {
           maxRequests: parsed.data.maxRequests,
           maxDepth: parsed.data.maxDepth,
+          timeoutMs: parsed.data.timeoutMs,
         });
 
         if (!result.ok) {
