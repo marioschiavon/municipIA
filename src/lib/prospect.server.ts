@@ -8,6 +8,7 @@ import { z } from "zod";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 import { fetchHtml, htmlToMarkdown, extractContactsRegex } from "./scraper.server";
 import { buscarDiario, formatExcerptsForPrompt, type DiarioExcerpt } from "./querido-diario.server";
+import { ragBrowse, type ApifyPage } from "./apify.server";
 import type {
   EtapaTag,
   Hierarquia,
@@ -643,6 +644,34 @@ export async function prospectar(
     emit("info", "diario", "Querido Diário desligado nesta busca");
   }
 
+  // RAG Web Browser (Apify) em background — pega markdown limpo de top resultados
+  // com Playwright, ajudando quando snippets não bastam. Timeout curto no await.
+  let ragPages: ApifyPage[] = [];
+  const ragQuery = `prefeitura ${municipio} ${uf} secretaria municipal de educação secretário contato email telefone`;
+  emit("info", "init", `RAG Web Browser (Apify) em background: "${ragQuery.slice(0, 80)}"`);
+  const ragPromise: Promise<void> = (async () => {
+    const r = await ragBrowse(ragQuery, { maxResults: 4, timeoutMs: 60_000 });
+    if (!r.ok) {
+      emit("warn", "init", `RAG indisponível (${r.reason}) — seguindo sem ele`);
+      return;
+    }
+    ragPages = r.pages.filter((p) => p.markdown && p.markdown.length > 200);
+    emit("success", "init", `RAG trouxe ${ragPages.length} página(s) em ${(r.elapsedMs / 1000).toFixed(1)}s`);
+  })().catch((e) => emit("warn", "init", `RAG erro: ${String(e)}`));
+
+  // Helper: aguarda até `ms` pelo RAG e devolve markdown consolidado (top páginas).
+  const awaitRagBlock = async (ms: number, label: string): Promise<string> => {
+    await Promise.race([ragPromise, new Promise<void>((r) => setTimeout(r, ms))]);
+    if (ragPages.length === 0) return "";
+    const block = ragPages
+      .slice(0, 3)
+      .map((p, i) => `[RAG ${i + 1}] ${p.title ?? ""}\nURL: ${p.url}\n${p.markdown.slice(0, 4000)}`)
+      .join("\n\n---\n\n");
+    emit("info", "educacao", `${label} — anexando ${Math.min(3, ragPages.length)} página(s) do RAG ao prompt`);
+    return `### Páginas recuperadas via RAG Web Browser\n${block}\n`;
+  };
+
+
   // ============================================================
   // ESTÁGIO 1 — NOME ATUAL (apenas nome, sem contato)
   // ============================================================
@@ -914,6 +943,7 @@ export async function prospectar(
   // ESTÁGIO 3 — CONTATO INSTITUCIONAL DA SECRETARIA (sem o nome)
   // ============================================================
   emit("info", "educacao", "Estágio 3 — contato institucional da Secretaria de Educação");
+  const ragBlockS3 = await awaitRagBlock(6000, "Estágio 3");
 
   const r3a = await tentarContato(
     `"secretaria municipal de educação" ${municipio} ${uf} (email OR contato OR telefone)`,
@@ -987,7 +1017,8 @@ export async function prospectar(
     emit("info", "educacao", `Estágio 3.3 — scrape de ${shortHost(top3.url)}`);
     const md = await gScrape(fc, top3.url, emit, "educacao", { hardTimeoutMs: 8000 });
     if (md) {
-      const ext = await extractWithAI(`### Site\n${md}`, top3.url, "educacao", municipio, uf, emit, {
+      const combined = [`### Site\n${md}`, ragBlockS3].filter(Boolean).join("\n\n");
+      const ext = await extractWithAI(combined, top3.url, "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         modo: "site",
         topHost,
@@ -1015,6 +1046,40 @@ export async function prospectar(
       }
     }
   }
+
+  // Estágio 3.4 — Tentativa exclusiva com RAG Web Browser (se disponível)
+  {
+    const ragBlockLate = await awaitRagBlock(30_000, "Estágio 3.4");
+    if (ragBlockLate) {
+      const ext = await extractWithAI(ragBlockLate, ragPages[0]?.url ?? "(rag)", "educacao", municipio, uf, emit, {
+        nomeAlvo: nomeSecretario,
+        modo: "site",
+        topHost,
+      });
+      if (ext && hasUsefulContact(ext)) {
+        const hasGood = ext.emails.some((e) => !GENERIC_LOCAL.test(e)) || ext.telefones.length > 0;
+        if (hasGood) {
+          emit("success", "educacao", `✨ Contato via RAG Web Browser (${Date.now() - t0}ms)`);
+          return sendFinal({
+            status: "found",
+            hierarquia: "educacao",
+            secretario: ext.secretario ?? nomeSecretario,
+            cargo: ext.cargo ?? cargoSecretario,
+            emails: ext.emails,
+            telefones: ext.telefones,
+            fonte: "RAG Web Browser (Apify)",
+            fonteUrl: ragPages[0]?.url ?? null,
+            contexto: ext.contexto,
+            nomeFonte,
+            dataReferencia: ext.dataReferencia ?? dataReferenciaGlobal,
+            horarioAtendimento: ext.horarioAtendimento ?? null,
+          });
+        }
+        if (!melhorParcial) melhorParcial = { ext, url: ragPages[0]?.url ?? null, via: "RAG Web Browser" };
+      }
+    }
+  }
+
 
   // Devolve parcial bom de Educação se houver
   if (melhorParcial) {
