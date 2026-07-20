@@ -644,32 +644,85 @@ export async function prospectar(
     emit("info", "diario", "Querido Diário desligado nesta busca");
   }
 
-  // RAG Web Browser (Apify) em background — pega markdown limpo de top resultados
-  // com Playwright, ajudando quando snippets não bastam. Timeout curto no await.
-  let ragPages: ApifyPage[] = [];
-  const ragQuery = `prefeitura ${municipio} ${uf} secretaria municipal de educação secretário contato email telefone`;
-  emit("info", "init", `RAG Web Browser (Apify) em background: "${ragQuery.slice(0, 80)}"`);
-  const ragPromise: Promise<void> = (async () => {
-    const r = await ragBrowse(ragQuery, { maxResults: 4, timeoutMs: 60_000 });
+  // RAG Web Browser (Apify) em background — DUAS queries paralelas.
+  //  A) foco em nome do secretário (SERP + scrape dos top resultados)
+  //  B) foco na subpágina da Secretaria dentro do domínio oficial do município
+  // Ambas com timeout longo (120s) — o pipeline aguarda o RAG antes de desistir.
+  const ragPagesMap = new Map<string, ApifyPage>();
+  const addRagPages = (pages: ApifyPage[]) => {
+    for (const p of pages) {
+      if (!p.url) continue;
+      const prev = ragPagesMap.get(p.url);
+      if (!prev || (p.markdown?.length ?? 0) > (prev.markdown?.length ?? 0)) {
+        ragPagesMap.set(p.url, p);
+      }
+    }
+  };
+  const ragQueryA = `prefeitura ${municipio} ${uf} secretaria municipal de educação secretário atual contato email telefone`;
+  const ragQueryB = `site:${slug}.${ufLow}.gov.br secretaria educação contato`;
+  emit("info", "init", `RAG (Apify) A em background: "${ragQueryA.slice(0, 80)}"`);
+  emit("info", "init", `RAG (Apify) B em background: "${ragQueryB.slice(0, 80)}"`);
+  const ragPromiseA: Promise<void> = (async () => {
+    const r = await ragBrowse(ragQueryA, { maxResults: 5, timeoutMs: 120_000 });
     if (!r.ok) {
-      emit("warn", "init", `RAG indisponível (${r.reason}) — seguindo sem ele`);
+      emit("warn", "init", `RAG A indisponível (${r.reason})`);
       return;
     }
-    ragPages = r.pages.filter((p) => p.markdown && p.markdown.length > 200);
-    emit("success", "init", `RAG trouxe ${ragPages.length} página(s) em ${(r.elapsedMs / 1000).toFixed(1)}s`);
-  })().catch((e) => emit("warn", "init", `RAG erro: ${String(e)}`));
+    const good = r.pages.filter((p) => p.markdown && p.markdown.length > 200);
+    addRagPages(good);
+    emit("success", "init", `RAG A: ${good.length} pág. em ${(r.elapsedMs / 1000).toFixed(1)}s`);
+  })().catch((e) => emit("warn", "init", `RAG A erro: ${String(e)}`));
+  const ragPromiseB: Promise<void> = (async () => {
+    const r = await ragBrowse(ragQueryB, {
+      maxResults: 5,
+      timeoutMs: 120_000,
+      startUrls: [`https://${slug}.${ufLow}.gov.br/`, `https://www.${slug}.${ufLow}.gov.br/`],
+    });
+    if (!r.ok) {
+      emit("warn", "init", `RAG B indisponível (${r.reason})`);
+      return;
+    }
+    const good = r.pages.filter((p) => p.markdown && p.markdown.length > 200);
+    addRagPages(good);
+    emit("success", "init", `RAG B: ${good.length} pág. em ${(r.elapsedMs / 1000).toFixed(1)}s`);
+  })().catch((e) => emit("warn", "init", `RAG B erro: ${String(e)}`));
+  const ragAll = Promise.allSettled([ragPromiseA, ragPromiseB]);
+
+  const getRagPages = (): ApifyPage[] =>
+    Array.from(ragPagesMap.values()).sort((a, b) => (b.markdown?.length ?? 0) - (a.markdown?.length ?? 0));
 
   // Helper: aguarda até `ms` pelo RAG e devolve markdown consolidado (top páginas).
   const awaitRagBlock = async (ms: number, label: string): Promise<string> => {
-    await Promise.race([ragPromise, new Promise<void>((r) => setTimeout(r, ms))]);
-    if (ragPages.length === 0) return "";
-    const block = ragPages
+    await Promise.race([ragAll, new Promise<void>((r) => setTimeout(r, ms))]);
+    const pages = getRagPages();
+    if (pages.length === 0) return "";
+    const block = pages
       .slice(0, 3)
       .map((p, i) => `[RAG ${i + 1}] ${p.title ?? ""}\nURL: ${p.url}\n${p.markdown.slice(0, 4000)}`)
       .join("\n\n---\n\n");
-    emit("info", "educacao", `${label} — anexando ${Math.min(3, ragPages.length)} página(s) do RAG ao prompt`);
+    emit("info", "educacao", `${label} — anexando ${Math.min(3, pages.length)} pág. do RAG ao prompt`);
     return `### Páginas recuperadas via RAG Web Browser\n${block}\n`;
   };
+
+  // Busca uma página do RAG que combine com uma URL/host (usada nos fallbacks).
+  const findRagPageFor = (url: string): ApifyPage | null => {
+    const host = shortHost(url).toLowerCase();
+    const pages = getRagPages();
+    const exact = pages.find((p) => p.url === url);
+    if (exact) return exact;
+    return pages.find((p) => {
+      const h = shortHost(p.url).toLowerCase();
+      return h === host || h.endsWith(`.${host}`) || host.endsWith(`.${h}`);
+    }) ?? null;
+  };
+
+  const isRagResultTrustworthy = (ext: Extracted | null): boolean => {
+    if (!ext) return false;
+    if (!ext.secretario && ext.emails.length === 0) return false;
+    const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
+    return !!ext.secretario || hasGoodEmail || ext.telefones.length > 0;
+  };
+
 
 
   // ============================================================
