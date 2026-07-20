@@ -856,7 +856,18 @@ export async function prospectar(
   };
   if (looksLikeSeducPage(topNome)) {
     emit("info", "educacao", `Estágio 1.5 — scrape oportunista de ${topHost}`);
-    const md = await gScrape(fc, topNome!.url, emit, "educacao", { timeoutMs: 4000, hardTimeoutMs: 4000 });
+    let md = await gScrape(fc, topNome!.url, emit, "educacao", { timeoutMs: 6000, hardTimeoutMs: 6000 });
+    let usedRag = false;
+    if (!md || md.replace(/\s+/g, " ").trim().length < 500) {
+      // Site lento ou markdown pobre — tenta reaproveitar RAG (se já retornou).
+      await Promise.race([ragAll, new Promise<void>((r) => setTimeout(r, 8000))]);
+      const ragPage = findRagPageFor(topNome!.url);
+      if (ragPage && ragPage.markdown.length > (md?.length ?? 0)) {
+        emit("info", "educacao", `Estágio 1.5 — usando página do RAG (${shortHost(ragPage.url)}, ${ragPage.markdown.length} chars)`);
+        md = ragPage.markdown.slice(0, 18000);
+        usedRag = true;
+      }
+    }
     if (md) {
       const combined = `### Site\n${md}\n\n### Snippets\n${snippetsBlock(rankedNome)}`;
       const ext = await extractWithAI(combined, topNome!.url, "educacao", municipio, uf, emit, {
@@ -868,7 +879,7 @@ export async function prospectar(
       if (ext && hasUsefulContact(ext)) {
         const hasGood = ext.emails.some((e) => !GENERIC_LOCAL.test(e)) || ext.telefones.length > 0;
         if (hasGood) {
-          emit("success", "educacao", `✨ Contato via página oficial topo (${Date.now() - t0}ms)`);
+          emit("success", "educacao", `✨ Contato via página oficial topo${usedRag ? " (via RAG)" : ""} (${Date.now() - t0}ms)`);
           return sendFinal({
             status: "found",
             hierarquia: "educacao",
@@ -876,7 +887,7 @@ export async function prospectar(
             cargo: ext.cargo ?? cargoSecretario,
             emails: ext.emails,
             telefones: ext.telefones,
-            fonte: "Site oficial da Secretaria de Educação",
+            fonte: usedRag ? "Site oficial da Secretaria de Educação (via RAG)" : "Site oficial da Secretaria de Educação",
             fonteUrl: topNome!.url,
             contexto: ext.contexto,
             nomeFonte: nomeFonte ?? (ext.secretario ? "snippet" : null),
@@ -887,6 +898,7 @@ export async function prospectar(
       }
     }
   }
+
 
   // ============================================================
   // ESTÁGIO 2 — CONTATO VINCULADO AO NOME (cascata interna)
