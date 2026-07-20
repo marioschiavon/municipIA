@@ -31,6 +31,7 @@ export const Route = createFileRoute("/api/debug/apify")({
           maxRequests: parsed.data.maxRequests,
           maxDepth: parsed.data.maxDepth,
           timeoutMs: parsed.data.timeoutMs,
+          useGlobs: parsed.data.useGlobs,
         });
 
         if (!result.ok) {
