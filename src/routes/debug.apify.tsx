@@ -13,6 +13,8 @@ export const Route = createFileRoute("/debug/apify")({
   component: DebugApifyPage,
 });
 
+type Mode = "wcc" | "rag" | "serp";
+
 type PageResult = {
   url: string;
   title?: string | null;
@@ -24,18 +26,28 @@ type PageResult = {
 
 type OkResp = {
   ok: true;
+  mode: Mode;
   elapsedMs: number;
   pagesCrawled: number;
   emails: string[];
   telefones: string[];
   pages: PageResult[];
 };
-type ErrResp = { ok: false; reason: string; elapsedMs: number };
+type ErrResp = { ok: false; reason: string; elapsedMs: number; mode?: Mode };
+
+const MODE_LABEL: Record<Mode, string> = {
+  wcc: "Website Content Crawler (URL, Playwright)",
+  rag: "RAG Web Browser (query → Google + scrape em markdown)",
+  serp: "Google Search Scraper (query → só SERP)",
+};
 
 function DebugApifyPage() {
+  const [mode, setMode] = useState<Mode>("rag");
   const [url, setUrl] = useState("");
+  const [query, setQuery] = useState("prefeitura são josé dos pinhais secretaria de educação");
   const [maxRequests, setMaxRequests] = useState(8);
-  const [maxDepth, setMaxDepth] = useState(2);
+  const [maxDepth, setMaxDepth] = useState(1);
+  const [maxResults, setMaxResults] = useState(5);
   const [loading, setLoading] = useState(false);
   const [resp, setResp] = useState<OkResp | ErrResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -45,10 +57,19 @@ function DebugApifyPage() {
     setErr(null);
     setResp(null);
     try {
+      const payload: Record<string, unknown> = { mode, timeoutMs: 170_000 };
+      if (mode === "wcc") {
+        payload.url = url;
+        payload.maxRequests = maxRequests;
+        payload.maxDepth = maxDepth;
+      } else {
+        payload.query = query;
+        payload.maxResults = maxResults;
+      }
       const r = await fetch("/api/debug/apify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, maxRequests, maxDepth }),
+        body: JSON.stringify(payload),
       });
       const data = (await r.json()) as OkResp | ErrResp;
       setResp(data);
@@ -59,6 +80,8 @@ function DebugApifyPage() {
     }
   }
 
+  const disabled = loading || (mode === "wcc" ? !url : !query);
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -68,47 +91,65 @@ function DebugApifyPage() {
               <ArrowLeft className="w-4 h-4 mr-1" /> Debug
             </Button>
           </Link>
-          <h1 className="text-2xl font-semibold">POC Apify — Website Content Crawler</h1>
+          <h1 className="text-2xl font-semibold">POC Apify</h1>
         </div>
       </div>
 
       <div className="rounded-lg border p-4 space-y-3 bg-white">
-        <label className="block text-sm font-medium">URL inicial (ex.: site oficial da prefeitura)</label>
-        <input
-          className="w-full border rounded px-3 py-2 text-sm"
-          placeholder="https://www.maringa.pr.gov.br"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-        />
-        <div className="grid grid-cols-2 gap-3">
-          <label className="text-sm">
-            Máx. requests
-            <input
-              type="number"
-              min={1}
-              max={20}
-              className="w-full border rounded px-3 py-2 text-sm mt-1"
-              value={maxRequests}
-              onChange={(e) => setMaxRequests(Number(e.target.value))}
-            />
-          </label>
-          <label className="text-sm">
-            Profundidade
-            <input
-              type="number"
-              min={0}
-              max={3}
-              className="w-full border rounded px-3 py-2 text-sm mt-1"
-              value={maxDepth}
-              onChange={(e) => setMaxDepth(Number(e.target.value))}
-            />
-          </label>
+        <label className="block text-sm font-medium">Actor</label>
+        <div className="grid gap-2">
+          {(Object.keys(MODE_LABEL) as Mode[]).map((m) => (
+            <label key={m} className="flex items-center gap-2 text-sm">
+              <input type="radio" name="mode" checked={mode === m} onChange={() => setMode(m)} />
+              <span>{MODE_LABEL[m]}</span>
+            </label>
+          ))}
         </div>
-        <Button onClick={run} disabled={!url || loading}>
+
+        {mode === "wcc" ? (
+          <>
+            <label className="block text-sm font-medium mt-2">URL inicial</label>
+            <input
+              className="w-full border rounded px-3 py-2 text-sm"
+              placeholder="https://www.maringa.pr.gov.br"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-sm">
+                Máx. requests
+                <input type="number" min={1} max={20} className="w-full border rounded px-3 py-2 text-sm mt-1"
+                  value={maxRequests} onChange={(e) => setMaxRequests(Number(e.target.value))} />
+              </label>
+              <label className="text-sm">
+                Profundidade
+                <input type="number" min={0} max={3} className="w-full border rounded px-3 py-2 text-sm mt-1"
+                  value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} />
+              </label>
+            </div>
+          </>
+        ) : (
+          <>
+            <label className="block text-sm font-medium mt-2">Query de busca</label>
+            <input
+              className="w-full border rounded px-3 py-2 text-sm"
+              placeholder='ex.: "prefeitura maringa secretaria de educação secretário atual"'
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <label className="text-sm block">
+              Máx. resultados
+              <input type="number" min={1} max={15} className="w-full border rounded px-3 py-2 text-sm mt-1"
+                value={maxResults} onChange={(e) => setMaxResults(Number(e.target.value))} />
+            </label>
+          </>
+        )}
+
+        <Button onClick={run} disabled={disabled}>
           {loading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Rodando...</> : "Testar Apify"}
         </Button>
         <p className="text-xs text-slate-500">
-          Segue links internos filtrando por rotas de contato / secretarias / educação. Nada aqui altera o pipeline principal.
+          POC isolado — nada aqui altera o pipeline principal.
         </p>
       </div>
 
@@ -116,8 +157,8 @@ function DebugApifyPage() {
 
       {resp && !resp.ok && (
         <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm">
-          <div className="font-medium text-amber-900">Falhou</div>
-          <div className="text-amber-800">{resp.reason}</div>
+          <div className="font-medium text-amber-900">Falhou ({resp.mode})</div>
+          <div className="text-amber-800 break-all">{resp.reason}</div>
           <div className="text-xs text-amber-700 mt-1">{resp.elapsedMs} ms</div>
         </div>
       )}
@@ -126,7 +167,7 @@ function DebugApifyPage() {
         <div className="space-y-4">
           <div className="rounded-lg border p-4 bg-emerald-50 border-emerald-200">
             <div className="text-sm text-emerald-900">
-              <b>{resp.pagesCrawled}</b> páginas em <b>{(resp.elapsedMs / 1000).toFixed(1)}s</b>
+              <b>{resp.mode}</b> · <b>{resp.pagesCrawled}</b> resultados em <b>{(resp.elapsedMs / 1000).toFixed(1)}s</b>
             </div>
             <div className="mt-2 text-sm">
               <div><b>E-mails agregados:</b> {resp.emails.length ? resp.emails.join(", ") : "—"}</div>
@@ -148,7 +189,7 @@ function DebugApifyPage() {
                 <div className="text-sm"><b>Telefones:</b> {p.telefones.join(", ")}</div>
               )}
               <details className="text-xs text-slate-600">
-                <summary className="cursor-pointer">Preview markdown</summary>
+                <summary className="cursor-pointer">Preview</summary>
                 <pre className="whitespace-pre-wrap mt-2 bg-slate-50 p-2 rounded">{p.preview}</pre>
               </details>
             </div>
