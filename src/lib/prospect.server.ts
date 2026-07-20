@@ -8,6 +8,7 @@ import { z } from "zod";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 import { fetchHtml, htmlToMarkdown, extractContactsRegex } from "./scraper.server";
 import { buscarDiario, formatExcerptsForPrompt, type DiarioExcerpt } from "./querido-diario.server";
+import { ragBrowse, type ApifyPage } from "./apify.server";
 import type {
   EtapaTag,
   Hierarquia,
