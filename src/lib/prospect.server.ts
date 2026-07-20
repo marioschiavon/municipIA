@@ -644,32 +644,85 @@ export async function prospectar(
     emit("info", "diario", "Querido Diário desligado nesta busca");
   }
 
-  // RAG Web Browser (Apify) em background — pega markdown limpo de top resultados
-  // com Playwright, ajudando quando snippets não bastam. Timeout curto no await.
-  let ragPages: ApifyPage[] = [];
-  const ragQuery = `prefeitura ${municipio} ${uf} secretaria municipal de educação secretário contato email telefone`;
-  emit("info", "init", `RAG Web Browser (Apify) em background: "${ragQuery.slice(0, 80)}"`);
-  const ragPromise: Promise<void> = (async () => {
-    const r = await ragBrowse(ragQuery, { maxResults: 4, timeoutMs: 60_000 });
+  // RAG Web Browser (Apify) em background — DUAS queries paralelas.
+  //  A) foco em nome do secretário (SERP + scrape dos top resultados)
+  //  B) foco na subpágina da Secretaria dentro do domínio oficial do município
+  // Ambas com timeout longo (120s) — o pipeline aguarda o RAG antes de desistir.
+  const ragPagesMap = new Map<string, ApifyPage>();
+  const addRagPages = (pages: ApifyPage[]) => {
+    for (const p of pages) {
+      if (!p.url) continue;
+      const prev = ragPagesMap.get(p.url);
+      if (!prev || (p.markdown?.length ?? 0) > (prev.markdown?.length ?? 0)) {
+        ragPagesMap.set(p.url, p);
+      }
+    }
+  };
+  const ragQueryA = `prefeitura ${municipio} ${uf} secretaria municipal de educação secretário atual contato email telefone`;
+  const ragQueryB = `site:${slug}.${ufLow}.gov.br secretaria educação contato`;
+  emit("info", "init", `RAG (Apify) A em background: "${ragQueryA.slice(0, 80)}"`);
+  emit("info", "init", `RAG (Apify) B em background: "${ragQueryB.slice(0, 80)}"`);
+  const ragPromiseA: Promise<void> = (async () => {
+    const r = await ragBrowse(ragQueryA, { maxResults: 5, timeoutMs: 120_000 });
     if (!r.ok) {
-      emit("warn", "init", `RAG indisponível (${r.reason}) — seguindo sem ele`);
+      emit("warn", "init", `RAG A indisponível (${r.reason})`);
       return;
     }
-    ragPages = r.pages.filter((p) => p.markdown && p.markdown.length > 200);
-    emit("success", "init", `RAG trouxe ${ragPages.length} página(s) em ${(r.elapsedMs / 1000).toFixed(1)}s`);
-  })().catch((e) => emit("warn", "init", `RAG erro: ${String(e)}`));
+    const good = r.pages.filter((p) => p.markdown && p.markdown.length > 200);
+    addRagPages(good);
+    emit("success", "init", `RAG A: ${good.length} pág. em ${(r.elapsedMs / 1000).toFixed(1)}s`);
+  })().catch((e) => emit("warn", "init", `RAG A erro: ${String(e)}`));
+  const ragPromiseB: Promise<void> = (async () => {
+    const r = await ragBrowse(ragQueryB, {
+      maxResults: 5,
+      timeoutMs: 120_000,
+      startUrls: [`https://${slug}.${ufLow}.gov.br/`, `https://www.${slug}.${ufLow}.gov.br/`],
+    });
+    if (!r.ok) {
+      emit("warn", "init", `RAG B indisponível (${r.reason})`);
+      return;
+    }
+    const good = r.pages.filter((p) => p.markdown && p.markdown.length > 200);
+    addRagPages(good);
+    emit("success", "init", `RAG B: ${good.length} pág. em ${(r.elapsedMs / 1000).toFixed(1)}s`);
+  })().catch((e) => emit("warn", "init", `RAG B erro: ${String(e)}`));
+  const ragAll = Promise.allSettled([ragPromiseA, ragPromiseB]);
+
+  const getRagPages = (): ApifyPage[] =>
+    Array.from(ragPagesMap.values()).sort((a, b) => (b.markdown?.length ?? 0) - (a.markdown?.length ?? 0));
 
   // Helper: aguarda até `ms` pelo RAG e devolve markdown consolidado (top páginas).
   const awaitRagBlock = async (ms: number, label: string): Promise<string> => {
-    await Promise.race([ragPromise, new Promise<void>((r) => setTimeout(r, ms))]);
-    if (ragPages.length === 0) return "";
-    const block = ragPages
+    await Promise.race([ragAll, new Promise<void>((r) => setTimeout(r, ms))]);
+    const pages = getRagPages();
+    if (pages.length === 0) return "";
+    const block = pages
       .slice(0, 3)
       .map((p, i) => `[RAG ${i + 1}] ${p.title ?? ""}\nURL: ${p.url}\n${p.markdown.slice(0, 4000)}`)
       .join("\n\n---\n\n");
-    emit("info", "educacao", `${label} — anexando ${Math.min(3, ragPages.length)} página(s) do RAG ao prompt`);
+    emit("info", "educacao", `${label} — anexando ${Math.min(3, pages.length)} pág. do RAG ao prompt`);
     return `### Páginas recuperadas via RAG Web Browser\n${block}\n`;
   };
+
+  // Busca uma página do RAG que combine com uma URL/host (usada nos fallbacks).
+  const findRagPageFor = (url: string): ApifyPage | null => {
+    const host = shortHost(url).toLowerCase();
+    const pages = getRagPages();
+    const exact = pages.find((p) => p.url === url);
+    if (exact) return exact;
+    return pages.find((p) => {
+      const h = shortHost(p.url).toLowerCase();
+      return h === host || h.endsWith(`.${host}`) || host.endsWith(`.${h}`);
+    }) ?? null;
+  };
+
+  const isRagResultTrustworthy = (ext: Extracted | null): boolean => {
+    if (!ext) return false;
+    if (!ext.secretario && ext.emails.length === 0) return false;
+    const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
+    return !!ext.secretario || hasGoodEmail || ext.telefones.length > 0;
+  };
+
 
 
   // ============================================================
@@ -803,7 +856,18 @@ export async function prospectar(
   };
   if (looksLikeSeducPage(topNome)) {
     emit("info", "educacao", `Estágio 1.5 — scrape oportunista de ${topHost}`);
-    const md = await gScrape(fc, topNome!.url, emit, "educacao", { timeoutMs: 4000, hardTimeoutMs: 4000 });
+    let md = await gScrape(fc, topNome!.url, emit, "educacao", { timeoutMs: 6000, hardTimeoutMs: 6000 });
+    let usedRag = false;
+    if (!md || md.replace(/\s+/g, " ").trim().length < 500) {
+      // Site lento ou markdown pobre — tenta reaproveitar RAG (se já retornou).
+      await Promise.race([ragAll, new Promise<void>((r) => setTimeout(r, 8000))]);
+      const ragPage = findRagPageFor(topNome!.url);
+      if (ragPage && ragPage.markdown.length > (md?.length ?? 0)) {
+        emit("info", "educacao", `Estágio 1.5 — usando página do RAG (${shortHost(ragPage.url)}, ${ragPage.markdown.length} chars)`);
+        md = ragPage.markdown.slice(0, 18000);
+        usedRag = true;
+      }
+    }
     if (md) {
       const combined = `### Site\n${md}\n\n### Snippets\n${snippetsBlock(rankedNome)}`;
       const ext = await extractWithAI(combined, topNome!.url, "educacao", municipio, uf, emit, {
@@ -815,7 +879,7 @@ export async function prospectar(
       if (ext && hasUsefulContact(ext)) {
         const hasGood = ext.emails.some((e) => !GENERIC_LOCAL.test(e)) || ext.telefones.length > 0;
         if (hasGood) {
-          emit("success", "educacao", `✨ Contato via página oficial topo (${Date.now() - t0}ms)`);
+          emit("success", "educacao", `✨ Contato via página oficial topo${usedRag ? " (via RAG)" : ""} (${Date.now() - t0}ms)`);
           return sendFinal({
             status: "found",
             hierarquia: "educacao",
@@ -823,7 +887,7 @@ export async function prospectar(
             cargo: ext.cargo ?? cargoSecretario,
             emails: ext.emails,
             telefones: ext.telefones,
-            fonte: "Site oficial da Secretaria de Educação",
+            fonte: usedRag ? "Site oficial da Secretaria de Educação (via RAG)" : "Site oficial da Secretaria de Educação",
             fonteUrl: topNome!.url,
             contexto: ext.contexto,
             nomeFonte: nomeFonte ?? (ext.secretario ? "snippet" : null),
@@ -834,6 +898,7 @@ export async function prospectar(
       }
     }
   }
+
 
   // ============================================================
   // ESTÁGIO 2 — CONTATO VINCULADO AO NOME (cascata interna)
@@ -943,7 +1008,47 @@ export async function prospectar(
   // ESTÁGIO 3 — CONTATO INSTITUCIONAL DA SECRETARIA (sem o nome)
   // ============================================================
   emit("info", "educacao", "Estágio 3 — contato institucional da Secretaria de Educação");
-  const ragBlockS3 = await awaitRagBlock(6000, "Estágio 3");
+
+  // Estágio 3.0 — RAG-first: aguarda até 60s pelo RAG e tenta extração imediata.
+  // Se resultado for confiável (nome OU e-mail específico), fecha aqui sem cair
+  // em scrapes lentos do Firecrawl que já falharam antes.
+  {
+    const ragEarly = await awaitRagBlock(60_000, "Estágio 3.0 (RAG-first)");
+    if (ragEarly) {
+      const ragTopUrl = getRagPages()[0]?.url ?? "(rag)";
+      const ext = await extractWithAI(ragEarly, ragTopUrl, "educacao", municipio, uf, emit, {
+        nomeAlvo: nomeSecretario,
+        diarioBlock,
+        modo: "site",
+        topHost,
+      });
+      if (isRagResultTrustworthy(ext)) {
+        const e = ext!;
+        const hasGood = e.emails.some((x) => !GENERIC_LOCAL.test(x)) || e.telefones.length > 0;
+        if (hasGood) {
+          emit("success", "educacao", `✨ RAG-first fechou (${Date.now() - t0}ms)`);
+          return sendFinal({
+            status: "found",
+            hierarquia: "educacao",
+            secretario: e.secretario ?? nomeSecretario,
+            cargo: e.cargo ?? cargoSecretario,
+            emails: e.emails,
+            telefones: e.telefones,
+            fonte: "RAG Web Browser (Apify)",
+            fonteUrl: ragTopUrl,
+            contexto: e.contexto,
+            nomeFonte: nomeFonte ?? (e.secretario ? "site" : null),
+            dataReferencia: e.dataReferencia ?? dataReferenciaGlobal,
+            horarioAtendimento: e.horarioAtendimento ?? null,
+          });
+        }
+        if (!melhorParcial) melhorParcial = { ext: e, url: ragTopUrl, via: "RAG Web Browser (Apify)" };
+      }
+    }
+  }
+
+  const ragBlockS3 = await awaitRagBlock(2000, "Estágio 3");
+
 
   const r3a = await tentarContato(
     `"secretaria municipal de educação" ${municipio} ${uf} (email OR contato OR telefone)`,
@@ -1047,11 +1152,12 @@ export async function prospectar(
     }
   }
 
-  // Estágio 3.4 — Tentativa exclusiva com RAG Web Browser (se disponível)
+  // Estágio 3.5 — Tentativa exclusiva com RAG Web Browser (última tentativa RAG)
   {
-    const ragBlockLate = await awaitRagBlock(30_000, "Estágio 3.4");
+    const ragBlockLate = await awaitRagBlock(90_000, "Estágio 3.5");
+    const ragPagesNow = getRagPages();
     if (ragBlockLate) {
-      const ext = await extractWithAI(ragBlockLate, ragPages[0]?.url ?? "(rag)", "educacao", municipio, uf, emit, {
+      const ext = await extractWithAI(ragBlockLate, ragPagesNow[0]?.url ?? "(rag)", "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         modo: "site",
         topHost,
@@ -1068,17 +1174,18 @@ export async function prospectar(
             emails: ext.emails,
             telefones: ext.telefones,
             fonte: "RAG Web Browser (Apify)",
-            fonteUrl: ragPages[0]?.url ?? null,
+            fonteUrl: ragPagesNow[0]?.url ?? null,
             contexto: ext.contexto,
             nomeFonte,
             dataReferencia: ext.dataReferencia ?? dataReferenciaGlobal,
             horarioAtendimento: ext.horarioAtendimento ?? null,
           });
         }
-        if (!melhorParcial) melhorParcial = { ext, url: ragPages[0]?.url ?? null, via: "RAG Web Browser" };
+        if (!melhorParcial) melhorParcial = { ext, url: ragPagesNow[0]?.url ?? null, via: "RAG Web Browser" };
       }
     }
   }
+
 
 
   // Devolve parcial bom de Educação se houver
