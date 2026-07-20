@@ -22,7 +22,7 @@ const ACTOR_ID = "apify~website-content-crawler";
 
 export async function crawlSite(
   startUrl: string,
-  opts: { timeoutMs?: number; maxRequests?: number; maxDepth?: number } = {},
+  opts: { timeoutMs?: number; maxRequests?: number; maxDepth?: number; useGlobs?: boolean } = {},
 ): Promise<ApifyCrawlResult> {
   const started = Date.now();
   const token = process.env.APIFY_TOKEN;
@@ -32,7 +32,8 @@ export async function crawlSite(
   const maxRequests = opts.maxRequests ?? 8;
   const maxDepth = opts.maxDepth ?? 2;
 
-  const input = {
+  const useGlobs = opts.useGlobs ?? true;
+  const input: Record<string, unknown> = {
     startUrls: [{ url: startUrl }],
     crawlerType: "playwright:adaptive",
     maxCrawlDepth: maxDepth,
@@ -45,7 +46,9 @@ export async function crawlSite(
     initialConcurrency: 3,
     maxConcurrency: 5,
     requestTimeoutSecs: 20,
-    includeUrlGlobs: [
+  };
+  if (useGlobs) {
+    input.includeUrlGlobs = [
       { glob: "**/educacao/**" },
       { glob: "**/educa/**" },
       { glob: "**/sme/**" },
@@ -59,8 +62,8 @@ export async function crawlSite(
       { glob: "**/endereco*" },
       { glob: "**/enderecos*" },
       { glob: startUrl.replace(/\/$/, "") + "/*" },
-    ],
-  };
+    ];
+  }
 
   const url = `https://api.apify.com/v2/acts/${ACTOR_ID}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}&timeout=${Math.floor(timeoutMs / 1000)}&format=json`;
 
@@ -79,6 +82,13 @@ export async function crawlSite(
       return { ok: false, reason: `HTTP ${res.status}: ${body.slice(0, 300)}`, elapsedMs };
     }
     const data = (await res.json()) as Array<Record<string, unknown>>;
+    // eslint-disable-next-line no-console
+    console.log("[apify] raw items:", Array.isArray(data) ? data.length : "not-array", "sample keys:", Array.isArray(data) && data[0] ? Object.keys(data[0]).slice(0, 20) : []);
+    if (Array.isArray(data) && data[0]) {
+      const s = data[0];
+      // eslint-disable-next-line no-console
+      console.log("[apify] sample item url/loadedUrl/text.len/markdown.len:", s.url, s.loadedUrl, typeof s.text === "string" ? s.text.length : null, typeof s.markdown === "string" ? s.markdown.length : null);
+    }
     const pages: ApifyPage[] = (Array.isArray(data) ? data : []).map((r) => ({
       url: String(r.url ?? r.loadedUrl ?? ""),
       title: (r.metadata as { title?: string } | undefined)?.title ?? (r.title as string | undefined) ?? null,

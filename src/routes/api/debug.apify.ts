@@ -5,6 +5,8 @@ const Input = z.object({
   url: z.string().url(),
   maxRequests: z.number().int().min(1).max(20).optional(),
   maxDepth: z.number().int().min(0).max(3).optional(),
+  timeoutMs: z.number().int().min(10_000).max(180_000).optional(),
+  useGlobs: z.boolean().optional(),
 });
 
 export const Route = createFileRoute("/api/debug/apify")({
@@ -28,6 +30,8 @@ export const Route = createFileRoute("/api/debug/apify")({
         const result = await crawlSite(parsed.data.url, {
           maxRequests: parsed.data.maxRequests,
           maxDepth: parsed.data.maxDepth,
+          timeoutMs: parsed.data.timeoutMs,
+          useGlobs: parsed.data.useGlobs,
         });
 
         if (!result.ok) {
