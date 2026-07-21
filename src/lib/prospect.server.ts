@@ -1054,6 +1054,7 @@ export async function prospectar(
         confianca: line.nome || regex.emails.length > 0 ? "alta" : "media",
         dataReferencia: dataReferenciaGlobal,
         horarioAtendimento: extractHorario(snippets),
+        equipe: [],
       }, snippets, municipio, uf);
       let ext = deterministic;
       if (!ext.secretario || (ext.emails.length === 0 && ext.telefones.length === 0)) {
