@@ -294,7 +294,7 @@ function dedupeByUrl(arr: SearchCandidate[]): SearchCandidate[] {
 const GENERIC_LOCAL = /^(ouvidoria|faleconosco|fale-conosco|falecom|contato|imprensa|gabinete|prefeito|atendimento|protocolo|rh)@/i;
 const EDUCATION_LOCAL = /^(seduc|sme|smed|educacao|educa|secretariadeeducacao|secretaria\.educacao)/i;
 // Escolas/CMEIs/creches/conselhos — NUNCA devem virar contato da Secretaria.
-const SCHOOL_LOCAL = /^(escola|colegio|col[ée]gio|emef|emei|emeif|emeief|cmei|cmeb|cei|creche|biblioteca|cras|cmdca|conselho)/i;
+const SCHOOL_LOCAL = /^(escola|colegio|col[ée]gio|em[._-]|emef|emei|emeif|emeief|cmei|cmeb|cei|creche|biblioteca|cras|cmdca|conselho)/i;
 const SCHOOL_DOMAIN = /(^|\.)(escola|colegio|cmei|emei|emef|creche)\./i;
 
 function isSchoolEmail(e: string): boolean {
