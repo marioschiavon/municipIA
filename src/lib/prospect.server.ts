@@ -683,7 +683,6 @@ export async function prospectar(
   };
   const ragAll: Promise<void> = (async () => {
     // Serializado: dois actors Playwright simultâneos estouram o limite de memória do Apify.
-    await runRag("A", ragQueryA, { maxResults: 5, timeoutMs: 120_000 });
     await runRag("B", ragQueryB, {
       maxResults: 5,
       timeoutMs: 120_000,
@@ -694,6 +693,7 @@ export async function prospectar(
         `https://www.${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/`,
       ],
     });
+    await runRag("A", ragQueryA, { maxResults: 5, timeoutMs: 120_000 });
   })().catch((e) => emit("warn", "init", `RAG erro: ${String(e)}`));
 
   const getRagPages = (): ApifyPage[] =>
