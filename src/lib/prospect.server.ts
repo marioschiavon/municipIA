@@ -206,6 +206,37 @@ async function gSearch(
   return r ?? [];
 }
 
+/** Google SERP Scraper do Apify — fallback quando Firecrawl trunca/empobrece snippets. */
+async function apifySearch(
+  query: string,
+  emit: Emit,
+  etapa: EtapaTag,
+  opts: { limit?: number; timeoutMs?: number } = {},
+): Promise<SearchCandidate[]> {
+  const limit = opts.limit ?? 10;
+  emit("info", etapa, `Apify Google SERP: "${query}"`);
+  const r = await googleSerp(query, { resultsPerPage: limit, timeoutMs: opts.timeoutMs ?? 45_000 });
+  if (!r.ok) {
+    emit("warn", etapa, `Apify SERP indisponível (${r.reason})`);
+    return [];
+  }
+  const cands: SearchCandidate[] = r.pages
+    .filter((p) => p.url && !isBlockedHost(p.url))
+    .map((p) => ({
+      url: p.url,
+      title: p.title ?? "",
+      description: p.markdown,
+      markdown: null,
+    }));
+  emit("info", etapa, `Apify SERP trouxe ${cands.length} resultado(s) em ${(r.elapsedMs / 1000).toFixed(1)}s`, {
+    candidatos: cands.slice(0, 5).map((c) => ({
+      url: c.url,
+      snippet: `${c.title} — ${c.description}`.slice(0, 260),
+    })),
+  });
+  return cands;
+}
+
 /** scrapeMarkdown com timeout duro — devolve null se estourar. */
 async function gScrape(
   fc: Firecrawl,
