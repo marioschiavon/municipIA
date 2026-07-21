@@ -16,14 +16,30 @@ const headers = [
   "E-mail",
   "Telefone",
   "Horário",
+  "Equipe",
   "Fonte",
   "Hierarquia",
   "Data da Busca",
 ];
 
+function equipeToStr(r: ExportRow): string {
+  const eq = r.result.equipe ?? [];
+  if (eq.length === 0) return "";
+  return eq
+    .map((m) => {
+      const parts = [m.nome];
+      if (m.cargo) parts.push(`(${m.cargo})`);
+      const contatos = [m.email, m.telefone].filter(Boolean).join(" / ");
+      if (contatos) parts.push(`— ${contatos}`);
+      return parts.join(" ");
+    })
+    .join(" | ");
+}
+
 function rowFor(r: ExportRow) {
   const hierMap: Record<string, string> = {
     educacao: "Secretaria de Educação",
+    camara: "Câmara Municipal",
     geral: "Secretaria Geral",
     gabinete: "Gabinete do Prefeito",
   };
@@ -35,6 +51,7 @@ function rowFor(r: ExportRow) {
     r.result.emails.join("; "),
     r.result.telefones.join("; "),
     r.result.horarioAtendimento ?? "",
+    equipeToStr(r),
     r.result.fonte ?? "",
     r.result.hierarquia ? hierMap[r.result.hierarquia] : "",
     r.buscadoEm,
