@@ -559,6 +559,24 @@ Responda APENAS com JSON válido seguindo o schema.`;
       prompt,
     });
     const out = object as NomeOnly;
+    // Anti-alucinação da equipe.
+    if (Array.isArray(out.equipe) && out.equipe.length > 0) {
+      const srcNorm = normNome(conteudo);
+      const titular = out.secretario ? normNome(out.secretario) : "";
+      out.equipe = dedupeEquipe(
+        out.equipe.filter((m) => {
+          if (!m?.nome) return false;
+          const n = normNome(m.nome);
+          if (n.length < 5) return false;
+          if (titular && n === titular) return false;
+          const tokens = n.split(" ").filter((t) => t.length >= 3);
+          if (tokens.length < 2) return false;
+          return tokens.every((t) => srcNorm.includes(t));
+        }),
+      );
+    } else {
+      out.equipe = [];
+    }
     emit(
       out.confianca === "baixa" ? "warn" : "success",
       "nome",
