@@ -247,7 +247,28 @@ export function ResultCard({ municipio, uf, state, slow }: Props) {
               value={result.horarioAtendimento}
             />
           )}
-          {result.fonte && (
+          {result.equipe && result.equipe.length > 0 && (
+            <Field
+              icon={<Users className="h-4 w-4" />}
+              label={`Equipe (${result.equipe.length})`}
+              value={
+                <ul className="mt-1 space-y-1.5">
+                  {result.equipe.map((m, i) => (
+                    <li key={i} className="rounded border border-slate-100 bg-slate-50 px-2.5 py-1.5 text-xs">
+                      <div className="font-medium text-slate-800">{m.nome}</div>
+                      {m.cargo && <div className="text-slate-600">{m.cargo}</div>}
+                      {(m.email || m.telefone) && (
+                        <div className="mt-0.5 text-slate-500">
+                          {m.email && <span className="mr-2">✉ {m.email}</span>}
+                          {m.telefone && <span>☎ {m.telefone}</span>}
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              }
+            />
+          )}
             <Field
               icon={<ExternalLink className="h-4 w-4" />}
               label="Fonte"
