@@ -14,7 +14,113 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      municipios: {
+        Row: {
+          created_at: string
+          escolas: number
+          fnde_anual: number
+          ibge_id: number
+          matriculas_total: number
+          nome: string
+          pib_percapita: number
+          populacao: number
+          slug: string
+          uf: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          escolas?: number
+          fnde_anual?: number
+          ibge_id: number
+          matriculas_total?: number
+          nome: string
+          pib_percapita?: number
+          populacao?: number
+          slug: string
+          uf: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          escolas?: number
+          fnde_anual?: number
+          ibge_id?: number
+          matriculas_total?: number
+          nome?: string
+          pib_percapita?: number
+          populacao?: number
+          slug?: string
+          uf?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      municipios_educacao: {
+        Row: {
+          atualizado_em: string | null
+          breakdown: Json
+          cargo: string | null
+          created_at: string
+          email: string | null
+          equipe: Json
+          faixa: string
+          fonte: string | null
+          fonte_url: string | null
+          horario: string | null
+          ibge_id: number
+          score: number
+          secretario: string | null
+          status: string
+          telefone: string | null
+          updated_at: string
+        }
+        Insert: {
+          atualizado_em?: string | null
+          breakdown?: Json
+          cargo?: string | null
+          created_at?: string
+          email?: string | null
+          equipe?: Json
+          faixa?: string
+          fonte?: string | null
+          fonte_url?: string | null
+          horario?: string | null
+          ibge_id: number
+          score?: number
+          secretario?: string | null
+          status?: string
+          telefone?: string | null
+          updated_at?: string
+        }
+        Update: {
+          atualizado_em?: string | null
+          breakdown?: Json
+          cargo?: string | null
+          created_at?: string
+          email?: string | null
+          equipe?: Json
+          faixa?: string
+          fonte?: string | null
+          fonte_url?: string | null
+          horario?: string | null
+          ibge_id?: number
+          score?: number
+          secretario?: string | null
+          status?: string
+          telefone?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "municipios_educacao_ibge_id_fkey"
+            columns: ["ibge_id"]
+            isOneToOne: true
+            referencedRelation: "municipios"
+            referencedColumns: ["ibge_id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
