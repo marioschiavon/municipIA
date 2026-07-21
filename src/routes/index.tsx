@@ -45,7 +45,6 @@ async function streamProspect(
   municipio: string,
   uf: string,
   ibgeId: number,
-  useDiario: boolean,
   signal: AbortSignal,
   onEvent: (evt: ProgressEvent) => void,
 ): Promise<ProspectResult | null> {
