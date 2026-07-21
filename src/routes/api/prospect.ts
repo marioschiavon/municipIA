@@ -5,9 +5,7 @@ const Input = z.object({
   municipio: z.string().min(1),
   uf: z.string().length(2),
   ibgeId: z.number().int().positive().optional(),
-  
 });
-
 
 export const Route = createFileRoute("/api/prospect")({
   server: {
@@ -37,8 +35,30 @@ export const Route = createFileRoute("/api/prospect")({
               controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
             };
             try {
-              await prospectar(municipio, uf, (evt) => send(evt), ibgeId);
-
+              const result = await prospectar(municipio, uf, (evt) => send(evt), ibgeId);
+              // Persistir se temos ibgeId
+              if (ibgeId && result) {
+                try {
+                  const { persistProspectResult } = await import("@/lib/catalog-update.server");
+                  await persistProspectResult(ibgeId, result);
+                  send({
+                    kind: "progress",
+                    level: "success",
+                    etapa: "final",
+                    message: "Dados salvos no catálogo e score recalculado",
+                    ts: Date.now(),
+                  });
+                } catch (e) {
+                  send({
+                    kind: "progress",
+                    level: "error",
+                    etapa: "final",
+                    message: "Falha ao salvar no catálogo",
+                    data: String(e),
+                    ts: Date.now(),
+                  });
+                }
+              }
             } catch (e) {
               send({
                 kind: "progress",
