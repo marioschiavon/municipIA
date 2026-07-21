@@ -159,35 +159,33 @@ function Index() {
       }
 
       // === CACHE: tentar servir do localStorage antes de bater na rede ===
-      if (!forceRefresh) {
-        const cached = getCached(m.id);
-        if (cached) {
-          const ageMin = Math.round((Date.now() - cached.savedAt) / 60000);
-          const cacheEvt: ProgressEvent = {
-            kind: "progress",
-            level: "success",
-            etapa: "init",
-            message: `Cache local: resultado de ${cached.date} (há ${ageMin} min) — sem nova consulta`,
-            data: { savedAt: cached.savedAt },
-            ts: Date.now(),
-          };
-          const finalEvt: ProgressEvent = {
-            kind: "final",
+      const cached = getCached(m.id);
+      if (cached) {
+        const ageMin = Math.round((Date.now() - cached.savedAt) / 60000);
+        const cacheEvt: ProgressEvent = {
+          kind: "progress",
+          level: "success",
+          etapa: "init",
+          message: `Cache local: resultado de ${cached.date} (há ${ageMin} min) — sem nova consulta`,
+          data: { savedAt: cached.savedAt },
+          ts: Date.now(),
+        };
+        const finalEvt: ProgressEvent = {
+          kind: "final",
+          result: cached.result,
+          ts: Date.now(),
+        };
+        logDebug("success", scope, cacheEvt.message);
+        patchCard(key, (c) => ({
+          ...c,
+          state: {
+            phase: "done",
             result: cached.result,
-            ts: Date.now(),
-          };
-          logDebug("success", scope, cacheEvt.message);
-          patchCard(key, (c) => ({
-            ...c,
-            state: {
-              phase: "done",
-              result: cached.result,
-              events: [...c.state.events, cacheEvt, finalEvt],
-            },
-            slow: false,
-          }));
-          continue;
-        }
+            events: [...c.state.events, cacheEvt, finalEvt],
+          },
+          slow: false,
+        }));
+        continue;
       }
 
       slowTimers.current[key] = window.setTimeout(() => {
