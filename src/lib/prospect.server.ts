@@ -231,6 +231,7 @@ function snippetsBlock(cands: SearchCandidate[]): string {
 
 function preferGov(cands: SearchCandidate[], extra?: (u: string) => boolean): SearchCandidate[] {
   const OTHER_SECRETARIAS = /(esporte|saude|sa[uú]de|obras|tr[âa]nsito|transito|turismo|cultura|assistencia|assist[êe]ncia|meio[-_.\s]?ambiente|fazenda|planejamento|habitacao|habita[çc][ãa]o|agricultura)/i;
+  const SCHOOL_PAGE = /(\bescola\b|cmei|creche|colegio|col[ée]gio|educacao-infantil|ensino-fundamental|educacao-especial|alimentacao-escolar)/i;
   const score = (c: SearchCandidate) => {
     let s = 0;
     const blob = `${c.url} ${c.title ?? ""} ${c.description ?? ""}`;
@@ -240,6 +241,8 @@ function preferGov(cands: SearchCandidate[], extra?: (u: string) => boolean): Se
     if (c.markdown) s += 2;
     // Penaliza fortemente páginas claramente de OUTRAS secretarias.
     if (OTHER_SECRETARIAS.test(blob) && !/(educa|seduc|sme|smed)/i.test(blob)) s -= 8;
+    // Página de escola/departamento/unidade não deve vencer a página-mãe da Secretaria.
+    if (SCHOOL_PAGE.test(blob) && !/secret[áa]ri[ao]\s*:/i.test(blob)) s -= 12;
     return -s;
   };
   return [...cands].sort((a, b) => score(a) - score(b));
