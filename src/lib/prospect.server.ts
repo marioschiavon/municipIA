@@ -982,6 +982,75 @@ export async function prospectar(
     }
   }
 
+  // Estágio 1.6 — Google SERP Scraper do Apify.
+  // Em alguns portais lentos (ex.: SJP), o snippet do Google via Apify traz mais
+  // contexto que o Firecrawl: nome/e-mail no resultado principal e telefone/horário
+  // no snippet da página oficial.
+  {
+    emit("info", "educacao", "Estágio 1.6 — enriquecendo por Apify Google SERP (snippets ricos)");
+    const [apifyNome, apifyPagina] = await Promise.all([
+      apifySearch(
+        `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual contato email telefone`,
+        emit,
+        "educacao",
+        { limit: 10, timeoutMs: 45_000 },
+      ),
+      apifySearch(
+        `site:www.${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/ ${municipio} Secretaria de Educação email telefone horário`,
+        emit,
+        "educacao",
+        { limit: 10, timeoutMs: 45_000 },
+      ),
+    ]);
+    const apifyCands = dedupeByUrl([...apifyNome, ...apifyPagina]);
+    addToPool(apifyCands);
+    const official = preferGov(apifyCands.filter((c) => looksLikeOfficialEducationPage(c, slug, ufLow)), (u) => /(educa|seduc|sme)/i.test(u));
+    const ranked = official.length > 0 ? official : preferGov(apifyCands, (u) => /(educa|seduc|sme)/i.test(u));
+    const snippets = snippetsBlock(ranked);
+    if (snippets) {
+      const line = extractSecretaryLine(snippets);
+      const regex = extractContactsRegex(snippets);
+      const deterministic: Extracted = filterPresent({
+        secretario: line.nome ?? nomeSecretario,
+        cargo: line.cargo ?? cargoSecretario,
+        emails: filterEmailsForFinal([...(line.email ? [line.email] : []), ...regex.emails], municipio, uf, topHost),
+        telefones: regex.telefones,
+        contexto: "Dados extraídos de snippets ricos do Google SERP Scraper do Apify.",
+        confianca: line.nome || regex.emails.length > 0 ? "alta" : "media",
+        dataReferencia: dataReferenciaGlobal,
+        horarioAtendimento: extractHorario(snippets),
+      }, snippets, municipio, uf);
+      let ext = deterministic;
+      if (!ext.secretario || (ext.emails.length === 0 && ext.telefones.length === 0)) {
+        const aiExt = await extractWithAI(snippets, ranked[0]?.url ?? "(apify-serp)", "educacao", municipio, uf, emit, {
+          nomeAlvo: nomeSecretario ?? line.nome,
+          modo: "snippets",
+          topHost,
+        });
+        if (aiExt) ext = mergeExtracted(aiExt, deterministic, municipio, uf, topHost);
+      }
+      const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
+      if (ext.secretario && (hasGoodEmail || ext.telefones.length > 0)) {
+        emit("success", "educacao", `✨ Contato enriquecido via Apify SERP (${Date.now() - t0}ms)`);
+        return sendFinal({
+          status: hasGoodEmail ? "found" : "partial",
+          hierarquia: "educacao",
+          secretario: ext.secretario,
+          cargo: ext.cargo ?? cargoSecretario,
+          emails: ext.emails,
+          telefones: ext.telefones,
+          fonte: "Google SERP Scraper (Apify)",
+          fonteUrl: ranked[0]?.url ?? null,
+          contexto: ext.contexto,
+          nomeFonte: nomeFonte ?? (ext.secretario ? "snippet" : null),
+          dataReferencia: ext.dataReferencia ?? dataReferenciaGlobal,
+          horarioAtendimento: ext.horarioAtendimento ?? null,
+        });
+      }
+      if (hasUsefulContact(ext) && !melhorParcial) melhorParcial = { ext, url: ranked[0]?.url ?? null, via: "Google SERP Scraper (Apify)" };
+    }
+  }
+
 
   // ============================================================
   // ESTÁGIO 2 — CONTATO VINCULADO AO NOME (cascata interna)
