@@ -269,6 +269,7 @@ export function ResultCard({ municipio, uf, state, slow }: Props) {
               }
             />
           )}
+          {result.fonte && (
             <Field
               icon={<ExternalLink className="h-4 w-4" />}
               label="Fonte"
