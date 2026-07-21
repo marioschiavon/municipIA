@@ -205,11 +205,19 @@ async function gSearch(
   query: string,
   emit: Emit,
   etapa: EtapaTag,
-  opts: { limit?: number; tbs?: string; withScrape?: boolean; timeoutMs?: number } = {},
+  opts: { limit?: number; tbs?: string; withScrape?: boolean; timeoutMs?: number; uf?: string } = {},
 ): Promise<SearchCandidate[]> {
-  const { timeoutMs = 8000, ...rest } = opts;
+  const { timeoutMs = 8000, uf, ...rest } = opts;
   const r = await withTimeout(googleSearch(fc, query, emit, etapa, rest), timeoutMs, `googleSearch("${query.slice(0, 60)}")`, emit, etapa);
-  return r ?? [];
+  const cands = r ?? [];
+  if (!uf) return cands;
+  const ufLow = uf.toLowerCase();
+  const filtered = cands.filter((c) => {
+    const hitUf = govUf(c.url);
+    return !hitUf || hitUf === ufLow;
+  });
+  if (filtered.length !== cands.length) emit("warn", etapa, `Removi ${cands.length - filtered.length} resultado(s) .gov.br de outra UF`);
+  return filtered;
 }
 
 /** Google SERP Scraper do Apify — fallback quando Firecrawl trunca/empobrece snippets. */
@@ -217,7 +225,7 @@ async function apifySearch(
   query: string,
   emit: Emit,
   etapa: EtapaTag,
-  opts: { limit?: number; timeoutMs?: number } = {},
+  opts: { limit?: number; timeoutMs?: number; uf?: string } = {},
 ): Promise<SearchCandidate[]> {
   const limit = opts.limit ?? 10;
   emit("info", etapa, `Apify Google SERP: "${query}"`);
@@ -226,8 +234,9 @@ async function apifySearch(
     emit("warn", etapa, `Apify SERP indisponível (${r.reason})`);
     return [];
   }
+  const ufLow = opts.uf?.toLowerCase();
   const cands: SearchCandidate[] = r.pages
-    .filter((p) => p.url && !isBlockedHost(p.url))
+    .filter((p) => p.url && !isBlockedHost(p.url) && (!ufLow || !govUf(p.url) || govUf(p.url) === ufLow))
     .map((p) => ({
       url: p.url,
       title: p.title ?? "",
