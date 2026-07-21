@@ -436,6 +436,28 @@ function normNome(s: string): string {
   return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+/** Anti-alucinação da equipe: cada nome precisa aparecer literalmente (por tokens) no texto-fonte. */
+function filterEquipeAgainstSource(
+  equipe: EquipeMembro[],
+  conteudo: string,
+  secretario?: string | null,
+): EquipeMembro[] {
+  if (!Array.isArray(equipe) || equipe.length === 0) return [];
+  const srcNorm = normNome(conteudo);
+  const titular = secretario ? normNome(secretario) : "";
+  return dedupeEquipe(
+    equipe.filter((m) => {
+      if (!m?.nome) return false;
+      const n = normNome(m.nome);
+      if (n.length < 5) return false;
+      if (titular && n === titular) return false;
+      const tokens = n.split(" ").filter((t) => t.length >= 3);
+      if (tokens.length < 2) return false;
+      return tokens.every((t) => srcNorm.includes(t));
+    }),
+  );
+}
+
 function dedupeEquipe(list: EquipeMembro[]): EquipeMembro[] {
   const byKey = new Map<string, EquipeMembro>();
   for (const m of list) {
@@ -560,27 +582,15 @@ Responda APENAS com JSON válido seguindo o schema.`;
     });
     const out = object as NomeOnly;
     // Anti-alucinação da equipe.
-    if (Array.isArray(out.equipe) && out.equipe.length > 0) {
-      const srcNorm = normNome(conteudo);
-      const titular = out.secretario ? normNome(out.secretario) : "";
-      out.equipe = dedupeEquipe(
-        out.equipe.filter((m) => {
-          if (!m?.nome) return false;
-          const n = normNome(m.nome);
-          if (n.length < 5) return false;
-          if (titular && n === titular) return false;
-          const tokens = n.split(" ").filter((t) => t.length >= 3);
-          if (tokens.length < 2) return false;
-          return tokens.every((t) => srcNorm.includes(t));
-        }),
-      );
-    } else {
-      out.equipe = [];
+    const beforeEqNome = out.equipe?.length ?? 0;
+    out.equipe = filterEquipeAgainstSource(out.equipe, conteudo, out.secretario);
+    if (beforeEqNome !== out.equipe.length) {
+      emit("info", "nome", `Equipe: IA propôs ${beforeEqNome}, ${out.equipe.length} confirmados no texto`);
     }
     emit(
       out.confianca === "baixa" ? "warn" : "success",
       "nome",
-      `Nome: ${out.secretario ?? "—"} · confiança ${out.confianca}${out.dataReferencia ? ` · ref ${out.dataReferencia}` : ""}`,
+      `Nome: ${out.secretario ?? "—"} · confiança ${out.confianca}${out.dataReferencia ? ` · ref ${out.dataReferencia}` : ""}${out.equipe.length ? ` · equipe ${out.equipe.length}` : ""}`,
       out,
     );
     return out;
@@ -684,31 +694,15 @@ Responda APENAS com JSON válido seguindo o schema.`;
       emit("warn", etapa, `Descartei ${beforeSchool - out.emails.length} e-mail(s) de escola/CMEI`);
     }
     // Anti-alucinação da equipe: exige que cada NOME apareça literalmente no texto (por tokens normalizados).
-    if (Array.isArray(out.equipe) && out.equipe.length > 0) {
-      const srcNorm = normNome(conteudo);
-      const titular = out.secretario ? normNome(out.secretario) : "";
-      const beforeEq = out.equipe.length;
-      out.equipe = dedupeEquipe(
-        out.equipe.filter((m) => {
-          if (!m?.nome) return false;
-          const n = normNome(m.nome);
-          if (n.length < 5) return false;
-          if (titular && n === titular) return false;
-          const tokens = n.split(" ").filter((t) => t.length >= 3);
-          if (tokens.length < 2) return false;
-          return tokens.every((t) => srcNorm.includes(t));
-        }),
-      );
-      if (beforeEq !== out.equipe.length) {
-        emit("warn", etapa, `Descartei ${beforeEq - out.equipe.length} membro(s) da equipe sem correspondência literal no texto`);
-      }
-    } else {
-      out.equipe = [];
+    const beforeEq = out.equipe?.length ?? 0;
+    out.equipe = filterEquipeAgainstSource(out.equipe, conteudo, out.secretario);
+    if (beforeEq !== out.equipe.length) {
+      emit("info", etapa, `Equipe: IA propôs ${beforeEq}, ${out.equipe.length} confirmados no texto (${beforeEq - out.equipe.length} descartado(s) sem correspondência literal)`);
     }
     emit(
       out.confianca === "baixa" ? "warn" : "success",
       etapa,
-      `IA respondeu — ${out.emails.length} email · ${out.telefones.length} tel · confiança ${out.confianca}${out.horarioAtendimento ? ` · 🕒` : ""}${out.dataReferencia ? ` · ref ${out.dataReferencia}` : ""}`,
+      `IA respondeu — ${out.emails.length} email · ${out.telefones.length} tel · ${out.equipe.length} equipe · confiança ${out.confianca}${out.horarioAtendimento ? ` · 🕒` : ""}${out.dataReferencia ? ` · ref ${out.dataReferencia}` : ""}`,
       out,
     );
     return out;
@@ -735,6 +729,67 @@ Responda APENAS com JSON válido seguindo o schema.`;
 
 function hasUsefulContact(e: Extracted | null): boolean {
   return !!e && (e.emails.length > 0 || e.telefones.length > 0);
+}
+
+const EnrichSchema = z.object({
+  equipe: EquipeSchema,
+  horarioAtendimento: z.string().nullable().optional().default(null),
+});
+
+/**
+ * Segunda passada, focada SÓ em equipe/horário, sobre o MESMO conteúdo já baixado
+ * (sem custo de rede extra). Roda quando a extração principal já achou um contato
+ * bom mas voltou sem equipe/horário — a IA principal prioriza secretário/e-mail e
+ * frequentemente deixa esses campos secundários na mesa num único prompt.
+ */
+async function extractEquipeHorario(
+  conteudo: string,
+  url: string,
+  municipio: string,
+  uf: string,
+  emit: Emit,
+  etapa: EtapaTag,
+  secretarioConhecido: string | null,
+): Promise<{ equipe: EquipeMembro[]; horarioAtendimento: string | null } | null> {
+  const provider = getProvider();
+  const prompt = `O(a) titular da Secretaria Municipal de Educação de ${municipio}/${uf} já foi identificado(a)${secretarioConhecido ? ` (${secretarioConhecido})` : ""}. Releia o texto abaixo À PROCURA APENAS de:
+
+1) EQUIPE: outras pessoas citadas com NOME + CARGO ligadas à Secretaria (Secretário(a) Adjunto(a), Chefe de Gabinete, Diretor(a) de Departamento, Coordenador(a) de área/etapa — Educação Infantil, Fundamental, Especial, EJA, Alimentação Escolar, Transporte, Formação, Tecnologia —, Assessor(a), Chefe de Divisão, Assistente, Ouvidor(a)).
+   - Para cada pessoa: {"nome", "cargo", "email" ou null, "telefone" ou null}. Só inclua email/telefone se aparecerem LITERALMENTE ao lado da pessoa.
+   - NÃO inclua diretores(as) de escola/CMEI individuais nem repita o(a) titular.
+2) HORÁRIO DE ATENDIMENTO: só se aparecer literalmente (ex.: "Segunda a Sexta, 8h às 17h").
+
+NUNCA invente — só o que aparece LITERALMENTE no texto. Se não achar nada num dos dois campos, devolva vazio/null nesse campo.
+
+URL: ${url}
+Conteúdo:
+"""
+${conteudo}
+"""
+
+Responda APENAS com JSON válido seguindo o schema.`;
+  try {
+    const { object } = await generateObject({
+      model: provider("google/gemini-3-flash-preview"),
+      schema: EnrichSchema,
+      prompt,
+    });
+    const out = object as { equipe: EquipeMembro[]; horarioAtendimento: string | null };
+    const beforeEq = out.equipe?.length ?? 0;
+    const equipe = filterEquipeAgainstSource(out.equipe, conteudo, secretarioConhecido);
+    if (beforeEq !== equipe.length) {
+      emit("info", etapa, `Enriquecimento equipe: IA propôs ${beforeEq}, ${equipe.length} confirmados no texto`);
+    }
+    let horarioAtendimento = out.horarioAtendimento?.trim() || null;
+    if (horarioAtendimento && !conteudo.toLowerCase().includes(horarioAtendimento.toLowerCase().slice(0, 20))) {
+      emit("warn", etapa, `Enriquecimento: descartei horário sem correspondência literal ("${horarioAtendimento}")`);
+      horarioAtendimento = null;
+    }
+    return { equipe, horarioAtendimento };
+  } catch (e) {
+    emit("warn", etapa, "Enriquecimento equipe/horário falhou", String(e));
+    return null;
+  }
 }
 
 function fonteLabel(etapa: Hierarquia) {
@@ -791,6 +846,35 @@ export async function prospectar(
   const runExtract: typeof extractWithAI = async (...args) => {
     const r = await extractWithAI(...args);
     if (r?.equipe?.length) pushEquipe(r.equipe);
+    // Enriquecimento: quando a extração principal já achou um contato útil mas
+    // voltou sem equipe/horário, faz uma 2ª passada focada SÓ nesses campos sobre
+    // o MESMO conteúdo (sem custo de rede extra) — a passada principal costuma
+    // priorizar secretário/e-mail e deixar detalhes secundários na mesa.
+    if (r && hasUsefulContact(r) && (r.equipe.length === 0 || !r.horarioAtendimento)) {
+      const [conteudo, url, etapa] = args;
+      if (conteudo.length > 800) {
+        emit("info", etapa, "Enriquecimento — 2ª passada focada em equipe/horário sobre a mesma fonte");
+        const extra = await extractEquipeHorario(conteudo, url, municipio, uf, emit, etapa, r.secretario);
+        if (extra) {
+          if (extra.equipe.length > 0) {
+            r.equipe = dedupeEquipe([...r.equipe, ...extra.equipe]);
+            pushEquipe(extra.equipe);
+          }
+          if (!r.horarioAtendimento && extra.horarioAtendimento) {
+            r.horarioAtendimento = extra.horarioAtendimento;
+          }
+          if (extra.equipe.length > 0 || extra.horarioAtendimento) {
+            const parts = [
+              extra.equipe.length > 0 ? `+${extra.equipe.length} equipe` : null,
+              extra.horarioAtendimento ? "horário" : null,
+            ].filter(Boolean);
+            emit("success", etapa, `Enriquecimento trouxe ${parts.join(" · ")}`);
+          } else {
+            emit("info", etapa, "Enriquecimento não achou equipe/horário adicionais nesta fonte");
+          }
+        }
+      }
+    }
     return r;
   };
   const runExtractNome: typeof extractNomeWithAI = async (...args) => {
