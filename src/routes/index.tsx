@@ -414,7 +414,7 @@ function Index() {
           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 p-4 text-xs leading-relaxed text-slate-600">
             <p className="font-semibold text-slate-700">Como o robô procura (escalonado)</p>
             <ol className="mt-1.5 list-decimal space-y-0.5 pl-4">
-              <li><b>A.</b> Descobre o <b>nome</b> do(a) Secretário(a) — site oficial + Querido Diário</li>
+              <li><b>A.</b> Descobre o <b>nome</b> do(a) Secretário(a) — site oficial, buscas no Google e RAG</li>
               <li><b>B.</b> Com o nome em mãos, faz <b>novas buscas</b> atrás de e-mail/telefone dessa pessoa</li>
               <li><b>C.</b> Contato institucional da Secretaria de Educação (fallback)</li>
               <li><b>D.</b> Último recurso: contato geral da prefeitura → gabinete do prefeito</li>
