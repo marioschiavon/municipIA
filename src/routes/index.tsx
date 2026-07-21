@@ -51,7 +51,7 @@ async function streamProspect(
   const res = await fetch("/api/prospect", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ municipio, uf, ibgeId, useDiario }),
+    body: JSON.stringify({ municipio, uf, ibgeId }),
     signal,
   });
 
