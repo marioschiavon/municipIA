@@ -87,8 +87,6 @@ function Index() {
   const [selected, setSelected] = useState<Municipio[]>([]);
   const [cards, setCards] = useState<RunningCard[]>([]);
   const [running, setRunning] = useState(false);
-  const [forceRefresh, setForceRefresh] = useState(false);
-  const [useDiario, setUseDiario] = useState(false);
   const [cacheCount, setCacheCount] = useState(0);
 
   const slowTimers = useRef<Record<string, number>>({});
