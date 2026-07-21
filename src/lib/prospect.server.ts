@@ -975,7 +975,7 @@ export async function prospectar(
   }
 
   if (snippetsNome) {
-    const nomeRes = await extractNomeWithAI(snippetsNome, topNome?.url ?? "(snippets)", municipio, uf, emit, {
+    const nomeRes = await runExtractNome(snippetsNome, topNome?.url ?? "(snippets)", municipio, uf, emit, {
       diarioBlock,
     });
 
@@ -1078,7 +1078,7 @@ export async function prospectar(
     }
     if (md) {
       const combined = `### Site\n${md}\n\n### Snippets\n${snippetsBlock(rankedNome)}`;
-      const ext = await extractWithAI(combined, topNome!.url, "educacao", municipio, uf, emit, {
+      const ext = await runExtract(combined, topNome!.url, "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         diarioBlock,
         modo: "site",
@@ -1146,7 +1146,7 @@ export async function prospectar(
       }, snippets, municipio, uf);
       let ext = deterministic;
       if (!ext.secretario || (ext.emails.length === 0 && ext.telefones.length === 0)) {
-        const aiExt = await extractWithAI(snippets, ranked[0]?.url ?? "(apify-serp)", "educacao", municipio, uf, emit, {
+        const aiExt = await runExtract(snippets, ranked[0]?.url ?? "(apify-serp)", "educacao", municipio, uf, emit, {
           nomeAlvo: nomeSecretario ?? line.nome,
           modo: "snippets",
           topHost,
@@ -1190,7 +1190,7 @@ export async function prospectar(
     if (cands.length === 0) return null;
     const ranked = preferGov(cands, (u) => /(educa|seduc|sme)/i.test(u));
     const snippets = snippetsBlock(ranked);
-    const ext = await extractWithAI(snippets, ranked[0]?.url ?? "(snippets)", hierarquia, municipio, uf, emit, {
+    const ext = await runExtract(snippets, ranked[0]?.url ?? "(snippets)", hierarquia, municipio, uf, emit, {
       nomeAlvo: nomeSecretario,
       modo: "snippets",
       topHost,
@@ -1251,7 +1251,7 @@ export async function prospectar(
       const md = await gScrape(fc, topGov.url, emit, "contato-secretario", { hardTimeoutMs: 8000 });
       if (md) {
         const combined = `### Site\n${md}`;
-        const ext = await extractWithAI(combined, topGov.url, "educacao", municipio, uf, emit, {
+        const ext = await runExtract(combined, topGov.url, "educacao", municipio, uf, emit, {
           nomeAlvo: nomeSecretario,
           modo: "site",
           topHost,
@@ -1293,7 +1293,7 @@ export async function prospectar(
     const ragEarly = await awaitRagBlock(60_000, "Estágio 3.0 (RAG-first)");
     if (ragEarly) {
       const ragTopUrl = getRagPages()[0]?.url ?? "(rag)";
-      const ext = await extractWithAI(ragEarly, ragTopUrl, "educacao", municipio, uf, emit, {
+      const ext = await runExtract(ragEarly, ragTopUrl, "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         diarioBlock,
         modo: "site",
@@ -1366,7 +1366,7 @@ export async function prospectar(
       emit("info", "educacao", `Estágio 3.2 — scrape página de contato ${shortHost(cu)}`);
       const cmd = await gScrape(fc, cu, emit, "educacao", { hardTimeoutMs: 8000 });
       if (!cmd) continue;
-      const cext = await extractWithAI(`### Página de Contato\n${cmd}`, cu, "educacao", municipio, uf, emit, {
+      const cext = await runExtract(`### Página de Contato\n${cmd}`, cu, "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         modo: "site",
         topHost,
@@ -1400,7 +1400,7 @@ export async function prospectar(
     const md = await gScrape(fc, top3.url, emit, "educacao", { hardTimeoutMs: 8000 });
     if (md) {
       const combined = [`### Site\n${md}`, ragBlockS3].filter(Boolean).join("\n\n");
-      const ext = await extractWithAI(combined, top3.url, "educacao", municipio, uf, emit, {
+      const ext = await runExtract(combined, top3.url, "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         modo: "site",
         topHost,
@@ -1434,7 +1434,7 @@ export async function prospectar(
     const ragBlockLate = await awaitRagBlock(90_000, "Estágio 3.5");
     const ragPagesNow = getRagPages();
     if (ragBlockLate) {
-      const ext = await extractWithAI(ragBlockLate, ragPagesNow[0]?.url ?? "(rag)", "educacao", municipio, uf, emit, {
+      const ext = await runExtract(ragBlockLate, ragPagesNow[0]?.url ?? "(rag)", "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         modo: "site",
         topHost,
@@ -1495,12 +1495,12 @@ export async function prospectar(
     const ranked = preferGov(cands);
     if (ranked.length === 0) return null;
     const snippets = snippetsBlock(ranked);
-    let ext = await extractWithAI(snippets, ranked[0].url, etapa, municipio, uf, emit, { modo: "snippets", topHost });
+    let ext = await runExtract(snippets, ranked[0].url, etapa, municipio, uf, emit, { modo: "snippets", topHost });
     if (!ext || !hasUsefulContact(ext)) {
       const md = await gScrape(fc, ranked[0].url, emit, etapa, { hardTimeoutMs: 5000 });
       if (md) {
         const combined = [snippets, `### Site\n${md}`].filter(Boolean).join("\n\n");
-        ext = await extractWithAI(combined, ranked[0].url, etapa, municipio, uf, emit, { modo: "site", topHost });
+        ext = await runExtract(combined, ranked[0].url, etapa, municipio, uf, emit, { modo: "site", topHost });
       }
     }
     if (!ext || !hasUsefulContact(ext)) return null;
