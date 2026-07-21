@@ -215,8 +215,7 @@ async function gScrape(
   opts: { timeoutMs?: number; hardTimeoutMs?: number } = {},
 ): Promise<string | null> {
   const hard = opts.hardTimeoutMs ?? 8000;
-  const inner: { timeoutMs?: number } = {};
-  if (opts.timeoutMs !== undefined) inner.timeoutMs = opts.timeoutMs;
+  const inner: { timeoutMs?: number } = { timeoutMs: opts.timeoutMs ?? hard };
   return withTimeout(scrapeMarkdown(fc, url, emit, etapa, inner), hard, `scrapeMarkdown(${shortHost(url)})`, emit, etapa);
 }
 
