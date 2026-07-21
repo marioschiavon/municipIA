@@ -926,6 +926,8 @@ export async function prospectar(
     emit("warn", "nome", "Estágio 1 não fechou o nome — seguirei para contato institucional");
   }
 
+  let melhorParcial: { ext: Extracted; url: string | null; via: string } | null = null;
+
   // ============================================================
   // ESTÁGIO 1.5 — Scrape oportunista do topo (se for página da Secretaria)
   // ============================================================
@@ -1055,8 +1057,6 @@ export async function prospectar(
   // ============================================================
   // ESTÁGIO 2 — CONTATO VINCULADO AO NOME (cascata interna)
   // ============================================================
-  let melhorParcial: { ext: Extracted; url: string | null; via: string } | null = null;
-
   const tentarContato = async (
     query: string,
     via: string,
