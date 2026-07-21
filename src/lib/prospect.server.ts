@@ -625,6 +625,12 @@ REGRAS DE E-MAIL (CRÍTICO — não erre isso):
 HORÁRIO DE ATENDIMENTO:
 - Preencha "horarioAtendimento" SOMENTE se aparecer literalmente no texto (ex.: "Segunda a Sexta, 8h às 17h", "Seg–Sex 08:00–17:00"). Senão null.
 
+EQUIPE (importantíssimo):
+- Devolva em "equipe" TODAS as pessoas citadas com NOME + CARGO ligadas à Secretaria: Secretário(a) Adjunto(a), Chefe de Gabinete, Diretor(a) de Departamento, Coordenador(a) de área/etapa (Educação Infantil, Fundamental, Especial, EJA, Alimentação Escolar, Transporte, Formação, Tecnologia), Assessor(a), Chefe de Divisão, Assistente, Ouvidor(a).
+- Para cada pessoa: {"nome": "...", "cargo": "...", "email": "..." ou null, "telefone": "..." ou null}. Só inclua email/telefone se aparecerem LITERALMENTE ao lado da pessoa no texto.
+- NÃO inclua diretores(as) de escolas/CMEIs individuais.
+- Não repita o(a) titular no array "equipe" (ele(a) já vai em "secretario"/"cargo").
+
 DATA: preencha "dataReferencia" (ex.: "${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}") quando o texto indicar; senão null.
 
 URL: ${url}
