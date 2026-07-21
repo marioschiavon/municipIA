@@ -1,79 +1,75 @@
 
-## Diagnóstico do caso SJP
+# MunicipIA — Pivot para Catálogo Nacional com Score de Prospecção (Alpha v0.28)
 
-- `www.sjp.pr.gov.br/secretarias/secretaria-educacao/` **tem tudo** (nome, cargo, e-mails, telefones, horário), mas o servidor é lento — meu próprio fetch externo estourou timeout, e o `gScrape` do pipeline tem `hardTimeoutMs` de 4–8s.
-- O RAG Web Browser (Playwright, v0.19/v0.20) renderiza esse tipo de página **mas** hoje ele:
-  - roda com timeout de **60s** só,
-  - é aguardado por apenas **6s no Estágio 3** e **30s no Estágio 3.4**,
-  - só entra depois que Firecrawl scrape falhou — e o Firecrawl **volta com markdown pobre da home** em vez de falhar, cortando o caminho do RAG,
-  - recebe uma query genérica única ("prefeitura … educação … contato"), sem apontar para a subpágina real.
+Mudamos de "tudo em tempo real" para "catálogo persistente de todos os 5.570 municípios com score de prospecção calculado". O scraping existente vira o botão **Atualizar agora** de cada município.
 
-Resultado: o RAG raramente é consumido, e quando é, chega tarde e com material genérico.
+## 1. Nova arquitetura
 
-## Objetivo
+```text
+Cloud (Supabase)
+├── municipios              (5570 linhas, seed IBGE)
+├── educacao_contatos       (secretário, cargo, emails, telefones, horário, equipe)
+├── indicadores_ibge        (população, PIB per capita)
+├── indicadores_inep        (matrículas: infantil/fundamental/médio, escolas)
+├── indicadores_fnde        (repasses anuais R$, PNAE, PDDE)
+├── municipio_scores        (score 0-100, faixa, breakdown JSON)
+└── prospeccao_status       (status por município: pendente/scraped/validado/ignorado)
+```
 
-Aceitar que o município pode levar **60–120s** quando o site é lento, desde que no fim venha o **nome + cargo + e-mail seduc + telefones + horário** estruturados e verídicos. Trocar Firecrawl-first por **RAG-first** no estágio institucional (Estágio 3), com o Firecrawl scrape só como plano B.
+Todos os dados iniciais são **mocados de forma determinística** (seed baseada no ibgeId) para gerar números plausíveis por porte da cidade.
 
-## Mudanças (Alpha v0.22)
+## 2. Score (fórmula da demo)
 
-### 1. Duas queries de RAG em paralelo, mais tempo
+Score 0–100, pesos:
+- **35%** Porte de mercado — log(população) normalizado + log(matrículas totais INEP).
+- **30%** Volume financeiro — log(repasses FNDE anuais).
+- **20%** Completude de contato — % de campos preenchidos (nome, cargo, email institucional, telefone, horário, equipe).
+- **15%** Recência do dado — dias desde última validação (decai em 180d).
 
-Em `prospectar`, disparar **duas** chamadas `ragBrowse` em background logo no início:
+Faixas: **Alto ≥ 70**, **Médio 40–69**, **Baixo < 40**. Breakdown salvo em JSON para a UI mostrar de onde veio o número.
 
-- **RAG-nome**: `"prefeitura {municipio} {uf} secretaria de educação secretário atual"` — igual a hoje, `maxResults: 4`.
-- **RAG-página** (nova): `"site:{slug}.{uf}.gov.br secretaria educação"` (fallback `"{municipio} {uf} secretaria municipal de educação contato"`) — foca em achar a subpágina real com markdown renderizado.
+## 3. Novas telas
 
-Ambas com `timeoutMs: 120_000`. Consolidar `ragPages` (Set por URL). Log com `elapsedMs` de cada uma.
+- **`/` — Catálogo** (substitui a busca atual): tabela paginada + virtual scroll com todos os 5.570 municípios. Colunas: Município · UF · População · Matrículas · Score (badge colorido) · Status · Ação. Filtros: UF, faixa de score, status, busca por nome. Ordenação por qualquer coluna.
+- **`/municipio/$ibgeId`** — Ficha completa: header com score e breakdown, cards de Contato/IBGE/INEP/FNDE/Equipe, timeline de atualizações, botão **Atualizar agora** (dispara o pipeline atual em streaming).
+- **`/debug`** — mantida.
 
-### 2. Estágio 3 vira RAG-first
+Sidebar velha (histórico + explicações) sai; entra sidebar de filtros do catálogo.
 
-Ordem nova no Estágio 3 (contato institucional):
+## 4. Pipeline atual vira "Atualizar agora"
 
-1. **3.0 (novo)** — `awaitRagBlock(90_000)`. Se retornar pelo menos 1 página com markdown > 800 chars e o host bate com `topHost` ou é `{slug}.{uf}.gov.br`, chama `extractWithAI` **direto** com o markdown do RAG. Se resultar em contato bom (e-mail não genérico ou telefone), retorna.
-2. **3.1** — snippet institucional (atual 3a).
-3. **3.2** — site:gov.br (atual 3b).
-4. **3.3** — busca `/contato` (atual 3.2).
-5. **3.4** — scrape Firecrawl do top gov (atual 3.3), **agora com fallback pro RAG dentro dele**: se `gScrape` devolver markdown < 500 chars OU sem qualquer e-mail plausível, e o RAG já tem página do mesmo host, usa a página do RAG em vez do Firecrawl.
-6. **3.5** — extração exclusiva do bloco RAG completo (o atual 3.4, mantido como último RAG-fallback).
+`prospectar()` continua igual, mas agora:
+- É chamado **só via botão** na ficha do município.
+- No fim, salva em `educacao_contatos` + recalcula `municipio_scores`.
+- Timeline NDJSON aparece dentro de um Sheet lateral na ficha, não na home.
 
-### 3. Estágio 1.5 aceita conteúdo do RAG
+## 5. Seed de demo
 
-Hoje o Estágio 1.5 chama `gScrape(topNome.url)` com `hardTimeoutMs: 4000`. Vai ficar: tenta `gScrape` com **6s**; se falhar ou vier curto, checa `ragPages` por uma URL que **case com `topNome.url` ou compartilhe o host** — se achar, extrai com o markdown do RAG. Isso pega o caso SJP quando o RAG já retornou antes do Firecrawl travar.
+Migration única que:
+1. Insere os 5.570 municípios (fetch IBGE server-side na migration ou lista embarcada).
+2. Gera mocks determinísticos por `ibgeId` para IBGE/INEP/FNDE/contatos (~60% dos municípios com contato "validado", 25% "pendente", 15% sem dados).
+3. Calcula scores iniciais via trigger/função.
 
-### 4. `hasUsefulContact` mais rigoroso pra RAG-first
+## 6. Versionamento
 
-Adicionar helper `isRagResultTrustworthy(ext, source)` que exige:
-- `secretario` não-nulo, **OU** ao menos 1 e-mail que passe `filterEmailsForFinal` sem cair para o "último recurso",
-- e todos os campos ainda validados por `filterPresent`.
+`src/lib/version.ts` → **Alpha v0.28**. (Sem chegar em v1.0 sem autorização — regra core.)
 
-Só assim o Estágio 3.0 (RAG puro) fecha o pipeline; senão continua nas etapas seguintes.
+---
 
-### 5. Ajustes de config
+## Detalhes técnicos
 
-- `ragBrowse`: aceitar `startUrls?: string[]` opcional (já suportado pelo actor via `input.startUrls`). Se a query começar com `site:{host}`, também passa `startUrls: [\`https://{host}/\`]` como dica.
-- `src/lib/version.ts` → `Alpha v0.22`.
+- **Persistência**: Lovable Cloud. Tabelas `public.*` com GRANTs para `authenticated` + `anon` (catálogo é público leitura); writes via server fn com `requireSupabaseAuth` (ou service role em `.server.ts` para o pipeline).
+- **RLS**: SELECT liberado a `anon` no catálogo; INSERT/UPDATE em `educacao_contatos` e `prospeccao_status` só via `supabaseAdmin` dentro do handler do server fn de atualização.
+- **Server fns novos** (em `src/lib/catalogo.functions.ts`): `listMunicipios({ uf, faixa, status, q, page })`, `getMunicipio(ibgeId)`, `atualizarMunicipio(ibgeId)` (chama `prospectar` + persiste + recalcula score).
+- **Score**: função SQL `public.calcular_score(ibgeId)` + trigger em updates de contatos/indicadores. Breakdown retornado como JSON.
+- **Mock determinístico**: PRNG com seed = `ibgeId`. População real do IBGE quando possível; INEP/FNDE derivados proporcionalmente.
+- **UI**: tabela com `@tanstack/react-table` + `@tanstack/react-virtual` (já compatível). shadcn `Badge` para faixas de score, `Sheet` para timeline de atualização.
+- **Rotas**: `src/routes/index.tsx` reescrita (catálogo), nova `src/routes/municipio.$ibgeId.tsx`.
+- **Cache local** (`result-cache.ts`): desativado — verdade agora é o banco.
 
-### 6. Painel / UX
+## Fora do escopo (v0.29+)
 
-- `ResultCard`: sem mudança visual; a timeline já mostra "RAG trouxe N página(s) em Xs" e "✨ Contato via RAG Web Browser". Só garantir que quando o RAG for a fonte final, o badge de origem exiba **"via RAG Web Browser"** (já existe).
-- `/debug`: nenhum mexido — logs de `awaitRagBlock` e `elapsedMs` já vão pra lá via `emit`.
-
-## Arquivos afetados
-
-- `src/lib/prospect.server.ts` — segunda query RAG em paralelo, novo Estágio 3.0, Estágio 1.5 com fallback RAG, helper `isRagResultTrustworthy`.
-- `src/lib/apify.server.ts` — `ragBrowse` aceita `startUrls?: string[]` opcional.
-- `src/lib/version.ts` — bump para `Alpha v0.22`.
-
-## Fora do escopo
-
-- Cache do RAG por município (fica pra depois se o custo Apify pesar).
-- Substituir Firecrawl SERP pelo Google SERP Scraper do Apify (é outra decisão, v0.23+).
-- Segunda passagem de RAG após Estágio 4 (fallback gabinete) — não vale o custo.
-
-## Critério de aceitação
-
-Rodar `SJP`, `Maringá`, `Umuarama` e `Curitiba` no `/`. Cada um deve terminar em ≤ 120s com:
-- nome do(a) secretário(a) preenchido,
-- pelo menos 1 e-mail `seduc@` ou `educacao@` do domínio do município,
-- pelo menos 1 telefone com DDD válido,
-- e (quando existir na página) `horarioAtendimento`.
+- Autenticação de usuários (catálogo público por ora).
+- Job em background para atualizar municípios em lote.
+- Integração real com APIs INEP/FNDE (fica mock até cliente validar).
+- Exportação da lista filtrada em CSV/XLSX (fácil de adicionar depois, aviso caso queira já nessa versão).
