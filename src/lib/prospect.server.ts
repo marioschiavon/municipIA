@@ -1610,7 +1610,7 @@ export async function prospectar(
       cargo: cargoSecretario,
       emails: [],
       telefones: [],
-      fonte: nomeFonte === "diario" ? "Querido Diário" : "Snippet do Google",
+      fonte: nomeFonte === "snippet" ? "Snippet do Google" : "Fonte não identificada",
       fonteUrl: topNome?.url ?? null,
       contexto: "Nome identificado, mas não localizamos e-mail/telefone associados.",
       nomeFonte,
