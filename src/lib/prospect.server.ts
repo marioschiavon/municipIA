@@ -665,6 +665,28 @@ Responda APENAS com JSON válido seguindo o schema.`;
     if (beforeSchool !== out.emails.length) {
       emit("warn", etapa, `Descartei ${beforeSchool - out.emails.length} e-mail(s) de escola/CMEI`);
     }
+    // Anti-alucinação da equipe: exige que cada NOME apareça literalmente no texto (por tokens normalizados).
+    if (Array.isArray(out.equipe) && out.equipe.length > 0) {
+      const srcNorm = normNome(conteudo);
+      const titular = out.secretario ? normNome(out.secretario) : "";
+      const beforeEq = out.equipe.length;
+      out.equipe = dedupeEquipe(
+        out.equipe.filter((m) => {
+          if (!m?.nome) return false;
+          const n = normNome(m.nome);
+          if (n.length < 5) return false;
+          if (titular && n === titular) return false;
+          const tokens = n.split(" ").filter((t) => t.length >= 3);
+          if (tokens.length < 2) return false;
+          return tokens.every((t) => srcNorm.includes(t));
+        }),
+      );
+      if (beforeEq !== out.equipe.length) {
+        emit("warn", etapa, `Descartei ${beforeEq - out.equipe.length} membro(s) da equipe sem correspondência literal no texto`);
+      }
+    } else {
+      out.equipe = [];
+    }
     emit(
       out.confianca === "baixa" ? "warn" : "success",
       etapa,
