@@ -831,16 +831,16 @@ export async function prospectar(
   const queryNomeB = `secretário OR secretária de educação ${municipio} ${uf} ${anoAtual} atual`;
   const queryNomeC = `site:${slug}.${ufLow}.gov.br secretaria educação secretário`;
   const [candsNomeA, candsNomeB, candsNomeC] = await Promise.all([
-    gSearch(fc, queryNomeA, emit, "nome", { limit: 8, tbs: "qdr:y", timeoutMs: 8000 }),
-    gSearch(fc, queryNomeB, emit, "nome", { limit: 6, tbs: "qdr:y", timeoutMs: 8000 }),
-    gSearch(fc, queryNomeC, emit, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000 }),
+    gSearch(fc, queryNomeA, emit, "nome", { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf }),
+    gSearch(fc, queryNomeB, emit, "nome", { limit: 6, tbs: "qdr:y", timeoutMs: 8000, uf }),
+    gSearch(fc, queryNomeC, emit, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf }),
   ]);
   // Fallback de domínio: se o domínio padrão {slug}.{uf}.gov.br não retornou nada,
   // tenta {uf}.gov.br com o nome do município.
   let candsNomeCfb: SearchCandidate[] = [];
   if (candsNomeC.length === 0) {
     const queryNomeCfb = `site:${ufLow}.gov.br "${municipio}" secretaria educação secretário`;
-    candsNomeCfb = await gSearch(fc, queryNomeCfb, emit, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000 });
+    candsNomeCfb = await gSearch(fc, queryNomeCfb, emit, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf });
   }
   // Priorizar resultados do domínio oficial do município (queryNomeC/fb) ANTES de A/B.
   const candsNome = dedupeByUrl([...candsNomeC, ...candsNomeCfb, ...candsNomeA, ...candsNomeB]);
@@ -1010,13 +1010,13 @@ export async function prospectar(
         `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual contato email telefone`,
         emit,
         "educacao",
-        { limit: 10, timeoutMs: 45_000 },
+        { limit: 10, timeoutMs: 45_000, uf },
       ),
       apifySearch(
         `site:www.${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/ ${municipio} Secretaria de Educação email telefone horário`,
         emit,
         "educacao",
-        { limit: 10, timeoutMs: 45_000 },
+        { limit: 10, timeoutMs: 45_000, uf },
       ),
     ]);
     const apifyCands = dedupeByUrl([...apifyNome, ...apifyPagina]);
@@ -1078,7 +1078,7 @@ export async function prospectar(
     etapaTag: EtapaTag,
     hierarquia: Hierarquia,
   ): Promise<ProspectResult | null> => {
-    const cands = await gSearch(fc, query, emit, etapaTag, { limit: 8, tbs: "qdr:y", timeoutMs: 8000 });
+    const cands = await gSearch(fc, query, emit, etapaTag, { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf });
     addToPool(cands);
     if (cands.length === 0) return null;
     const ranked = preferGov(cands, (u) => /(educa|seduc|sme)/i.test(u));
@@ -1134,7 +1134,7 @@ export async function prospectar(
     if (r2b) return sendFinal(r2b);
 
     const all = dedupeByUrl([
-      ...(await gSearch(fc, `"${nomeSecretario}" secretaria educação ${municipio} ${uf}`, emit, "contato-secretario", { limit: 5, tbs: "qdr:y", timeoutMs: 8000 })),
+      ...(await gSearch(fc, `"${nomeSecretario}" secretaria educação ${municipio} ${uf}`, emit, "contato-secretario", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf })),
     ]);
     addToPool(all);
     const rankedAll = preferGov(all, (u) => /(educa|seduc|sme)/i.test(u));
@@ -1237,7 +1237,7 @@ export async function prospectar(
   if (r3b) return sendFinal(r3b);
 
   const all3 = dedupeByUrl([
-    ...(await gSearch(fc, `secretaria municipal de educação ${municipio} ${uf} contato`, emit, "educacao", { limit: 6, timeoutMs: 8000 })),
+    ...(await gSearch(fc, `secretaria municipal de educação ${municipio} ${uf} contato`, emit, "educacao", { limit: 6, timeoutMs: 8000, uf })),
   ]);
   addToPool(all3);
   const ranked3 = preferGov(all3, (u) => /(educa|seduc|sme)/i.test(u));
@@ -1248,7 +1248,7 @@ export async function prospectar(
   if (top3) {
     const top3Host = shortHost(top3.url);
     const contactQuery = `site:${top3Host} contato OR "fale conosco" OR "e-mail" secretaria educação`;
-    const contactCands = await gSearch(fc, contactQuery, emit, "educacao", { limit: 3, timeoutMs: 8000 });
+    const contactCands = await gSearch(fc, contactQuery, emit, "educacao", { limit: 3, timeoutMs: 8000, uf });
     addToPool(contactCands);
     const contactRe = /(\/contato|\/fale[-_]?conosco|\/fale[-_]?com[-_]?nos|\/secretarias?\/educa|\/educacao\/contato|\/atendimento)/i;
     const contactUrls = contactCands
@@ -1383,7 +1383,7 @@ export async function prospectar(
   // ============================================================
   async function runFallback(etapa: Hierarquia, query: string, label: string): Promise<ProspectResult | null> {
     emit("info", etapa, `${label} — snippet-only`);
-    const cands = await gSearch(fc, query, emit, etapa, { limit: 8, timeoutMs: 5000 });
+    const cands = await gSearch(fc, query, emit, etapa, { limit: 8, timeoutMs: 5000, uf });
     addToPool(cands);
     const ranked = preferGov(cands);
     if (ranked.length === 0) return null;
