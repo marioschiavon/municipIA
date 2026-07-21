@@ -8,7 +8,7 @@ import { z } from "zod";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 import { fetchHtml, htmlToMarkdown, extractContactsRegex } from "./scraper.server";
 import { buscarDiario, formatExcerptsForPrompt, type DiarioExcerpt } from "./querido-diario.server";
-import { ragBrowse, type ApifyPage } from "./apify.server";
+import { googleSerp, ragBrowse, type ApifyPage } from "./apify.server";
 import type {
   EtapaTag,
   Hierarquia,
@@ -94,6 +94,12 @@ function shortHost(url: string): string {
   } catch {
     return url;
   }
+}
+
+function govUf(url: string): string | null {
+  const host = shortHost(url).toLowerCase();
+  const m = /\.([a-z]{2})\.gov\.br$/.exec(host);
+  return m?.[1] ?? null;
 }
 
 function slugify(s: string): string {
@@ -199,11 +205,51 @@ async function gSearch(
   query: string,
   emit: Emit,
   etapa: EtapaTag,
-  opts: { limit?: number; tbs?: string; withScrape?: boolean; timeoutMs?: number } = {},
+  opts: { limit?: number; tbs?: string; withScrape?: boolean; timeoutMs?: number; uf?: string } = {},
 ): Promise<SearchCandidate[]> {
-  const { timeoutMs = 8000, ...rest } = opts;
+  const { timeoutMs = 8000, uf, ...rest } = opts;
   const r = await withTimeout(googleSearch(fc, query, emit, etapa, rest), timeoutMs, `googleSearch("${query.slice(0, 60)}")`, emit, etapa);
-  return r ?? [];
+  const cands = r ?? [];
+  if (!uf) return cands;
+  const ufLow = uf.toLowerCase();
+  const filtered = cands.filter((c) => {
+    const hitUf = govUf(c.url);
+    return !hitUf || hitUf === ufLow;
+  });
+  if (filtered.length !== cands.length) emit("warn", etapa, `Removi ${cands.length - filtered.length} resultado(s) .gov.br de outra UF`);
+  return filtered;
+}
+
+/** Google SERP Scraper do Apify — fallback quando Firecrawl trunca/empobrece snippets. */
+async function apifySearch(
+  query: string,
+  emit: Emit,
+  etapa: EtapaTag,
+  opts: { limit?: number; timeoutMs?: number; uf?: string } = {},
+): Promise<SearchCandidate[]> {
+  const limit = opts.limit ?? 10;
+  emit("info", etapa, `Apify Google SERP: "${query}"`);
+  const r = await googleSerp(query, { resultsPerPage: limit, timeoutMs: opts.timeoutMs ?? 45_000 });
+  if (!r.ok) {
+    emit("warn", etapa, `Apify SERP indisponível (${r.reason})`);
+    return [];
+  }
+  const ufLow = opts.uf?.toLowerCase();
+  const cands: SearchCandidate[] = r.pages
+    .filter((p) => p.url && !isBlockedHost(p.url) && (!ufLow || !govUf(p.url) || govUf(p.url) === ufLow))
+    .map((p) => ({
+      url: p.url,
+      title: p.title ?? "",
+      description: p.markdown,
+      markdown: null,
+    }));
+  emit("info", etapa, `Apify SERP trouxe ${cands.length} resultado(s) em ${(r.elapsedMs / 1000).toFixed(1)}s`, {
+    candidatos: cands.slice(0, 5).map((c) => ({
+      url: c.url,
+      snippet: `${c.title} — ${c.description}`.slice(0, 260),
+    })),
+  });
+  return cands;
 }
 
 /** scrapeMarkdown com timeout duro — devolve null se estourar. */
@@ -215,8 +261,7 @@ async function gScrape(
   opts: { timeoutMs?: number; hardTimeoutMs?: number } = {},
 ): Promise<string | null> {
   const hard = opts.hardTimeoutMs ?? 8000;
-  const inner: { timeoutMs?: number } = {};
-  if (opts.timeoutMs !== undefined) inner.timeoutMs = opts.timeoutMs;
+  const inner: { timeoutMs?: number } = { timeoutMs: opts.timeoutMs ?? hard };
   return withTimeout(scrapeMarkdown(fc, url, emit, etapa, inner), hard, `scrapeMarkdown(${shortHost(url)})`, emit, etapa);
 }
 
@@ -231,6 +276,7 @@ function snippetsBlock(cands: SearchCandidate[]): string {
 
 function preferGov(cands: SearchCandidate[], extra?: (u: string) => boolean): SearchCandidate[] {
   const OTHER_SECRETARIAS = /(esporte|saude|sa[uú]de|obras|tr[âa]nsito|transito|turismo|cultura|assistencia|assist[êe]ncia|meio[-_.\s]?ambiente|fazenda|planejamento|habitacao|habita[çc][ãa]o|agricultura)/i;
+  const SCHOOL_PAGE = /(\bescola\b|cmei|creche|colegio|col[ée]gio|educacao-infantil|ensino-fundamental|educacao-especial|alimentacao-escolar)/i;
   const score = (c: SearchCandidate) => {
     let s = 0;
     const blob = `${c.url} ${c.title ?? ""} ${c.description ?? ""}`;
@@ -240,6 +286,8 @@ function preferGov(cands: SearchCandidate[], extra?: (u: string) => boolean): Se
     if (c.markdown) s += 2;
     // Penaliza fortemente páginas claramente de OUTRAS secretarias.
     if (OTHER_SECRETARIAS.test(blob) && !/(educa|seduc|sme|smed)/i.test(blob)) s -= 8;
+    // Página de escola/departamento/unidade não deve vencer a página-mãe da Secretaria.
+    if (SCHOOL_PAGE.test(blob) && !/secret[áa]ri[ao]\s*:/i.test(blob)) s -= 12;
     return -s;
   };
   return [...cands].sort((a, b) => score(a) - score(b));
@@ -261,7 +309,7 @@ function dedupeByUrl(arr: SearchCandidate[]): SearchCandidate[] {
 const GENERIC_LOCAL = /^(ouvidoria|faleconosco|fale-conosco|falecom|contato|imprensa|gabinete|prefeito|atendimento|protocolo|rh)@/i;
 const EDUCATION_LOCAL = /^(seduc|sme|smed|educacao|educa|secretariadeeducacao|secretaria\.educacao)/i;
 // Escolas/CMEIs/creches/conselhos — NUNCA devem virar contato da Secretaria.
-const SCHOOL_LOCAL = /^(escola|colegio|col[ée]gio|emef|emei|emeif|emeief|cmei|cmeb|cei|creche|biblioteca|cras|cmdca|conselho)/i;
+const SCHOOL_LOCAL = /^(escola|colegio|col[ée]gio|em[._-]|emef|emei|emeif|emeief|cmei|cmeb|cei|creche|biblioteca|cras|cmdca|conselho)/i;
 const SCHOOL_DOMAIN = /(^|\.)(escola|colegio|cmei|emei|emef|creche)\./i;
 
 function isSchoolEmail(e: string): boolean {
@@ -336,6 +384,48 @@ function filterPresent(extracted: Extracted, source: string, municipio?: string,
     return d.length >= 8 && sourceDigits.includes(d);
   });
   return { ...extracted, emails, telefones };
+}
+
+function extractSecretaryLine(source: string): { nome: string | null; email: string | null; cargo: string | null } {
+  const m = /\b(Secret[áa]ri[ao](?:a)?(?:\s+Municipal\s+de\s+Educa[çc][ãa]o)?)\s*:\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ'.-]+(?:\s+(?:de|da|do|dos|das|e)\s+|\s+)[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ'.-]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ'.-]+){0,4})(?:\s*\(([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\))?/i.exec(source);
+  if (!m) return { nome: null, email: null, cargo: null };
+  return {
+    cargo: /educa/i.test(m[1]) ? m[1].trim() : "Secretária Municipal de Educação",
+    nome: m[2].replace(/\s+/g, " ").trim(),
+    email: m[3]?.trim() ?? null,
+  };
+}
+
+function extractHorario(source: string): string | null {
+  const labeled = /Hor[áa]rio\s+(?:de\s+Atendimento|de\s+funcionamento)?\s*:\s*([^\n.]{8,140})/i.exec(source);
+  if (labeled) return labeled[1].replace(/\s+/g, " ").trim();
+  const inline = /(De\s+segunda\s+a\s+sexta(?:-feira)?[^\n.]{0,80}(?:\d{1,2}h\d{0,2}|\d{1,2}:\d{2})[^\n.]{0,80})/i.exec(source);
+  return inline ? inline[1].replace(/\s+/g, " ").trim() : null;
+}
+
+function looksLikeOfficialEducationPage(c: SearchCandidate, slug: string, ufLow: string): boolean {
+  const url = c.url.toLowerCase();
+  const host = shortHost(url).toLowerCase();
+  if (!host.endsWith(".gov.br")) return false;
+  if (!host.includes(slug) && !url.includes(slug) && !url.includes(`${ufLow}.gov.br`)) return false;
+  return /(secretaria[^/]*educacao|secretarias\/secretaria-educacao|secretaria-de-educacao|secretaria\s+de\s+educa|secretaria municipal de educa)/i.test(
+    `${url} ${c.title} ${c.description}`,
+  );
+}
+
+function mergeExtracted(base: Extracted, patch: Partial<Extracted>, municipio: string, uf: string, topHost?: string): Extracted {
+  const emails = filterEmailsForFinal([...(patch.emails ?? []), ...base.emails], municipio, uf, topHost);
+  const telefones = Array.from(new Set([...(base.telefones ?? []), ...(patch.telefones ?? [])]));
+  return {
+    ...base,
+    secretario: base.secretario ?? patch.secretario ?? null,
+    cargo: base.cargo ?? patch.cargo ?? null,
+    emails,
+    telefones,
+    contexto: base.contexto ?? patch.contexto ?? null,
+    dataReferencia: base.dataReferencia ?? patch.dataReferencia ?? null,
+    horarioAtendimento: base.horarioAtendimento ?? patch.horarioAtendimento ?? null,
+  };
 }
 
 async function scrapeMarkdown(
@@ -659,34 +749,42 @@ export async function prospectar(
     }
   };
   const ragQueryA = `prefeitura ${municipio} ${uf} secretaria municipal de educação secretário atual contato email telefone`;
-  const ragQueryB = `site:${slug}.${ufLow}.gov.br secretaria educação contato`;
+  const ragQueryB = `site:${ufLow}.gov.br "${municipio}" "Secretaria Municipal de Educação" contato email telefone`;
   emit("info", "init", `RAG (Apify) A em background: "${ragQueryA.slice(0, 80)}"`);
   emit("info", "init", `RAG (Apify) B em background: "${ragQueryB.slice(0, 80)}"`);
-  const ragPromiseA: Promise<void> = (async () => {
-    const r = await ragBrowse(ragQueryA, { maxResults: 5, timeoutMs: 120_000 });
+  const runRag = async (
+    label: "A" | "B",
+    query: string,
+    opts: { maxResults: number; timeoutMs: number; startUrls?: string[] },
+  ) => {
+    let r = await ragBrowse(query, opts);
+    if (!r.ok && /memory-limit|exceed the memory/i.test(r.reason)) {
+      emit("warn", "init", `RAG ${label} sem memória no Apify — aguardando 20s e tentando novamente`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 20_000));
+      r = await ragBrowse(query, { ...opts, maxResults: Math.min(opts.maxResults, 3) });
+    }
     if (!r.ok) {
-      emit("warn", "init", `RAG A indisponível (${r.reason})`);
+      emit("warn", "init", `RAG ${label} indisponível (${r.reason})`);
       return;
     }
     const good = r.pages.filter((p) => p.markdown && p.markdown.length > 200);
     addRagPages(good);
-    emit("success", "init", `RAG A: ${good.length} pág. em ${(r.elapsedMs / 1000).toFixed(1)}s`);
-  })().catch((e) => emit("warn", "init", `RAG A erro: ${String(e)}`));
-  const ragPromiseB: Promise<void> = (async () => {
-    const r = await ragBrowse(ragQueryB, {
+    emit("success", "init", `RAG ${label}: ${good.length} pág. em ${(r.elapsedMs / 1000).toFixed(1)}s`);
+  };
+  const ragAll: Promise<void> = (async () => {
+    // Serializado: dois actors Playwright simultâneos estouram o limite de memória do Apify.
+    await runRag("B", ragQueryB, {
       maxResults: 5,
       timeoutMs: 120_000,
-      startUrls: [`https://${slug}.${ufLow}.gov.br/`, `https://www.${slug}.${ufLow}.gov.br/`],
+      startUrls: [
+        `https://${slug}.${ufLow}.gov.br/`,
+        `https://www.${slug}.${ufLow}.gov.br/`,
+        `https://${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/`,
+        `https://www.${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/`,
+      ],
     });
-    if (!r.ok) {
-      emit("warn", "init", `RAG B indisponível (${r.reason})`);
-      return;
-    }
-    const good = r.pages.filter((p) => p.markdown && p.markdown.length > 200);
-    addRagPages(good);
-    emit("success", "init", `RAG B: ${good.length} pág. em ${(r.elapsedMs / 1000).toFixed(1)}s`);
-  })().catch((e) => emit("warn", "init", `RAG B erro: ${String(e)}`));
-  const ragAll = Promise.allSettled([ragPromiseA, ragPromiseB]);
+    await runRag("A", ragQueryA, { maxResults: 5, timeoutMs: 120_000 });
+  })().catch((e) => emit("warn", "init", `RAG erro: ${String(e)}`));
 
   const getRagPages = (): ApifyPage[] =>
     Array.from(ragPagesMap.values()).sort((a, b) => (b.markdown?.length ?? 0) - (a.markdown?.length ?? 0));
@@ -720,7 +818,7 @@ export async function prospectar(
     if (!ext) return false;
     if (!ext.secretario && ext.emails.length === 0) return false;
     const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
-    return !!ext.secretario || hasGoodEmail || ext.telefones.length > 0;
+    return !!ext.secretario || hasGoodEmail;
   };
 
 
@@ -733,16 +831,16 @@ export async function prospectar(
   const queryNomeB = `secretário OR secretária de educação ${municipio} ${uf} ${anoAtual} atual`;
   const queryNomeC = `site:${slug}.${ufLow}.gov.br secretaria educação secretário`;
   const [candsNomeA, candsNomeB, candsNomeC] = await Promise.all([
-    gSearch(fc, queryNomeA, emit, "nome", { limit: 8, tbs: "qdr:y", timeoutMs: 8000 }),
-    gSearch(fc, queryNomeB, emit, "nome", { limit: 6, tbs: "qdr:y", timeoutMs: 8000 }),
-    gSearch(fc, queryNomeC, emit, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000 }),
+    gSearch(fc, queryNomeA, emit, "nome", { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf }),
+    gSearch(fc, queryNomeB, emit, "nome", { limit: 6, tbs: "qdr:y", timeoutMs: 8000, uf }),
+    gSearch(fc, queryNomeC, emit, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf }),
   ]);
   // Fallback de domínio: se o domínio padrão {slug}.{uf}.gov.br não retornou nada,
   // tenta {uf}.gov.br com o nome do município.
   let candsNomeCfb: SearchCandidate[] = [];
   if (candsNomeC.length === 0) {
     const queryNomeCfb = `site:${ufLow}.gov.br "${municipio}" secretaria educação secretário`;
-    candsNomeCfb = await gSearch(fc, queryNomeCfb, emit, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000 });
+    candsNomeCfb = await gSearch(fc, queryNomeCfb, emit, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf });
   }
   // Priorizar resultados do domínio oficial do município (queryNomeC/fb) ANTES de A/B.
   const candsNome = dedupeByUrl([...candsNomeC, ...candsNomeCfb, ...candsNomeA, ...candsNomeB]);
@@ -843,6 +941,8 @@ export async function prospectar(
     emit("warn", "nome", "Estágio 1 não fechou o nome — seguirei para contato institucional");
   }
 
+  let melhorParcial: { ext: Extracted; url: string | null; via: string } | null = null;
+
   // ============================================================
   // ESTÁGIO 1.5 — Scrape oportunista do topo (se for página da Secretaria)
   // ============================================================
@@ -851,7 +951,7 @@ export async function prospectar(
     const text = `${c.url} ${c.title ?? ""} ${c.description ?? ""}`.toLowerCase();
     return (
       /\.gov\.br|\.leg\.br/.test(c.url) &&
-      /(secretaria|secretári|seduc|sme|smed|educa)/.test(text)
+      /(seduc|sme|smed|educa)/.test(text)
     );
   };
   if (looksLikeSeducPage(topNome)) {
@@ -899,19 +999,84 @@ export async function prospectar(
     }
   }
 
+  // Estágio 1.6 — Google SERP Scraper do Apify.
+  // Em alguns portais lentos (ex.: SJP), o snippet do Google via Apify traz mais
+  // contexto que o Firecrawl: nome/e-mail no resultado principal e telefone/horário
+  // no snippet da página oficial.
+  {
+    emit("info", "educacao", "Estágio 1.6 — enriquecendo por Apify Google SERP (snippets ricos)");
+    const apifyNome = await apifySearch(
+      `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual contato email telefone`,
+      emit,
+      "educacao",
+      { limit: 10, timeoutMs: 45_000, uf },
+    );
+    const apifyPagina = await apifySearch(
+      `site:www.${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/ ${municipio} Secretaria de Educação email telefone horário`,
+      emit,
+      "educacao",
+      { limit: 10, timeoutMs: 45_000, uf },
+    );
+    const apifyCands = dedupeByUrl([...apifyNome, ...apifyPagina]);
+    addToPool(apifyCands);
+    const official = preferGov(apifyCands.filter((c) => looksLikeOfficialEducationPage(c, slug, ufLow)), (u) => /(educa|seduc|sme)/i.test(u));
+    const ranked = official.length > 0 ? official : preferGov(apifyCands, (u) => /(educa|seduc|sme)/i.test(u));
+    const snippets = snippetsBlock(ranked);
+    if (snippets) {
+      const line = extractSecretaryLine(snippets);
+      const regex = extractContactsRegex(snippets);
+      const deterministic: Extracted = filterPresent({
+        secretario: line.nome ?? nomeSecretario,
+        cargo: line.cargo ?? cargoSecretario,
+        emails: filterEmailsForFinal([...(line.email ? [line.email] : []), ...regex.emails], municipio, uf, topHost),
+        telefones: regex.telefones,
+        contexto: "Dados extraídos de snippets ricos do Google SERP Scraper do Apify.",
+        confianca: line.nome || regex.emails.length > 0 ? "alta" : "media",
+        dataReferencia: dataReferenciaGlobal,
+        horarioAtendimento: extractHorario(snippets),
+      }, snippets, municipio, uf);
+      let ext = deterministic;
+      if (!ext.secretario || (ext.emails.length === 0 && ext.telefones.length === 0)) {
+        const aiExt = await extractWithAI(snippets, ranked[0]?.url ?? "(apify-serp)", "educacao", municipio, uf, emit, {
+          nomeAlvo: nomeSecretario ?? line.nome,
+          modo: "snippets",
+          topHost,
+        });
+        if (aiExt) ext = mergeExtracted(aiExt, deterministic, municipio, uf, topHost);
+      }
+      const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
+      if (ext.secretario && (hasGoodEmail || ext.telefones.length > 0)) {
+        emit("success", "educacao", `✨ Contato enriquecido via Apify SERP (${Date.now() - t0}ms)`);
+        return sendFinal({
+          status: hasGoodEmail ? "found" : "partial",
+          hierarquia: "educacao",
+          secretario: ext.secretario,
+          cargo: ext.cargo ?? cargoSecretario,
+          emails: ext.emails,
+          telefones: ext.telefones,
+          fonte: "Google SERP Scraper (Apify)",
+          fonteUrl: ranked[0]?.url ?? null,
+          contexto: ext.contexto,
+          nomeFonte: nomeFonte ?? (ext.secretario ? "snippet" : null),
+          dataReferencia: ext.dataReferencia ?? dataReferenciaGlobal,
+          horarioAtendimento: ext.horarioAtendimento ?? null,
+        });
+      }
+      if (hasUsefulContact(ext) && !melhorParcial) melhorParcial = { ext, url: ranked[0]?.url ?? null, via: "Google SERP Scraper (Apify)" };
+    }
+  }
+
 
   // ============================================================
   // ESTÁGIO 2 — CONTATO VINCULADO AO NOME (cascata interna)
   // ============================================================
-  let melhorParcial: { ext: Extracted; url: string | null; via: string } | null = null;
-
   const tentarContato = async (
     query: string,
     via: string,
     etapaTag: EtapaTag,
     hierarquia: Hierarquia,
   ): Promise<ProspectResult | null> => {
-    const cands = await gSearch(fc, query, emit, etapaTag, { limit: 8, tbs: "qdr:y", timeoutMs: 8000 });
+    const cands = await gSearch(fc, query, emit, etapaTag, { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf });
     addToPool(cands);
     if (cands.length === 0) return null;
     const ranked = preferGov(cands, (u) => /(educa|seduc|sme)/i.test(u));
@@ -923,7 +1088,7 @@ export async function prospectar(
     });
     if (ext && hasUsefulContact(ext)) {
       const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
-      if (hasGoodEmail || ext.telefones.length > 0) {
+      if (hasGoodEmail) {
         emit("success", etapaTag, `✨ Contato encontrado via ${via} (${Date.now() - t0}ms)`);
         return {
           status: "found",
@@ -939,6 +1104,9 @@ export async function prospectar(
           dataReferencia: ext.dataReferencia ?? dataReferenciaGlobal,
           horarioAtendimento: ext.horarioAtendimento ?? null,
         };
+      }
+      if (ext.telefones.length > 0) {
+        emit("warn", etapaTag, `${via} trouxe só telefone — guardando parcial e continuando atrás de nome/e-mail/horário`);
       }
       if (!melhorParcial) melhorParcial = { ext, url: ranked[0]?.url ?? null, via };
     }
@@ -964,7 +1132,7 @@ export async function prospectar(
     if (r2b) return sendFinal(r2b);
 
     const all = dedupeByUrl([
-      ...(await gSearch(fc, `"${nomeSecretario}" secretaria educação ${municipio} ${uf}`, emit, "contato-secretario", { limit: 5, tbs: "qdr:y", timeoutMs: 8000 })),
+      ...(await gSearch(fc, `"${nomeSecretario}" secretaria educação ${municipio} ${uf}`, emit, "contato-secretario", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf })),
     ]);
     addToPool(all);
     const rankedAll = preferGov(all, (u) => /(educa|seduc|sme)/i.test(u));
@@ -1067,7 +1235,7 @@ export async function prospectar(
   if (r3b) return sendFinal(r3b);
 
   const all3 = dedupeByUrl([
-    ...(await gSearch(fc, `secretaria municipal de educação ${municipio} ${uf} contato`, emit, "educacao", { limit: 6, timeoutMs: 8000 })),
+    ...(await gSearch(fc, `secretaria municipal de educação ${municipio} ${uf} contato`, emit, "educacao", { limit: 6, timeoutMs: 8000, uf })),
   ]);
   addToPool(all3);
   const ranked3 = preferGov(all3, (u) => /(educa|seduc|sme)/i.test(u));
@@ -1078,7 +1246,7 @@ export async function prospectar(
   if (top3) {
     const top3Host = shortHost(top3.url);
     const contactQuery = `site:${top3Host} contato OR "fale conosco" OR "e-mail" secretaria educação`;
-    const contactCands = await gSearch(fc, contactQuery, emit, "educacao", { limit: 3, timeoutMs: 8000 });
+    const contactCands = await gSearch(fc, contactQuery, emit, "educacao", { limit: 3, timeoutMs: 8000, uf });
     addToPool(contactCands);
     const contactRe = /(\/contato|\/fale[-_]?conosco|\/fale[-_]?com[-_]?nos|\/secretarias?\/educa|\/educacao\/contato|\/atendimento)/i;
     const contactUrls = contactCands
@@ -1213,7 +1381,7 @@ export async function prospectar(
   // ============================================================
   async function runFallback(etapa: Hierarquia, query: string, label: string): Promise<ProspectResult | null> {
     emit("info", etapa, `${label} — snippet-only`);
-    const cands = await gSearch(fc, query, emit, etapa, { limit: 8, timeoutMs: 5000 });
+    const cands = await gSearch(fc, query, emit, etapa, { limit: 8, timeoutMs: 5000, uf });
     addToPool(cands);
     const ranked = preferGov(cands);
     if (ranked.length === 0) return null;
