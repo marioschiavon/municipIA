@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as DebugRouteImport } from './routes/debug'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as MunicipioIbgeIdRouteImport } from './routes/municipio.$ibgeId'
 import { Route as DebugApifyRouteImport } from './routes/debug.apify'
 import { Route as ApiProspectRouteImport } from './routes/api/prospect'
 import { Route as ApiDebugApifyRouteImport } from './routes/api/debug.apify'
@@ -23,6 +24,11 @@ const DebugRoute = DebugRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MunicipioIbgeIdRoute = MunicipioIbgeIdRouteImport.update({
+  id: '/municipio/$ibgeId',
+  path: '/municipio/$ibgeId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DebugApifyRoute = DebugApifyRouteImport.update({
@@ -46,6 +52,7 @@ export interface FileRoutesByFullPath {
   '/debug': typeof DebugRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
+  '/municipio/$ibgeId': typeof MunicipioIbgeIdRoute
   '/api/debug/apify': typeof ApiDebugApifyRoute
 }
 export interface FileRoutesByTo {
@@ -53,6 +60,7 @@ export interface FileRoutesByTo {
   '/debug': typeof DebugRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
+  '/municipio/$ibgeId': typeof MunicipioIbgeIdRoute
   '/api/debug/apify': typeof ApiDebugApifyRoute
 }
 export interface FileRoutesById {
@@ -61,6 +69,7 @@ export interface FileRoutesById {
   '/debug': typeof DebugRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
+  '/municipio/$ibgeId': typeof MunicipioIbgeIdRoute
   '/api/debug/apify': typeof ApiDebugApifyRoute
 }
 export interface FileRouteTypes {
@@ -70,15 +79,23 @@ export interface FileRouteTypes {
     | '/debug'
     | '/api/prospect'
     | '/debug/apify'
+    | '/municipio/$ibgeId'
     | '/api/debug/apify'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/debug' | '/api/prospect' | '/debug/apify' | '/api/debug/apify'
+  to:
+    | '/'
+    | '/debug'
+    | '/api/prospect'
+    | '/debug/apify'
+    | '/municipio/$ibgeId'
+    | '/api/debug/apify'
   id:
     | '__root__'
     | '/'
     | '/debug'
     | '/api/prospect'
     | '/debug/apify'
+    | '/municipio/$ibgeId'
     | '/api/debug/apify'
   fileRoutesById: FileRoutesById
 }
@@ -86,6 +103,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DebugRoute: typeof DebugRouteWithChildren
   ApiProspectRoute: typeof ApiProspectRoute
+  MunicipioIbgeIdRoute: typeof MunicipioIbgeIdRoute
   ApiDebugApifyRoute: typeof ApiDebugApifyRoute
 }
 
@@ -103,6 +121,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/municipio/$ibgeId': {
+      id: '/municipio/$ibgeId'
+      path: '/municipio/$ibgeId'
+      fullPath: '/municipio/$ibgeId'
+      preLoaderRoute: typeof MunicipioIbgeIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/debug/apify': {
@@ -143,6 +168,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DebugRoute: DebugRouteWithChildren,
   ApiProspectRoute: ApiProspectRoute,
+  MunicipioIbgeIdRoute: MunicipioIbgeIdRoute,
   ApiDebugApifyRoute: ApiDebugApifyRoute,
 }
 export const routeTree = rootRouteImport
