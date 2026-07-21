@@ -7,7 +7,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 import { fetchHtml, htmlToMarkdown, extractContactsRegex } from "./scraper.server";
-import { buscarDiario, formatExcerptsForPrompt, type DiarioExcerpt } from "./querido-diario.server";
+
 import { googleSerp, ragBrowse, type ApifyPage } from "./apify.server";
 import type {
   EtapaTag,
@@ -802,28 +802,15 @@ function fonteLabel(etapa: Hierarquia) {
         : "Gabinete do Prefeito (último recurso)";
 }
 
-function nomeDoDiario(
-  excerpts: DiarioExcerpt[],
-): { nome: string; data: string; ageDays: number } | null {
-  if (excerpts.length === 0) return null;
-  const re =
-    /secret[áa]ri[oa](?:\s+municipal)?\s+(?:de\s+)?educa[çc][ãa]o[^.,;:\n]{0,30}?[,:\-–]\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ]+(?:\s+(?:de|da|do|dos|das|e)\s+|\s+)[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ]+){0,3})/i;
-  for (const ex of excerpts) {
-    const m = ex.trecho.match(re);
-    if (m) return { nome: m[1].trim(), data: ex.data, ageDays: ex.ageDays };
-  }
-  return null;
-}
 
 export async function prospectar(
   municipio: string,
   uf: string,
   onEvent?: (evt: ProgressEvent) => void,
   ibgeId?: number,
-  options: { useDiario?: boolean } = {},
 ): Promise<ProspectResult> {
   const t0 = Date.now();
-  const { useDiario = false } = options;
+  
 
   const emit: Emit = (level, etapa, message, data) => {
     onEvent?.({
@@ -912,31 +899,9 @@ export async function prospectar(
   };
 
 
-  // Diário Oficial em background.
-  let diarioExcerpts: DiarioExcerpt[] = [];
-  let diarioBlock = "";
-  let diarioNome: { nome: string; data: string; ageDays: number } | null = null;
-  let diarioPromise: Promise<void> = Promise.resolve();
-  if (useDiario && ibgeId) {
-    emit("info", "diario", `Diário Oficial em background (timeout 2s)...`);
-    diarioPromise = (async () => {
-      const r = await buscarDiario(
-        ibgeId,
-        '"secretário de educação" OR "secretária de educação" OR "secretario municipal de educação"',
-        { size: 3, sinceDays: 180, timeoutMs: 2000 },
-      );
-      if (!r.ok) {
-        emit("warn", "diario", `Diário indisponível (${r.reason}) — seguindo sem ele`);
-        return;
-      }
-      diarioExcerpts = r.excerpts;
-      diarioBlock = formatExcerptsForPrompt(diarioExcerpts);
-      diarioNome = nomeDoDiario(diarioExcerpts);
-      emit("success", "diario", `Diário trouxe ${r.excerpts.length} trecho(s)${diarioNome ? ` · pista: ${diarioNome.nome}` : ""}`);
-    })().catch((e) => emit("warn", "diario", `Diário erro: ${String(e)}`));
-  } else if (!useDiario) {
-    emit("info", "diario", "Querido Diário desligado nesta busca");
-  }
+  // Querido Diário foi desativado do pipeline para evitar atrasos e dados desatualizados.
+  const diarioBlock = "";
+
 
   // RAG Web Browser (Apify) em background — DUAS queries paralelas.
   //  A) foco em nome do secretário (SERP + scrape dos top resultados)
@@ -1054,21 +1019,11 @@ export async function prospectar(
   const topNome = rankedNome[0] ?? null;
   const topHost = topNome ? shortHost(topNome.url) : undefined;
 
-  if (useDiario) {
-    await Promise.race([diarioPromise, new Promise<void>((r) => setTimeout(r, 800))]);
-  }
-
   let nomeSecretario: string | null = null;
   let cargoSecretario: string | null = null;
   let nomeFonte: ProspectResult["nomeFonte"] = null;
   let dataReferenciaGlobal: string | null = null;
 
-  if (diarioNome && (diarioNome as { ageDays: number }).ageDays <= 365) {
-    nomeSecretario = (diarioNome as { nome: string }).nome;
-    nomeFonte = "diario";
-    dataReferenciaGlobal = (diarioNome as { data: string }).data || null;
-    emit("info", "nome", `Pista do diário entrou no prompt: ${nomeSecretario}`);
-  }
 
   if (snippetsNome) {
     const nomeRes = await runExtractNome(snippetsNome, topNome?.url ?? "(snippets)", municipio, uf, emit, {
@@ -1127,9 +1082,6 @@ export async function prospectar(
       emit("warn", "nome", `Descartando nome "${nomeRes.secretario}" — confiança baixa e sem aparições nos snippets`);
     }
     if (aceitaNome && nomeRes?.secretario) {
-      if (nomeSecretario && nomeRes.secretario.toLowerCase().trim() !== nomeSecretario.toLowerCase().trim()) {
-        emit("warn", "nome", `Conflito: diário=${nomeSecretario} / snippet=${nomeRes.secretario} — adotando snippet (mais atual)`);
-      }
       nomeSecretario = nomeRes.secretario;
       cargoSecretario = nomeRes.cargo ?? cargoSecretario;
       nomeFonte = "snippet";
@@ -1658,7 +1610,7 @@ export async function prospectar(
       cargo: cargoSecretario,
       emails: [],
       telefones: [],
-      fonte: nomeFonte === "diario" ? "Querido Diário" : "Snippet do Google",
+      fonte: nomeFonte === "snippet" ? "Snippet do Google" : "Fonte não identificada",
       fonteUrl: topNome?.url ?? null,
       contexto: "Nome identificado, mas não localizamos e-mail/telefone associados.",
       nomeFonte,

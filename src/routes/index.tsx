@@ -45,14 +45,13 @@ async function streamProspect(
   municipio: string,
   uf: string,
   ibgeId: number,
-  useDiario: boolean,
   signal: AbortSignal,
   onEvent: (evt: ProgressEvent) => void,
 ): Promise<ProspectResult | null> {
   const res = await fetch("/api/prospect", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ municipio, uf, ibgeId, useDiario }),
+    body: JSON.stringify({ municipio, uf, ibgeId }),
     signal,
   });
 
@@ -88,8 +87,6 @@ function Index() {
   const [selected, setSelected] = useState<Municipio[]>([]);
   const [cards, setCards] = useState<RunningCard[]>([]);
   const [running, setRunning] = useState(false);
-  const [forceRefresh, setForceRefresh] = useState(false);
-  const [useDiario, setUseDiario] = useState(false);
   const [cacheCount, setCacheCount] = useState(0);
 
   const slowTimers = useRef<Record<string, number>>({});
@@ -162,35 +159,33 @@ function Index() {
       }
 
       // === CACHE: tentar servir do localStorage antes de bater na rede ===
-      if (!forceRefresh) {
-        const cached = getCached(m.id);
-        if (cached) {
-          const ageMin = Math.round((Date.now() - cached.savedAt) / 60000);
-          const cacheEvt: ProgressEvent = {
-            kind: "progress",
-            level: "success",
-            etapa: "init",
-            message: `Cache local: resultado de ${cached.date} (há ${ageMin} min) — sem nova consulta`,
-            data: { savedAt: cached.savedAt },
-            ts: Date.now(),
-          };
-          const finalEvt: ProgressEvent = {
-            kind: "final",
+      const cached = getCached(m.id);
+      if (cached) {
+        const ageMin = Math.round((Date.now() - cached.savedAt) / 60000);
+        const cacheEvt: ProgressEvent = {
+          kind: "progress",
+          level: "success",
+          etapa: "init",
+          message: `Cache local: resultado de ${cached.date} (há ${ageMin} min) — sem nova consulta`,
+          data: { savedAt: cached.savedAt },
+          ts: Date.now(),
+        };
+        const finalEvt: ProgressEvent = {
+          kind: "final",
+          result: cached.result,
+          ts: Date.now(),
+        };
+        logDebug("success", scope, cacheEvt.message);
+        patchCard(key, (c) => ({
+          ...c,
+          state: {
+            phase: "done",
             result: cached.result,
-            ts: Date.now(),
-          };
-          logDebug("success", scope, cacheEvt.message);
-          patchCard(key, (c) => ({
-            ...c,
-            state: {
-              phase: "done",
-              result: cached.result,
-              events: [...c.state.events, cacheEvt, finalEvt],
-            },
-            slow: false,
-          }));
-          continue;
-        }
+            events: [...c.state.events, cacheEvt, finalEvt],
+          },
+          slow: false,
+        }));
+        continue;
       }
 
       slowTimers.current[key] = window.setTimeout(() => {
@@ -198,7 +193,7 @@ function Index() {
       }, 45000);
 
       try {
-        const result = await streamProspect(m.nome, m.uf, m.id, useDiario, controller.signal, (evt) => {
+        const result = await streamProspect(m.nome, m.uf, m.id, controller.signal, (evt) => {
           if (evt.kind === "progress") {
             logDebug(evt.level, scope, evt.message, evt.data);
             patchCard(key, (c) => {
@@ -393,36 +388,6 @@ function Index() {
             </div>
 
             <div className="mt-4 rounded-md border border-slate-200 bg-slate-50/60 p-3 text-xs text-slate-700">
-              <label className="flex cursor-pointer items-start gap-2">
-                <input
-                  type="checkbox"
-                  checked={forceRefresh}
-                  onChange={(e) => setForceRefresh(e.target.checked)}
-                  disabled={running}
-                  className="mt-0.5 h-3.5 w-3.5 cursor-pointer"
-                />
-                <span>
-                  <span className="font-medium">Forçar nova busca</span>
-                  <span className="block text-[11px] text-slate-500">
-                    Ignora o cache local e refaz tudo, mesmo que já tenha buscado hoje.
-                  </span>
-                </span>
-              </label>
-              <label className="mt-2 flex cursor-pointer items-start gap-2 border-t border-slate-200 pt-2">
-                <input
-                  type="checkbox"
-                  checked={useDiario}
-                  onChange={(e) => setUseDiario(e.target.checked)}
-                  disabled={running}
-                  className="mt-0.5 h-3.5 w-3.5 cursor-pointer"
-                />
-                <span>
-                  <span className="font-medium">Consultar Diário Oficial</span>
-                  <span className="block text-[11px] text-slate-500">
-                    Querido Diário (mais lento, ~2s extra). Útil em cidades com pouca info no Google.
-                  </span>
-                </span>
-              </label>
 
               <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-[11px] text-slate-500">
                 <span>
@@ -449,7 +414,7 @@ function Index() {
           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 p-4 text-xs leading-relaxed text-slate-600">
             <p className="font-semibold text-slate-700">Como o robô procura (escalonado)</p>
             <ol className="mt-1.5 list-decimal space-y-0.5 pl-4">
-              <li><b>A.</b> Descobre o <b>nome</b> do(a) Secretário(a) — site oficial + Querido Diário</li>
+              <li><b>A.</b> Descobre o <b>nome</b> do(a) Secretário(a) — site oficial, buscas no Google e RAG</li>
               <li><b>B.</b> Com o nome em mãos, faz <b>novas buscas</b> atrás de e-mail/telefone dessa pessoa</li>
               <li><b>C.</b> Contato institucional da Secretaria de Educação (fallback)</li>
               <li><b>D.</b> Último recurso: contato geral da prefeitura → gabinete do prefeito</li>
