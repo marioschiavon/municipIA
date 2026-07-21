@@ -808,7 +808,6 @@ export async function prospectar(
   uf: string,
   onEvent?: (evt: ProgressEvent) => void,
   ibgeId?: number,
-  options: { useDiario?: boolean } = {},
 ): Promise<ProspectResult> {
   const t0 = Date.now();
   const { useDiario = false } = options;
