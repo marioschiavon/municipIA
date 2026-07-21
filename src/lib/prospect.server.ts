@@ -371,6 +371,21 @@ function filterPresent(extracted: Extracted, source: string, municipio?: string,
   return { ...extracted, emails, telefones };
 }
 
+function extractSecretaryLine(source: string): { nome: string | null; email: string | null; cargo: string | null } {
+  const m = /\b(Secret[áa]ri[ao](?:a)?(?:\s+Municipal\s+de\s+Educa[çc][ãa]o)?)\s*:\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ'.-]+(?:\s+(?:de|da|do|dos|das|e)\s+|\s+)[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ'.-]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ'.-]+){0,4})(?:\s*\(([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\))?/i.exec(source);
+  if (!m) return { nome: null, email: null, cargo: null };
+  return {
+    cargo: /educa/i.test(m[1]) ? m[1].trim() : "Secretária Municipal de Educação",
+    nome: m[2].replace(/\s+/g, " ").trim(),
+    email: m[3]?.trim() ?? null,
+  };
+}
+
+function extractHorario(source: string): string | null {
+  const m = /Hor[áa]rio\s+de\s+Atendimento\s*:\s*([^\n.]{8,140})/i.exec(source);
+  return m ? m[1].replace(/\s+/g, " ").trim() : null;
+}
+
 async function scrapeMarkdown(
   fc: Firecrawl,
   url: string,
