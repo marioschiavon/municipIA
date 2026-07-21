@@ -388,6 +388,31 @@ function extractHorario(source: string): string | null {
   return inline ? inline[1].replace(/\s+/g, " ").trim() : null;
 }
 
+function looksLikeOfficialEducationPage(c: SearchCandidate, slug: string, ufLow: string): boolean {
+  const url = c.url.toLowerCase();
+  const host = shortHost(url).toLowerCase();
+  if (!host.endsWith(".gov.br")) return false;
+  if (!host.includes(slug) && !url.includes(slug) && !url.includes(`${ufLow}.gov.br`)) return false;
+  return /(secretaria[^/]*educacao|secretarias\/secretaria-educacao|secretaria-de-educacao|secretaria\s+de\s+educa|secretaria municipal de educa)/i.test(
+    `${url} ${c.title} ${c.description}`,
+  );
+}
+
+function mergeExtracted(base: Extracted, patch: Partial<Extracted>, municipio: string, uf: string, topHost?: string): Extracted {
+  const emails = filterEmailsForFinal([...(patch.emails ?? []), ...base.emails], municipio, uf, topHost);
+  const telefones = Array.from(new Set([...(base.telefones ?? []), ...(patch.telefones ?? [])]));
+  return {
+    ...base,
+    secretario: base.secretario ?? patch.secretario ?? null,
+    cargo: base.cargo ?? patch.cargo ?? null,
+    emails,
+    telefones,
+    contexto: base.contexto ?? patch.contexto ?? null,
+    dataReferencia: base.dataReferencia ?? patch.dataReferencia ?? null,
+    horarioAtendimento: base.horarioAtendimento ?? patch.horarioAtendimento ?? null,
+  };
+}
+
 async function scrapeMarkdown(
   fc: Firecrawl,
   url: string,
