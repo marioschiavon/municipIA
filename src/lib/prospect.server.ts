@@ -659,34 +659,42 @@ export async function prospectar(
     }
   };
   const ragQueryA = `prefeitura ${municipio} ${uf} secretaria municipal de educação secretário atual contato email telefone`;
-  const ragQueryB = `site:${slug}.${ufLow}.gov.br secretaria educação contato`;
+  const ragQueryB = `site:${ufLow}.gov.br "${municipio}" "Secretaria Municipal de Educação" contato email telefone`;
   emit("info", "init", `RAG (Apify) A em background: "${ragQueryA.slice(0, 80)}"`);
   emit("info", "init", `RAG (Apify) B em background: "${ragQueryB.slice(0, 80)}"`);
-  const ragPromiseA: Promise<void> = (async () => {
-    const r = await ragBrowse(ragQueryA, { maxResults: 5, timeoutMs: 120_000 });
+  const runRag = async (
+    label: "A" | "B",
+    query: string,
+    opts: { maxResults: number; timeoutMs: number; startUrls?: string[] },
+  ) => {
+    let r = await ragBrowse(query, opts);
+    if (!r.ok && /memory-limit|exceed the memory/i.test(r.reason)) {
+      emit("warn", "init", `RAG ${label} sem memória no Apify — aguardando 20s e tentando novamente`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 20_000));
+      r = await ragBrowse(query, { ...opts, maxResults: Math.min(opts.maxResults, 3) });
+    }
     if (!r.ok) {
-      emit("warn", "init", `RAG A indisponível (${r.reason})`);
+      emit("warn", "init", `RAG ${label} indisponível (${r.reason})`);
       return;
     }
     const good = r.pages.filter((p) => p.markdown && p.markdown.length > 200);
     addRagPages(good);
-    emit("success", "init", `RAG A: ${good.length} pág. em ${(r.elapsedMs / 1000).toFixed(1)}s`);
-  })().catch((e) => emit("warn", "init", `RAG A erro: ${String(e)}`));
-  const ragPromiseB: Promise<void> = (async () => {
-    const r = await ragBrowse(ragQueryB, {
+    emit("success", "init", `RAG ${label}: ${good.length} pág. em ${(r.elapsedMs / 1000).toFixed(1)}s`);
+  };
+  const ragAll: Promise<void> = (async () => {
+    // Serializado: dois actors Playwright simultâneos estouram o limite de memória do Apify.
+    await runRag("A", ragQueryA, { maxResults: 5, timeoutMs: 120_000 });
+    await runRag("B", ragQueryB, {
       maxResults: 5,
       timeoutMs: 120_000,
-      startUrls: [`https://${slug}.${ufLow}.gov.br/`, `https://www.${slug}.${ufLow}.gov.br/`],
+      startUrls: [
+        `https://${slug}.${ufLow}.gov.br/`,
+        `https://www.${slug}.${ufLow}.gov.br/`,
+        `https://${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/`,
+        `https://www.${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/`,
+      ],
     });
-    if (!r.ok) {
-      emit("warn", "init", `RAG B indisponível (${r.reason})`);
-      return;
-    }
-    const good = r.pages.filter((p) => p.markdown && p.markdown.length > 200);
-    addRagPages(good);
-    emit("success", "init", `RAG B: ${good.length} pág. em ${(r.elapsedMs / 1000).toFixed(1)}s`);
-  })().catch((e) => emit("warn", "init", `RAG B erro: ${String(e)}`));
-  const ragAll = Promise.allSettled([ragPromiseA, ragPromiseB]);
+  })().catch((e) => emit("warn", "init", `RAG erro: ${String(e)}`));
 
   const getRagPages = (): ApifyPage[] =>
     Array.from(ragPagesMap.values()).sort((a, b) => (b.markdown?.length ?? 0) - (a.markdown?.length ?? 0));
@@ -720,7 +728,7 @@ export async function prospectar(
     if (!ext) return false;
     if (!ext.secretario && ext.emails.length === 0) return false;
     const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
-    return !!ext.secretario || hasGoodEmail || ext.telefones.length > 0;
+    return !!ext.secretario || hasGoodEmail;
   };
 
 
@@ -851,7 +859,7 @@ export async function prospectar(
     const text = `${c.url} ${c.title ?? ""} ${c.description ?? ""}`.toLowerCase();
     return (
       /\.gov\.br|\.leg\.br/.test(c.url) &&
-      /(secretaria|secretári|seduc|sme|smed|educa)/.test(text)
+      /(seduc|sme|smed|educa)/.test(text)
     );
   };
   if (looksLikeSeducPage(topNome)) {
@@ -923,7 +931,7 @@ export async function prospectar(
     });
     if (ext && hasUsefulContact(ext)) {
       const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
-      if (hasGoodEmail || ext.telefones.length > 0) {
+      if (hasGoodEmail) {
         emit("success", etapaTag, `✨ Contato encontrado via ${via} (${Date.now() - t0}ms)`);
         return {
           status: "found",
@@ -939,6 +947,9 @@ export async function prospectar(
           dataReferencia: ext.dataReferencia ?? dataReferenciaGlobal,
           horarioAtendimento: ext.horarioAtendimento ?? null,
         };
+      }
+      if (ext.telefones.length > 0) {
+        emit("warn", etapaTag, `${via} trouxe só telefone — guardando parcial e continuando atrás de nome/e-mail/horário`);
       }
       if (!melhorParcial) melhorParcial = { ext, url: ranked[0]?.url ?? null, via };
     }
