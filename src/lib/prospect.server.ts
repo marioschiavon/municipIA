@@ -1082,9 +1082,6 @@ export async function prospectar(
       emit("warn", "nome", `Descartando nome "${nomeRes.secretario}" — confiança baixa e sem aparições nos snippets`);
     }
     if (aceitaNome && nomeRes?.secretario) {
-      if (nomeSecretario && nomeRes.secretario.toLowerCase().trim() !== nomeSecretario.toLowerCase().trim()) {
-        emit("warn", "nome", `Conflito: diário=${nomeSecretario} / snippet=${nomeRes.secretario} — adotando snippet (mais atual)`);
-      }
       nomeSecretario = nomeRes.secretario;
       cargoSecretario = nomeRes.cargo ?? cargoSecretario;
       nomeFonte = "snippet";
