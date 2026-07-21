@@ -382,8 +382,10 @@ function extractSecretaryLine(source: string): { nome: string | null; email: str
 }
 
 function extractHorario(source: string): string | null {
-  const m = /Hor[áa]rio\s+de\s+Atendimento\s*:\s*([^\n.]{8,140})/i.exec(source);
-  return m ? m[1].replace(/\s+/g, " ").trim() : null;
+  const labeled = /Hor[áa]rio\s+(?:de\s+Atendimento|de\s+funcionamento)?\s*:\s*([^\n.]{8,140})/i.exec(source);
+  if (labeled) return labeled[1].replace(/\s+/g, " ").trim();
+  const inline = /(De\s+segunda\s+a\s+sexta(?:-feira)?[^\n.]{0,80}(?:\d{1,2}h\d{0,2}|\d{1,2}:\d{2})[^\n.]{0,80})/i.exec(source);
+  return inline ? inline[1].replace(/\s+/g, " ").trim() : null;
 }
 
 async function scrapeMarkdown(
