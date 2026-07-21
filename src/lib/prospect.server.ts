@@ -1019,21 +1019,11 @@ export async function prospectar(
   const topNome = rankedNome[0] ?? null;
   const topHost = topNome ? shortHost(topNome.url) : undefined;
 
-  if (useDiario) {
-    await Promise.race([diarioPromise, new Promise<void>((r) => setTimeout(r, 800))]);
-  }
-
   let nomeSecretario: string | null = null;
   let cargoSecretario: string | null = null;
   let nomeFonte: ProspectResult["nomeFonte"] = null;
   let dataReferenciaGlobal: string | null = null;
 
-  if (diarioNome && (diarioNome as { ageDays: number }).ageDays <= 365) {
-    nomeSecretario = (diarioNome as { nome: string }).nome;
-    nomeFonte = "diario";
-    dataReferenciaGlobal = (diarioNome as { data: string }).data || null;
-    emit("info", "nome", `Pista do diário entrou no prompt: ${nomeSecretario}`);
-  }
 
   if (snippetsNome) {
     const nomeRes = await runExtractNome(snippetsNome, topNome?.url ?? "(snippets)", municipio, uf, emit, {
