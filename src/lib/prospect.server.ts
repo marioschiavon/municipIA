@@ -526,19 +526,22 @@ async function extractNomeWithAI(
   const prompt = `Você identifica o(a) SECRETÁRIO(A) MUNICIPAL DE EDUCAÇÃO ATUAL de ${municipio}/${uf}.
 Hoje é ${new Date().toISOString().slice(0, 10)} (ano corrente: ${anoAtual}).
 
-OBJETIVO ÚNICO desta etapa: NOME e CARGO da pessoa. NÃO devolva e-mail nem telefone.
+OBJETIVO desta etapa:
+1) NOME e CARGO do(a) SECRETÁRIO(A) titular. NÃO devolva e-mail nem telefone da pessoa aqui.
+2) EQUIPE: TODAS as demais pessoas da Secretaria de Educação citadas com NOME + CARGO (Secretário(a) Adjunto(a), Chefe de Gabinete, Diretor(a), Coordenador(a), Assessor(a), Chefe de Divisão/Departamento, Assistente etc.). Devolva no campo "equipe" como array de {nome, cargo, email?, telefone?}. Se o texto trouxer e-mail/telefone ao lado da pessoa, inclua; senão deixe null.
 
 REGRAS:
 - NUNCA invente. Só extraia o que aparece LITERALMENTE no texto/snippets.
 - "secretario" só com nome de pessoa real citada como responsável pela Educação.
-- Se houver mais de um nome, escolha o ATUAL — mais recentemente empossado (pistas: "nomeado", "empossado", "tomou posse", "a partir de DD/MM/AAAA", data mais recente, ${anoAtual}).
-- Se houver exoneração/troca, ignore o nome antigo.
+- Se houver mais de um nome no topo, escolha o ATUAL — mais recentemente empossado (pistas: "nomeado", "empossado", "tomou posse", "a partir de DD/MM/AAAA", data mais recente, ${anoAtual}).
+- Se houver exoneração/troca do titular, ignore o nome antigo NO CAMPO "secretario" (mas pode listar em "equipe" se o cargo atual ainda for citado).
 - Snippets do Google geralmente refletem o titular ATUAL — prefira-os ao Diário Oficial quando houver conflito, salvo se o trecho do diário for claramente mais recente.
 - "dataReferencia": data/mês/ano da evidência (ex.: "${anoAtual}-11", "abril/${anoAtual}"); senão null.
 - "confianca" = "alta" só quando o nome ATUAL está claramente identificado.
 - Se encontrar um nome em snippets de domínio ".gov.br" do próprio município, marque confiança como "alta" automaticamente, mesmo que o snippet seja curto.
 - Aceite o nome se ele aparecer ao menos 2 vezes nos snippets combinados, mesmo sem data explícita — nesse caso, confiança "media" ou "alta".
 - Antes de retornar confiança "baixa", releia mentalmente APENAS os snippets de ".gov.br" isolados e tente extrair novamente; só desista se ainda assim não houver evidência clara.
+- Em "equipe", NÃO inclua diretores(as) de escolas/CMEIs individuais — apenas quadro da Secretaria.
 
 URL: ${url}
 ${diarioBlock}
