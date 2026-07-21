@@ -1005,20 +1005,18 @@ export async function prospectar(
   // no snippet da página oficial.
   {
     emit("info", "educacao", "Estágio 1.6 — enriquecendo por Apify Google SERP (snippets ricos)");
-    const [apifyNome, apifyPagina] = await Promise.all([
-      apifySearch(
-        `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual contato email telefone`,
-        emit,
-        "educacao",
-        { limit: 10, timeoutMs: 45_000, uf },
-      ),
-      apifySearch(
-        `site:www.${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/ ${municipio} Secretaria de Educação email telefone horário`,
-        emit,
-        "educacao",
-        { limit: 10, timeoutMs: 45_000, uf },
-      ),
-    ]);
+    const apifyNome = await apifySearch(
+      `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual contato email telefone`,
+      emit,
+      "educacao",
+      { limit: 10, timeoutMs: 45_000, uf },
+    );
+    const apifyPagina = await apifySearch(
+      `site:www.${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/ ${municipio} Secretaria de Educação email telefone horário`,
+      emit,
+      "educacao",
+      { limit: 10, timeoutMs: 45_000, uf },
+    );
     const apifyCands = dedupeByUrl([...apifyNome, ...apifyPagina]);
     addToPool(apifyCands);
     const official = preferGov(apifyCands.filter((c) => looksLikeOfficialEducationPage(c, slug, ufLow)), (u) => /(educa|seduc|sme)/i.test(u));
