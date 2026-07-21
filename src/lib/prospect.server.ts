@@ -96,6 +96,12 @@ function shortHost(url: string): string {
   }
 }
 
+function govUf(url: string): string | null {
+  const host = shortHost(url).toLowerCase();
+  const m = /\.([a-z]{2})\.gov\.br$/.exec(host);
+  return m?.[1] ?? null;
+}
+
 function slugify(s: string): string {
   return s
     .normalize("NFD")
