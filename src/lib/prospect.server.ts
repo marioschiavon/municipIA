@@ -788,6 +788,16 @@ export async function prospectar(
     for (const m of list) if (m?.nome) equipePool.push(m);
   };
 
+  const runExtract: typeof extractWithAI = async (...args) => {
+    const r = await extractWithAI(...args);
+    if (r?.equipe?.length) pushEquipe(r.equipe);
+    return r;
+  };
+  const runExtractNome: typeof extractNomeWithAI = async (...args) => {
+    const r = await extractNomeWithAI(...args);
+    if (r?.equipe?.length) pushEquipe(r.equipe);
+    return r;
+
   const sendFinal = (result: ProspectResult) => {
     const merged: ProspectResult = {
       ...result,
