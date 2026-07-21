@@ -900,31 +900,9 @@ export async function prospectar(
   };
 
 
-  // Diário Oficial em background.
-  let diarioExcerpts: DiarioExcerpt[] = [];
-  let diarioBlock = "";
-  let diarioNome: { nome: string; data: string; ageDays: number } | null = null;
-  let diarioPromise: Promise<void> = Promise.resolve();
-  if (useDiario && ibgeId) {
-    emit("info", "diario", `Diário Oficial em background (timeout 2s)...`);
-    diarioPromise = (async () => {
-      const r = await buscarDiario(
-        ibgeId,
-        '"secretário de educação" OR "secretária de educação" OR "secretario municipal de educação"',
-        { size: 3, sinceDays: 180, timeoutMs: 2000 },
-      );
-      if (!r.ok) {
-        emit("warn", "diario", `Diário indisponível (${r.reason}) — seguindo sem ele`);
-        return;
-      }
-      diarioExcerpts = r.excerpts;
-      diarioBlock = formatExcerptsForPrompt(diarioExcerpts);
-      diarioNome = nomeDoDiario(diarioExcerpts);
-      emit("success", "diario", `Diário trouxe ${r.excerpts.length} trecho(s)${diarioNome ? ` · pista: ${diarioNome.nome}` : ""}`);
-    })().catch((e) => emit("warn", "diario", `Diário erro: ${String(e)}`));
-  } else if (!useDiario) {
-    emit("info", "diario", "Querido Diário desligado nesta busca");
-  }
+  // Querido Diário foi desativado do pipeline para evitar atrasos e dados desatualizados.
+  const diarioBlock = "";
+
 
   // RAG Web Browser (Apify) em background — DUAS queries paralelas.
   //  A) foco em nome do secretário (SERP + scrape dos top resultados)
