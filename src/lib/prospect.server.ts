@@ -797,6 +797,8 @@ export async function prospectar(
     const r = await extractNomeWithAI(...args);
     if (r?.equipe?.length) pushEquipe(r.equipe);
     return r;
+  };
+
 
   const sendFinal = (result: ProspectResult) => {
     const merged: ProspectResult = {
