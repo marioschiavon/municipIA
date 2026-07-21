@@ -11,6 +11,7 @@ import { buscarDiario, formatExcerptsForPrompt, type DiarioExcerpt } from "./que
 import { googleSerp, ragBrowse, type ApifyPage } from "./apify.server";
 import type {
   EtapaTag,
+  EquipeMembro,
   Hierarquia,
   ProgressEvent,
   ProgressLevel,
@@ -29,6 +30,19 @@ const ConfiancaLoose = z
     return "media" as const;
   });
 
+// Membro da equipe (coordenador, diretor, assessor, chefe de gabinete, etc.).
+const EquipeSchema = z
+  .array(
+    z.object({
+      nome: z.string(),
+      cargo: z.string().nullable().optional().default(null),
+      email: z.string().nullable().optional().default(null),
+      telefone: z.string().nullable().optional().default(null),
+    }),
+  )
+  .optional()
+  .default([]);
+
 // Schema completo — usado nos estágios 2/3/4 (contato).
 const ExtractSchema = z.object({
   secretario: z.string().nullable().optional().default(null),
@@ -39,6 +53,7 @@ const ExtractSchema = z.object({
   confianca: ConfiancaLoose.default("baixa"),
   dataReferencia: z.string().nullable().optional().default(null),
   horarioAtendimento: z.string().nullable().optional().default(null),
+  equipe: EquipeSchema,
 });
 
 // Schema reduzido — usado SOMENTE no Estágio 1 (nome). Sem e-mails/telefones.
@@ -48,6 +63,7 @@ const NomeSchema = z.object({
   contexto: z.string().nullable().optional().default(null),
   confianca: ConfiancaLoose.default("baixa"),
   dataReferencia: z.string().nullable().optional().default(null),
+  equipe: EquipeSchema,
 });
 
 type Extracted = {
@@ -59,6 +75,7 @@ type Extracted = {
   confianca: "alta" | "media" | "baixa";
   dataReferencia: string | null;
   horarioAtendimento: string | null;
+  equipe: EquipeMembro[];
 };
 
 type NomeOnly = {
@@ -67,7 +84,9 @@ type NomeOnly = {
   contexto: string | null;
   confianca: "alta" | "media" | "baixa";
   dataReferencia: string | null;
+  equipe: EquipeMembro[];
 };
+
 
 type Emit = (
   level: ProgressLevel,
