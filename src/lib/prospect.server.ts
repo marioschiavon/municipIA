@@ -810,7 +810,7 @@ export async function prospectar(
   ibgeId?: number,
 ): Promise<ProspectResult> {
   const t0 = Date.now();
-  const { useDiario = false } = options;
+  
 
   const emit: Emit = (level, etapa, message, data) => {
     onEvent?.({
