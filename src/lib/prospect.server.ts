@@ -432,9 +432,34 @@ function looksLikeOfficialEducationPage(c: SearchCandidate, slug: string, ufLow:
   );
 }
 
+function normNome(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function dedupeEquipe(list: EquipeMembro[]): EquipeMembro[] {
+  const byKey = new Map<string, EquipeMembro>();
+  for (const m of list) {
+    if (!m?.nome || m.nome.trim().length < 3) continue;
+    const key = normNome(m.nome);
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, { ...m, nome: m.nome.trim() });
+    } else {
+      byKey.set(key, {
+        nome: prev.nome,
+        cargo: prev.cargo ?? m.cargo ?? null,
+        email: prev.email ?? m.email ?? null,
+        telefone: prev.telefone ?? m.telefone ?? null,
+      });
+    }
+  }
+  return Array.from(byKey.values());
+}
+
 function mergeExtracted(base: Extracted, patch: Partial<Extracted>, municipio: string, uf: string, topHost?: string): Extracted {
   const emails = filterEmailsForFinal([...(patch.emails ?? []), ...base.emails], municipio, uf, topHost);
   const telefones = Array.from(new Set([...(base.telefones ?? []), ...(patch.telefones ?? [])]));
+  const equipe = dedupeEquipe([...(base.equipe ?? []), ...(patch.equipe ?? [])]);
   return {
     ...base,
     secretario: base.secretario ?? patch.secretario ?? null,
@@ -444,8 +469,10 @@ function mergeExtracted(base: Extracted, patch: Partial<Extracted>, municipio: s
     contexto: base.contexto ?? patch.contexto ?? null,
     dataReferencia: base.dataReferencia ?? patch.dataReferencia ?? null,
     horarioAtendimento: base.horarioAtendimento ?? patch.horarioAtendimento ?? null,
+    equipe,
   };
 }
+
 
 async function scrapeMarkdown(
   fc: Firecrawl,
