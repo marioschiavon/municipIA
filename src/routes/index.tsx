@@ -21,10 +21,10 @@ export const Route = createFileRoute("/")({
         content:
           "Prospecção automatizada de contatos das Secretarias de Educação municipais brasileiras com fallback hierárquico.",
       },
-      { property: "og:title", content: "MunicipIA" },
+      { property: "og:title", content: "MunicipIA — Coleta inteligente de contatos municipais" },
       {
         property: "og:description",
-        content: "Coleta inteligente de contatos municipais.",
+        content: "Prospecção automatizada de contatos das Secretarias de Educação municipais brasileiras com fallback hierárquico.",
       },
     ],
   }),
