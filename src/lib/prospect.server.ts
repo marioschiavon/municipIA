@@ -781,9 +781,20 @@ export async function prospectar(
       elapsedMs: Date.now() - t0,
     });
   };
+  // Pool global de EQUIPE — coletada a cada extração e injetada no resultado final.
+  const equipePool: EquipeMembro[] = [];
+  const pushEquipe = (list?: EquipeMembro[] | null) => {
+    if (!list || list.length === 0) return;
+    for (const m of list) if (m?.nome) equipePool.push(m);
+  };
+
   const sendFinal = (result: ProspectResult) => {
-    onEvent?.({ kind: "final", result, ts: Date.now(), elapsedMs: Date.now() - t0 });
-    return result;
+    const merged: ProspectResult = {
+      ...result,
+      equipe: dedupeEquipe([...(result.equipe ?? []), ...equipePool]),
+    };
+    onEvent?.({ kind: "final", result: merged, ts: Date.now(), elapsedMs: Date.now() - t0 });
+    return merged;
   };
 
   emit("info", "init", `Iniciando ${municipio}/${uf} — pipeline ESCALONADO (nome → contato)`);
@@ -803,6 +814,7 @@ export async function prospectar(
       snippetPool.push(c);
     }
   };
+
 
   // Diário Oficial em background.
   let diarioExcerpts: DiarioExcerpt[] = [];
