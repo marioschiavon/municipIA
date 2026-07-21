@@ -11,6 +11,7 @@ import { buscarDiario, formatExcerptsForPrompt, type DiarioExcerpt } from "./que
 import { googleSerp, ragBrowse, type ApifyPage } from "./apify.server";
 import type {
   EtapaTag,
+  EquipeMembro,
   Hierarquia,
   ProgressEvent,
   ProgressLevel,
@@ -29,6 +30,19 @@ const ConfiancaLoose = z
     return "media" as const;
   });
 
+// Membro da equipe (coordenador, diretor, assessor, chefe de gabinete, etc.).
+const EquipeSchema = z
+  .array(
+    z.object({
+      nome: z.string(),
+      cargo: z.string().nullable().optional().default(null),
+      email: z.string().nullable().optional().default(null),
+      telefone: z.string().nullable().optional().default(null),
+    }),
+  )
+  .optional()
+  .default([]);
+
 // Schema completo — usado nos estágios 2/3/4 (contato).
 const ExtractSchema = z.object({
   secretario: z.string().nullable().optional().default(null),
@@ -39,6 +53,7 @@ const ExtractSchema = z.object({
   confianca: ConfiancaLoose.default("baixa"),
   dataReferencia: z.string().nullable().optional().default(null),
   horarioAtendimento: z.string().nullable().optional().default(null),
+  equipe: EquipeSchema,
 });
 
 // Schema reduzido — usado SOMENTE no Estágio 1 (nome). Sem e-mails/telefones.
@@ -48,6 +63,7 @@ const NomeSchema = z.object({
   contexto: z.string().nullable().optional().default(null),
   confianca: ConfiancaLoose.default("baixa"),
   dataReferencia: z.string().nullable().optional().default(null),
+  equipe: EquipeSchema,
 });
 
 type Extracted = {
@@ -59,6 +75,7 @@ type Extracted = {
   confianca: "alta" | "media" | "baixa";
   dataReferencia: string | null;
   horarioAtendimento: string | null;
+  equipe: EquipeMembro[];
 };
 
 type NomeOnly = {
@@ -67,7 +84,9 @@ type NomeOnly = {
   contexto: string | null;
   confianca: "alta" | "media" | "baixa";
   dataReferencia: string | null;
+  equipe: EquipeMembro[];
 };
+
 
 type Emit = (
   level: ProgressLevel,
@@ -413,9 +432,34 @@ function looksLikeOfficialEducationPage(c: SearchCandidate, slug: string, ufLow:
   );
 }
 
+function normNome(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function dedupeEquipe(list: EquipeMembro[]): EquipeMembro[] {
+  const byKey = new Map<string, EquipeMembro>();
+  for (const m of list) {
+    if (!m?.nome || m.nome.trim().length < 3) continue;
+    const key = normNome(m.nome);
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, { ...m, nome: m.nome.trim() });
+    } else {
+      byKey.set(key, {
+        nome: prev.nome,
+        cargo: prev.cargo ?? m.cargo ?? null,
+        email: prev.email ?? m.email ?? null,
+        telefone: prev.telefone ?? m.telefone ?? null,
+      });
+    }
+  }
+  return Array.from(byKey.values());
+}
+
 function mergeExtracted(base: Extracted, patch: Partial<Extracted>, municipio: string, uf: string, topHost?: string): Extracted {
   const emails = filterEmailsForFinal([...(patch.emails ?? []), ...base.emails], municipio, uf, topHost);
   const telefones = Array.from(new Set([...(base.telefones ?? []), ...(patch.telefones ?? [])]));
+  const equipe = dedupeEquipe([...(base.equipe ?? []), ...(patch.equipe ?? [])]);
   return {
     ...base,
     secretario: base.secretario ?? patch.secretario ?? null,
@@ -425,8 +469,10 @@ function mergeExtracted(base: Extracted, patch: Partial<Extracted>, municipio: s
     contexto: base.contexto ?? patch.contexto ?? null,
     dataReferencia: base.dataReferencia ?? patch.dataReferencia ?? null,
     horarioAtendimento: base.horarioAtendimento ?? patch.horarioAtendimento ?? null,
+    equipe,
   };
 }
+
 
 async function scrapeMarkdown(
   fc: Firecrawl,
@@ -480,19 +526,22 @@ async function extractNomeWithAI(
   const prompt = `Você identifica o(a) SECRETÁRIO(A) MUNICIPAL DE EDUCAÇÃO ATUAL de ${municipio}/${uf}.
 Hoje é ${new Date().toISOString().slice(0, 10)} (ano corrente: ${anoAtual}).
 
-OBJETIVO ÚNICO desta etapa: NOME e CARGO da pessoa. NÃO devolva e-mail nem telefone.
+OBJETIVO desta etapa:
+1) NOME e CARGO do(a) SECRETÁRIO(A) titular. NÃO devolva e-mail nem telefone da pessoa aqui.
+2) EQUIPE: TODAS as demais pessoas da Secretaria de Educação citadas com NOME + CARGO (Secretário(a) Adjunto(a), Chefe de Gabinete, Diretor(a), Coordenador(a), Assessor(a), Chefe de Divisão/Departamento, Assistente etc.). Devolva no campo "equipe" como array de {nome, cargo, email?, telefone?}. Se o texto trouxer e-mail/telefone ao lado da pessoa, inclua; senão deixe null.
 
 REGRAS:
 - NUNCA invente. Só extraia o que aparece LITERALMENTE no texto/snippets.
 - "secretario" só com nome de pessoa real citada como responsável pela Educação.
-- Se houver mais de um nome, escolha o ATUAL — mais recentemente empossado (pistas: "nomeado", "empossado", "tomou posse", "a partir de DD/MM/AAAA", data mais recente, ${anoAtual}).
-- Se houver exoneração/troca, ignore o nome antigo.
+- Se houver mais de um nome no topo, escolha o ATUAL — mais recentemente empossado (pistas: "nomeado", "empossado", "tomou posse", "a partir de DD/MM/AAAA", data mais recente, ${anoAtual}).
+- Se houver exoneração/troca do titular, ignore o nome antigo NO CAMPO "secretario" (mas pode listar em "equipe" se o cargo atual ainda for citado).
 - Snippets do Google geralmente refletem o titular ATUAL — prefira-os ao Diário Oficial quando houver conflito, salvo se o trecho do diário for claramente mais recente.
 - "dataReferencia": data/mês/ano da evidência (ex.: "${anoAtual}-11", "abril/${anoAtual}"); senão null.
 - "confianca" = "alta" só quando o nome ATUAL está claramente identificado.
 - Se encontrar um nome em snippets de domínio ".gov.br" do próprio município, marque confiança como "alta" automaticamente, mesmo que o snippet seja curto.
 - Aceite o nome se ele aparecer ao menos 2 vezes nos snippets combinados, mesmo sem data explícita — nesse caso, confiança "media" ou "alta".
 - Antes de retornar confiança "baixa", releia mentalmente APENAS os snippets de ".gov.br" isolados e tente extrair novamente; só desista se ainda assim não houver evidência clara.
+- Em "equipe", NÃO inclua diretores(as) de escolas/CMEIs individuais — apenas quadro da Secretaria.
 
 URL: ${url}
 ${diarioBlock}
@@ -510,6 +559,24 @@ Responda APENAS com JSON válido seguindo o schema.`;
       prompt,
     });
     const out = object as NomeOnly;
+    // Anti-alucinação da equipe.
+    if (Array.isArray(out.equipe) && out.equipe.length > 0) {
+      const srcNorm = normNome(conteudo);
+      const titular = out.secretario ? normNome(out.secretario) : "";
+      out.equipe = dedupeEquipe(
+        out.equipe.filter((m) => {
+          if (!m?.nome) return false;
+          const n = normNome(m.nome);
+          if (n.length < 5) return false;
+          if (titular && n === titular) return false;
+          const tokens = n.split(" ").filter((t) => t.length >= 3);
+          if (tokens.length < 2) return false;
+          return tokens.every((t) => srcNorm.includes(t));
+        }),
+      );
+    } else {
+      out.equipe = [];
+    }
     emit(
       out.confianca === "baixa" ? "warn" : "success",
       "nome",
@@ -576,6 +643,12 @@ REGRAS DE E-MAIL (CRÍTICO — não erre isso):
 HORÁRIO DE ATENDIMENTO:
 - Preencha "horarioAtendimento" SOMENTE se aparecer literalmente no texto (ex.: "Segunda a Sexta, 8h às 17h", "Seg–Sex 08:00–17:00"). Senão null.
 
+EQUIPE (importantíssimo):
+- Devolva em "equipe" TODAS as pessoas citadas com NOME + CARGO ligadas à Secretaria: Secretário(a) Adjunto(a), Chefe de Gabinete, Diretor(a) de Departamento, Coordenador(a) de área/etapa (Educação Infantil, Fundamental, Especial, EJA, Alimentação Escolar, Transporte, Formação, Tecnologia), Assessor(a), Chefe de Divisão, Assistente, Ouvidor(a).
+- Para cada pessoa: {"nome": "...", "cargo": "...", "email": "..." ou null, "telefone": "..." ou null}. Só inclua email/telefone se aparecerem LITERALMENTE ao lado da pessoa no texto.
+- NÃO inclua diretores(as) de escolas/CMEIs individuais.
+- Não repita o(a) titular no array "equipe" (ele(a) já vai em "secretario"/"cargo").
+
 DATA: preencha "dataReferencia" (ex.: "${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}") quando o texto indicar; senão null.
 
 URL: ${url}
@@ -610,6 +683,28 @@ Responda APENAS com JSON válido seguindo o schema.`;
     if (beforeSchool !== out.emails.length) {
       emit("warn", etapa, `Descartei ${beforeSchool - out.emails.length} e-mail(s) de escola/CMEI`);
     }
+    // Anti-alucinação da equipe: exige que cada NOME apareça literalmente no texto (por tokens normalizados).
+    if (Array.isArray(out.equipe) && out.equipe.length > 0) {
+      const srcNorm = normNome(conteudo);
+      const titular = out.secretario ? normNome(out.secretario) : "";
+      const beforeEq = out.equipe.length;
+      out.equipe = dedupeEquipe(
+        out.equipe.filter((m) => {
+          if (!m?.nome) return false;
+          const n = normNome(m.nome);
+          if (n.length < 5) return false;
+          if (titular && n === titular) return false;
+          const tokens = n.split(" ").filter((t) => t.length >= 3);
+          if (tokens.length < 2) return false;
+          return tokens.every((t) => srcNorm.includes(t));
+        }),
+      );
+      if (beforeEq !== out.equipe.length) {
+        emit("warn", etapa, `Descartei ${beforeEq - out.equipe.length} membro(s) da equipe sem correspondência literal no texto`);
+      }
+    } else {
+      out.equipe = [];
+    }
     emit(
       out.confianca === "baixa" ? "warn" : "success",
       etapa,
@@ -630,6 +725,7 @@ Responda APENAS com JSON válido seguindo o schema.`;
         confianca: "baixa",
         dataReferencia: null,
         horarioAtendimento: null,
+        equipe: [],
       };
       return fallback;
     }
@@ -685,9 +781,32 @@ export async function prospectar(
       elapsedMs: Date.now() - t0,
     });
   };
+  // Pool global de EQUIPE — coletada a cada extração e injetada no resultado final.
+  const equipePool: EquipeMembro[] = [];
+  const pushEquipe = (list?: EquipeMembro[] | null) => {
+    if (!list || list.length === 0) return;
+    for (const m of list) if (m?.nome) equipePool.push(m);
+  };
+
+  const runExtract: typeof extractWithAI = async (...args) => {
+    const r = await extractWithAI(...args);
+    if (r?.equipe?.length) pushEquipe(r.equipe);
+    return r;
+  };
+  const runExtractNome: typeof extractNomeWithAI = async (...args) => {
+    const r = await extractNomeWithAI(...args);
+    if (r?.equipe?.length) pushEquipe(r.equipe);
+    return r;
+  };
+
+
   const sendFinal = (result: ProspectResult) => {
-    onEvent?.({ kind: "final", result, ts: Date.now(), elapsedMs: Date.now() - t0 });
-    return result;
+    const merged: ProspectResult = {
+      ...result,
+      equipe: dedupeEquipe([...(result.equipe ?? []), ...equipePool]),
+    };
+    onEvent?.({ kind: "final", result: merged, ts: Date.now(), elapsedMs: Date.now() - t0 });
+    return merged;
   };
 
   emit("info", "init", `Iniciando ${municipio}/${uf} — pipeline ESCALONADO (nome → contato)`);
@@ -707,6 +826,7 @@ export async function prospectar(
       snippetPool.push(c);
     }
   };
+
 
   // Diário Oficial em background.
   let diarioExcerpts: DiarioExcerpt[] = [];
@@ -867,7 +987,7 @@ export async function prospectar(
   }
 
   if (snippetsNome) {
-    const nomeRes = await extractNomeWithAI(snippetsNome, topNome?.url ?? "(snippets)", municipio, uf, emit, {
+    const nomeRes = await runExtractNome(snippetsNome, topNome?.url ?? "(snippets)", municipio, uf, emit, {
       diarioBlock,
     });
 
@@ -970,7 +1090,7 @@ export async function prospectar(
     }
     if (md) {
       const combined = `### Site\n${md}\n\n### Snippets\n${snippetsBlock(rankedNome)}`;
-      const ext = await extractWithAI(combined, topNome!.url, "educacao", municipio, uf, emit, {
+      const ext = await runExtract(combined, topNome!.url, "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         diarioBlock,
         modo: "site",
@@ -1034,10 +1154,11 @@ export async function prospectar(
         confianca: line.nome || regex.emails.length > 0 ? "alta" : "media",
         dataReferencia: dataReferenciaGlobal,
         horarioAtendimento: extractHorario(snippets),
+        equipe: [],
       }, snippets, municipio, uf);
       let ext = deterministic;
       if (!ext.secretario || (ext.emails.length === 0 && ext.telefones.length === 0)) {
-        const aiExt = await extractWithAI(snippets, ranked[0]?.url ?? "(apify-serp)", "educacao", municipio, uf, emit, {
+        const aiExt = await runExtract(snippets, ranked[0]?.url ?? "(apify-serp)", "educacao", municipio, uf, emit, {
           nomeAlvo: nomeSecretario ?? line.nome,
           modo: "snippets",
           topHost,
@@ -1081,7 +1202,7 @@ export async function prospectar(
     if (cands.length === 0) return null;
     const ranked = preferGov(cands, (u) => /(educa|seduc|sme)/i.test(u));
     const snippets = snippetsBlock(ranked);
-    const ext = await extractWithAI(snippets, ranked[0]?.url ?? "(snippets)", hierarquia, municipio, uf, emit, {
+    const ext = await runExtract(snippets, ranked[0]?.url ?? "(snippets)", hierarquia, municipio, uf, emit, {
       nomeAlvo: nomeSecretario,
       modo: "snippets",
       topHost,
@@ -1142,7 +1263,7 @@ export async function prospectar(
       const md = await gScrape(fc, topGov.url, emit, "contato-secretario", { hardTimeoutMs: 8000 });
       if (md) {
         const combined = `### Site\n${md}`;
-        const ext = await extractWithAI(combined, topGov.url, "educacao", municipio, uf, emit, {
+        const ext = await runExtract(combined, topGov.url, "educacao", municipio, uf, emit, {
           nomeAlvo: nomeSecretario,
           modo: "site",
           topHost,
@@ -1184,7 +1305,7 @@ export async function prospectar(
     const ragEarly = await awaitRagBlock(60_000, "Estágio 3.0 (RAG-first)");
     if (ragEarly) {
       const ragTopUrl = getRagPages()[0]?.url ?? "(rag)";
-      const ext = await extractWithAI(ragEarly, ragTopUrl, "educacao", municipio, uf, emit, {
+      const ext = await runExtract(ragEarly, ragTopUrl, "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         diarioBlock,
         modo: "site",
@@ -1257,7 +1378,7 @@ export async function prospectar(
       emit("info", "educacao", `Estágio 3.2 — scrape página de contato ${shortHost(cu)}`);
       const cmd = await gScrape(fc, cu, emit, "educacao", { hardTimeoutMs: 8000 });
       if (!cmd) continue;
-      const cext = await extractWithAI(`### Página de Contato\n${cmd}`, cu, "educacao", municipio, uf, emit, {
+      const cext = await runExtract(`### Página de Contato\n${cmd}`, cu, "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         modo: "site",
         topHost,
@@ -1291,7 +1412,7 @@ export async function prospectar(
     const md = await gScrape(fc, top3.url, emit, "educacao", { hardTimeoutMs: 8000 });
     if (md) {
       const combined = [`### Site\n${md}`, ragBlockS3].filter(Boolean).join("\n\n");
-      const ext = await extractWithAI(combined, top3.url, "educacao", municipio, uf, emit, {
+      const ext = await runExtract(combined, top3.url, "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         modo: "site",
         topHost,
@@ -1325,7 +1446,7 @@ export async function prospectar(
     const ragBlockLate = await awaitRagBlock(90_000, "Estágio 3.5");
     const ragPagesNow = getRagPages();
     if (ragBlockLate) {
-      const ext = await extractWithAI(ragBlockLate, ragPagesNow[0]?.url ?? "(rag)", "educacao", municipio, uf, emit, {
+      const ext = await runExtract(ragBlockLate, ragPagesNow[0]?.url ?? "(rag)", "educacao", municipio, uf, emit, {
         nomeAlvo: nomeSecretario,
         modo: "site",
         topHost,
@@ -1386,12 +1507,12 @@ export async function prospectar(
     const ranked = preferGov(cands);
     if (ranked.length === 0) return null;
     const snippets = snippetsBlock(ranked);
-    let ext = await extractWithAI(snippets, ranked[0].url, etapa, municipio, uf, emit, { modo: "snippets", topHost });
+    let ext = await runExtract(snippets, ranked[0].url, etapa, municipio, uf, emit, { modo: "snippets", topHost });
     if (!ext || !hasUsefulContact(ext)) {
       const md = await gScrape(fc, ranked[0].url, emit, etapa, { hardTimeoutMs: 5000 });
       if (md) {
         const combined = [snippets, `### Site\n${md}`].filter(Boolean).join("\n\n");
-        ext = await extractWithAI(combined, ranked[0].url, etapa, municipio, uf, emit, { modo: "site", topHost });
+        ext = await runExtract(combined, ranked[0].url, etapa, municipio, uf, emit, { modo: "site", topHost });
       }
     }
     if (!ext || !hasUsefulContact(ext)) return null;

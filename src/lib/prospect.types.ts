@@ -1,5 +1,12 @@
 export type Hierarquia = "educacao" | "camara" | "geral" | "gabinete";
 
+export type EquipeMembro = {
+  nome: string;
+  cargo: string | null;
+  email?: string | null;
+  telefone?: string | null;
+};
+
 export type ProspectResult = {
   status: "found" | "partial" | "not_found";
   hierarquia: Hierarquia | null;
@@ -16,7 +23,10 @@ export type ProspectResult = {
   dataReferencia?: string | null;
   /** Horário de atendimento, quando aparece literalmente na fonte (ex.: "Seg a Sex 8h–17h"). */
   horarioAtendimento?: string | null;
+  /** Equipe da Secretaria — outras pessoas com nome + cargo (coordenadores, diretores, assessores). */
+  equipe?: EquipeMembro[];
 };
+
 
 export type ProgressLevel = "info" | "success" | "warn" | "error";
 
