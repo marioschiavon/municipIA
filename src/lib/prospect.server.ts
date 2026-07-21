@@ -649,6 +649,7 @@ Responda APENAS com JSON válido seguindo o schema.`;
         confianca: "baixa",
         dataReferencia: null,
         horarioAtendimento: null,
+        equipe: [],
       };
       return fallback;
     }
