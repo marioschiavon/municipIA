@@ -121,15 +121,102 @@ export type Database = {
           },
         ]
       }
+      municipios_matriculas_etapa: {
+        Row: {
+          ano: number
+          created_at: string
+          etapa: Database["public"]["Enums"]["etapa_ensino"]
+          ibge_id: number
+          id: string
+          matriculas: number
+          updated_at: string
+        }
+        Insert: {
+          ano?: number
+          created_at?: string
+          etapa: Database["public"]["Enums"]["etapa_ensino"]
+          ibge_id: number
+          id?: string
+          matriculas?: number
+          updated_at?: string
+        }
+        Update: {
+          ano?: number
+          created_at?: string
+          etapa?: Database["public"]["Enums"]["etapa_ensino"]
+          ibge_id?: number
+          id?: string
+          matriculas?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      score_config: {
+        Row: {
+          id: number
+          pesos_etapa: Json
+          pesos_macro: Json
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          pesos_etapa?: Json
+          pesos_macro?: Json
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          pesos_etapa?: Json
+          pesos_macro?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "editor" | "viewer"
+      etapa_ensino:
+        | "creche"
+        | "pre_escola"
+        | "fundamental_ai"
+        | "fundamental_af"
+        | "medio"
+        | "eja"
+        | "especial"
+        | "profissionalizante"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -256,6 +343,18 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "editor", "viewer"],
+      etapa_ensino: [
+        "creche",
+        "pre_escola",
+        "fundamental_ai",
+        "fundamental_af",
+        "medio",
+        "eja",
+        "especial",
+        "profissionalizante",
+      ],
+    },
   },
 } as const

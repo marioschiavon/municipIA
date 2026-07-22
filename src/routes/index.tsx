@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, useMemo } from "react";
 import { Search, Loader2, Database, TrendingUp, MapPin } from "lucide-react";
@@ -13,7 +13,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { APP_VERSION } from "@/lib/version";
-import { listMunicipios, seedCatalog, getCatalogStats } from "@/lib/catalog.functions";
+import { listMunicipios, getCatalogStats } from "@/lib/catalog.functions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -39,8 +39,6 @@ const PAGE_SIZE = 50;
 
 function CatalogPage() {
   const navigate = useNavigate();
-  const qc = useQueryClient();
-  const seedFn = useServerFn(seedCatalog);
   const listFn = useServerFn(listMunicipios);
   const statsFn = useServerFn(getCatalogStats);
 
@@ -73,12 +71,6 @@ function CatalogPage() {
     queryFn: () => listFn({ data: filters }),
   });
 
-  const seedMut = useMutation({
-    mutationFn: () => seedFn(),
-    onSuccess: () => {
-      qc.invalidateQueries();
-    },
-  });
 
   const empty = (stats.data?.total ?? 0) === 0 && !stats.isLoading;
   const totalPages = Math.ceil((list.data?.total ?? 0) / PAGE_SIZE);
@@ -108,32 +100,24 @@ function CatalogPage() {
             <StatChip label="Municípios" value={stats.data?.total ?? 0} />
             <StatChip label="Score alto" value={stats.data?.alto ?? 0} accent="emerald" />
             <StatChip label="Validados" value={stats.data?.validado ?? 0} accent="blue" />
+            <Link to="/admin" className="ml-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent">
+              Admin
+            </Link>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-[1400px] px-6 py-6">
         {empty && (
-          <div className="mb-6 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-8 text-center">
-            <h2 className="text-lg font-semibold text-amber-900">Catálogo vazio</h2>
-            <p className="mt-2 text-sm text-amber-800">
-              Popule o catálogo com os 5.570 municípios brasileiros (dados IBGE + demonstração INEP/FNDE mocada).
-              A operação leva ~30 segundos.
+          <div className="mb-6 rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center">
+            <h2 className="text-lg font-semibold text-slate-900">Catálogo vazio</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Nenhum município cadastrado ainda. Acesse o painel administrativo para sincronizar a lista oficial do IBGE
+              e começar a inserir dados reais.
             </p>
-            <Button
-              onClick={() => seedMut.mutate()}
-              disabled={seedMut.isPending}
-              className="mt-4"
-            >
-              {seedMut.isPending ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Populando…</>
-              ) : (
-                "Popular catálogo agora"
-              )}
-            </Button>
-            {seedMut.error && (
-              <p className="mt-3 text-xs text-red-600">{String(seedMut.error)}</p>
-            )}
+            <Link to="/admin" className="mt-4 inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+              Ir para o painel Admin
+            </Link>
           </div>
         )}
 
