@@ -117,26 +117,15 @@ function CatalogPage() {
 
       <main className="mx-auto max-w-[1400px] px-6 py-6">
         {empty && (
-          <div className="mb-6 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-8 text-center">
-            <h2 className="text-lg font-semibold text-amber-900">Catálogo vazio</h2>
-            <p className="mt-2 text-sm text-amber-800">
-              Popule o catálogo com os 5.570 municípios brasileiros (dados IBGE + demonstração INEP/FNDE mocada).
-              A operação leva ~30 segundos.
+          <div className="mb-6 rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center">
+            <h2 className="text-lg font-semibold text-slate-900">Catálogo vazio</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Nenhum município cadastrado ainda. Acesse o painel administrativo para sincronizar a lista oficial do IBGE
+              e começar a inserir dados reais.
             </p>
-            <Button
-              onClick={() => seedMut.mutate()}
-              disabled={seedMut.isPending}
-              className="mt-4"
-            >
-              {seedMut.isPending ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Populando…</>
-              ) : (
-                "Popular catálogo agora"
-              )}
-            </Button>
-            {seedMut.error && (
-              <p className="mt-3 text-xs text-red-600">{String(seedMut.error)}</p>
-            )}
+            <Link to="/admin" className="mt-4 inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+              Ir para o painel Admin
+            </Link>
           </div>
         )}
 
