@@ -39,8 +39,6 @@ const PAGE_SIZE = 50;
 
 function CatalogPage() {
   const navigate = useNavigate();
-  const qc = useQueryClient();
-  const seedFn = useServerFn(seedCatalog);
   const listFn = useServerFn(listMunicipios);
   const statsFn = useServerFn(getCatalogStats);
 
@@ -73,12 +71,6 @@ function CatalogPage() {
     queryFn: () => listFn({ data: filters }),
   });
 
-  const seedMut = useMutation({
-    mutationFn: () => seedFn(),
-    onSuccess: () => {
-      qc.invalidateQueries();
-    },
-  });
 
   const empty = (stats.data?.total ?? 0) === 0 && !stats.isLoading;
   const totalPages = Math.ceil((list.data?.total ?? 0) / PAGE_SIZE);
