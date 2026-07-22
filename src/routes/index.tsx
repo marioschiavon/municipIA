@@ -1,8 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, useMemo } from "react";
-import { Search, Loader2, Database, TrendingUp, MapPin } from "lucide-react";
+import { Search, Loader2, Database, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +13,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { APP_VERSION } from "@/lib/version";
-import { listMunicipios, seedCatalog, getCatalogStats } from "@/lib/catalog.functions";
+import { listMunicipios, getCatalogStats } from "@/lib/catalog.functions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
