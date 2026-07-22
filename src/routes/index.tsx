@@ -108,6 +108,9 @@ function CatalogPage() {
             <StatChip label="Municípios" value={stats.data?.total ?? 0} />
             <StatChip label="Score alto" value={stats.data?.alto ?? 0} accent="emerald" />
             <StatChip label="Validados" value={stats.data?.validado ?? 0} accent="blue" />
+            <Link to="/admin" className="ml-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent">
+              Admin
+            </Link>
           </div>
         </div>
       </header>
