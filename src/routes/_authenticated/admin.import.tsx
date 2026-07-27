@@ -174,7 +174,7 @@ function AdminImportPage() {
                 <Label htmlFor="inep_matriculas" className="cursor-pointer space-y-2 block">
                   <div className="font-semibold">1. INEP — Matrículas (principal)</div>
                   <div className="text-xs text-muted-foreground">
-                    Arquivo <code>Tabela_Matricula_YYYY.csv</code> do Censo Escolar. <strong>Suficiente sozinho</strong> — filtra <code>TP_DEPENDENCIA=3</code> e <code>TP_SITUACAO_FUNCIONAMENTO=1</code>, agrega por <code>CO_MUNICIPIO</code> e popula matrículas por etapa (creche, pré, fund AI/AF, médio, EJA, esp., prof.) e a contagem de escolas municipais ativas.
+                    Arquivo <code>Tabela_Matricula_YYYY.csv</code> do Censo Escolar. Se vier com <code>CO_MUNICIPIO</code>, agrega direto; se vier só com <code>CO_ENTIDADE</code>, cruza com o arquivo de Escolas já importado. Popula matrículas por etapa (creche, pré, fund AI/AF, médio, EJA, esp., prof.) e a contagem de escolas municipais ativas.
                   </div>
                   <a
                     href="https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/microdados/censo-escolar"
@@ -192,7 +192,7 @@ function AdminImportPage() {
                 <Label htmlFor="inep_escolas" className="cursor-pointer space-y-2 block">
                   <div className="font-semibold">2. INEP — Escolas (opcional)</div>
                   <div className="text-xs text-muted-foreground">
-                    Arquivo <code>Tabela_Escola_YYYY.csv</code>. <strong>Opcional</strong> — usado só para manter o mapa detalhado escola↔município na tabela <code>inep_escolas</code>. Não é pré-requisito para as matrículas.
+                    Arquivo <code>Tabela_Escola_YYYY.csv</code>. Necessário quando o arquivo de Matrículas não possui <code>CO_MUNICIPIO</code>/<code>TP_DEPENDENCIA</code>. Ele cria o mapa <code>CO_ENTIDADE → município/rede/situação</code> usado no cruzamento.
                   </div>
                   <a
                     href="https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/microdados/censo-escolar"
