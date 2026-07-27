@@ -43,12 +43,16 @@ function AdminImportPage() {
       const form = new FormData();
       form.append("type", type);
       form.append("file", file);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("Sessão não encontrada. Faça login novamente.");
       const abort = new AbortController();
       abortRef.current = abort;
       const res = await fetch("/api/admin/import", {
         method: "POST",
         body: form,
         signal: abort.signal,
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
       const reader = res.body?.getReader();
       if (!reader) throw new Error("Resposta vazia");
