@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      inep_escolas: {
+        Row: {
+          ano: number
+          co_entidade: number
+          created_at: string
+          ibge_id: number
+          tp_dependencia: number
+          tp_situacao: number
+          updated_at: string
+        }
+        Insert: {
+          ano: number
+          co_entidade: number
+          created_at?: string
+          ibge_id: number
+          tp_dependencia: number
+          tp_situacao?: number
+          updated_at?: string
+        }
+        Update: {
+          ano?: number
+          co_entidade?: number
+          created_at?: string
+          ibge_id?: number
+          tp_dependencia?: number
+          tp_situacao?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       municipios: {
         Row: {
           created_at: string
