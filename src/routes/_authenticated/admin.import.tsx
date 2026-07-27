@@ -68,7 +68,9 @@ function AdminImportPage() {
           if (!line.trim()) continue;
           try {
             const event = JSON.parse(line);
-            setLogs((prev) => [...prev, `[${event.type.toUpperCase()}] ${event.message}`]);
+            const ts = new Date().toLocaleTimeString("pt-BR", { hour12: false });
+            const dataStr = event.data !== undefined ? ` — ${JSON.stringify(event.data)}` : "";
+            setLogs((prev) => [...prev, `${ts} [${event.type.toUpperCase()}] ${event.message}${dataStr}`]);
             if (event.type === "done" || event.type === "error") {
               setResult({ ok: event.type === "done", message: event.message, data: event.data });
             }
