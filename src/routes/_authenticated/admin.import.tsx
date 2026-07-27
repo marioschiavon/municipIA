@@ -21,7 +21,7 @@ export const Route = createFileRoute("/_authenticated/admin/import")({
 });
 
 function AdminImportPage() {
-  const [type, setType] = useState<"inep_escolas" | "inep_matriculas" | "fnde">("inep_escolas");
+  const [type, setType] = useState<"inep_matriculas" | "inep_escolas" | "fnde">("inep_matriculas");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
@@ -170,11 +170,11 @@ function AdminImportPage() {
           <form onSubmit={handleSubmit} className="space-y-6">
             <RadioGroup value={type} onValueChange={(v) => setType(v as typeof type)} className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
-                <RadioGroupItem value="inep_escolas" id="inep_escolas" className="sr-only" />
-                <Label htmlFor="inep_escolas" className="cursor-pointer space-y-2 block">
-                  <div className="font-semibold">1. INEP — Escolas</div>
+                <RadioGroupItem value="inep_matriculas" id="inep_matriculas" className="sr-only" />
+                <Label htmlFor="inep_matriculas" className="cursor-pointer space-y-2 block">
+                  <div className="font-semibold">1. INEP — Matrículas (principal)</div>
                   <div className="text-xs text-muted-foreground">
-                    Arquivo <code>Tabela_Escola_YYYY.csv</code> do Censo Escolar. Importa o mapa oficial escola↔município e conta apenas escolas <strong>municipais ativas</strong> (<code>TP_DEPENDENCIA=3</code>, <code>TP_SITUACAO=1</code>). <strong>Importe antes das matrículas.</strong>
+                    Arquivo <code>Tabela_Matricula_YYYY.csv</code> do Censo Escolar. <strong>Suficiente sozinho</strong> — filtra <code>TP_DEPENDENCIA=3</code> e <code>TP_SITUACAO_FUNCIONAMENTO=1</code>, agrega por <code>CO_MUNICIPIO</code> e popula matrículas por etapa (creche, pré, fund AI/AF, médio, EJA, esp., prof.) e a contagem de escolas municipais ativas.
                   </div>
                   <a
                     href="https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/microdados/censo-escolar"
@@ -188,11 +188,11 @@ function AdminImportPage() {
                 </Label>
               </div>
               <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
-                <RadioGroupItem value="inep_matriculas" id="inep_matriculas" className="sr-only" />
-                <Label htmlFor="inep_matriculas" className="cursor-pointer space-y-2 block">
-                  <div className="font-semibold">2. INEP — Matrículas</div>
+                <RadioGroupItem value="inep_escolas" id="inep_escolas" className="sr-only" />
+                <Label htmlFor="inep_escolas" className="cursor-pointer space-y-2 block">
+                  <div className="font-semibold">2. INEP — Escolas (opcional)</div>
                   <div className="text-xs text-muted-foreground">
-                    Arquivo <code>Tabela_Matricula_YYYY.csv</code> do Censo Escolar (agregado por escola). Soma <code>QT_MAT_INF_CRE</code>, <code>QT_MAT_INF_PRE</code>, <code>QT_MAT_FUND_AI/AF</code>, <code>QT_MAT_MED</code>, <code>QT_MAT_EJA</code>, <code>QT_MAT_ESP</code>, <code>QT_MAT_PROF</code> por município (join via <code>CO_ENTIDADE</code>, só rede municipal).
+                    Arquivo <code>Tabela_Escola_YYYY.csv</code>. <strong>Opcional</strong> — usado só para manter o mapa detalhado escola↔município na tabela <code>inep_escolas</code>. Não é pré-requisito para as matrículas.
                   </div>
                   <a
                     href="https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/microdados/censo-escolar"
@@ -224,6 +224,7 @@ function AdminImportPage() {
                 </Label>
               </div>
             </RadioGroup>
+
 
             <div className="space-y-2">
               <Label htmlFor="file">Arquivo</Label>
