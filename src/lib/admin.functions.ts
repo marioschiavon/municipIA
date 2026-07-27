@@ -296,28 +296,42 @@ export const adminSyncPopulacao = createServerFn({ method: "POST" })
     );
     if (!res.ok) throw new Error(`IBGE HTTP ${res.status}`);
     const json = await res.json() as any[];
-    const resultados = json?.[0]?.resultados;
-    if (!resultados || !Array.isArray(resultados)) throw new Error("Resposta do IBGE inesperada");
-    const serie = resultados[0]?.serie;
-    const ano = Object.keys(serie ?? {})[0];
+    const series: any[] | undefined = json?.[0]?.resultados?.[0]?.series;
+    if (!series || !Array.isArray(series)) {
+      throw new Error("Resposta do IBGE inesperada (series ausente)");
+    }
+    // Detecta o ano de referência a partir da primeira série com dados.
+    let ano: string | undefined;
+    for (const s of series) {
+      const keys = Object.keys(s?.serie ?? {});
+      if (keys.length) { ano = keys[keys.length - 1]; break; }
+    }
     if (!ano) throw new Error("Não foi possível identificar o ano de referência");
     const rows: { ibge_id: number; populacao: number }[] = [];
-    for (const r of resultados) {
-      const id = r?.localidade?.id;
-      const val = r?.serie?.[ano];
-      if (!id || val == null) continue;
+    for (const s of series) {
+      const id = s?.localidade?.id;
+      const val = s?.serie?.[ano];
+      if (!id || val == null || val === "-" || val === "...") continue;
       const ibgeId = Number(id);
       const pop = Number(val);
       if (!ibgeId || Number.isNaN(pop)) continue;
       rows.push({ ibge_id: ibgeId, populacao: pop });
     }
-    for (const r of rows) {
-      const { error } = await supabaseAdmin
-        .from("municipios")
-        .update({ populacao: r.populacao })
-        .eq("ibge_id", r.ibge_id);
-      if (error) throw new Error(`populacao ${r.ibge_id}: ${error.message}`);
+    // Atualiza em paralelo (concorrência limitada).
+    const CONC = 20;
+    let idx = 0;
+    async function worker() {
+      while (idx < rows.length) {
+        const i = idx++;
+        const r = rows[i];
+        const { error } = await supabaseAdmin
+          .from("municipios")
+          .update({ populacao: r.populacao })
+          .eq("ibge_id", r.ibge_id);
+        if (error) throw new Error(`populacao ${r.ibge_id}: ${error.message}`);
+      }
     }
+    await Promise.all(Array.from({ length: CONC }, worker));
     return { total: rows.length, ano };
   });
 
