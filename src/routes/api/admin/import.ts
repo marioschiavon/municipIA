@@ -236,71 +236,80 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
   if (detected === "inep_escolas") {
     throw new Error("Arquivo parece ser Tabela_Escola (sem colunas QT_MAT_*). Selecione 'INEP — Escolas' no seletor.");
   }
+
   const sample = rows[0];
   const coEntidadeKey = pickField(sample, ["CO_ENTIDADE"]);
-  if (!coEntidadeKey) {
-    throw new Error(`Coluna CO_ENTIDADE ausente. Encontradas: ${headers.slice(0, 10).join(", ")}...`);
+  const coMunicipioKey = pickField(sample, ["CO_MUNICIPIO", "CO_MUNICIPIO_IBGE"]);
+  const tpDepKey = pickField(sample, ["TP_DEPENDENCIA"]);
+  const tpSitKey = pickField(sample, ["TP_SITUACAO_FUNCIONAMENTO", "TP_SITUACAO"]);
+  if (!coMunicipioKey || !tpDepKey) {
+    throw new Error(
+      `Colunas obrigatórias ausentes. Necessárias: CO_MUNICIPIO(_IBGE), TP_DEPENDENCIA. Encontradas (parcial): ${headers.slice(0, 15).join(", ")}...`,
+    );
   }
 
-  // Carrega mapa CO_ENTIDADE → IBGE (apenas escolas municipais ativas).
-  await send({ type: "progress", message: "Carregando mapa de escolas municipais ativas do banco..." });
-  const escolasMap = new Map<number, number>();
-  const PAGE = 5000;
-  let from = 0;
-  while (true) {
-    const { data, error } = await supabaseAdmin
-      .from("inep_escolas")
-      .select("co_entidade, ibge_id")
-      .eq("tp_dependencia", 3)
-      .eq("tp_situacao", 1)
-      .range(from, from + PAGE - 1);
-    if (error) throw new Error(`inep_escolas: ${error.message}`);
-    if (!data || data.length === 0) break;
-    for (const e of data) escolasMap.set(Number(e.co_entidade), Number(e.ibge_id));
-    if (data.length < PAGE) break;
-    from += PAGE;
-  }
-  if (escolasMap.size === 0) {
-    throw new Error("Nenhuma escola municipal ativa cadastrada. Importe primeiro 'INEP - Escolas'.");
-  }
-  await send({ type: "progress", message: `${escolasMap.size.toLocaleString("pt-BR")} escolas municipais ativas no mapa.` });
+  // Agrega direto do CSV de matrículas (uma linha por escola já traz município + dependência).
+  const agregado = new Map<number, { etapas: Record<string, number>; escolas: Set<number>; escolasCount: number }>();
+  let totalLinhas = 0;
+  let dep3 = 0;
+  let sit1 = 0;
+  let municipaisAtivas = 0;
+  let semIbge = 0;
 
-  // Agrega matrículas por município e etapa (apenas escolas municipais ativas).
-  const agregado = new Map<number, Record<string, number>>();
-  let matched = 0;
-  let skipped = 0;
   for (const r of rows) {
-    const co = Number(r[coEntidadeKey]);
-    if (!co) { skipped++; continue; }
-    const ibge = escolasMap.get(co);
-    if (!ibge) { skipped++; continue; }
-    matched++;
+    totalLinhas++;
+    const ibge = Number(r[coMunicipioKey]);
+    const dep = Number(r[tpDepKey]);
+    const sit = tpSitKey ? Number(r[tpSitKey] ?? 1) : 1;
+    if (!ibge) { semIbge++; continue; }
+    if (dep === 3) dep3++;
+    if (sit === 1) sit1++;
+    if (dep !== 3 || sit !== 1) continue;
+    municipaisAtivas++;
+
     let entry = agregado.get(ibge);
-    if (!entry) { entry = {}; agregado.set(ibge, entry); }
+    if (!entry) {
+      entry = { etapas: {}, escolas: new Set(), escolasCount: 0 };
+      agregado.set(ibge, entry);
+    }
+    const co = coEntidadeKey ? Number(r[coEntidadeKey]) : 0;
+    if (co) entry.escolas.add(co);
+    entry.escolasCount++;
+
     for (const [etapa, cols] of Object.entries(ETAPA_COLS)) {
       let sum = 0;
       for (const col of cols) sum += Number(r[col]) || 0;
-      if (sum > 0) entry[etapa] = (entry[etapa] ?? 0) + sum;
+      if (sum > 0) entry.etapas[etapa] = (entry.etapas[etapa] ?? 0) + sum;
     }
   }
-  await send({ type: "progress", message: `${matched.toLocaleString("pt-BR")} escolas municipais reconciliadas · ${skipped.toLocaleString("pt-BR")} ignoradas (privadas/estaduais/federais). ${agregado.size.toLocaleString("pt-BR")} municípios com matrículas.` });
 
-  // Persiste matrículas por etapa e total por município.
+  await send({
+    type: "progress",
+    message: `${totalLinhas.toLocaleString("pt-BR")} linhas · dep=3: ${dep3.toLocaleString("pt-BR")} · sit=1: ${sit1.toLocaleString("pt-BR")} · municipais ativas: ${municipaisAtivas.toLocaleString("pt-BR")} em ${agregado.size.toLocaleString("pt-BR")} municípios · ${semIbge.toLocaleString("pt-BR")} sem IBGE.`,
+  });
+
+  if (agregado.size === 0) {
+    throw new Error(
+      "Nenhuma linha municipal ativa (TP_DEPENDENCIA=3 e TP_SITUACAO_FUNCIONAMENTO=1) foi encontrada. Verifique se o arquivo é o Tabela_Matricula do Censo Escolar.",
+    );
+  }
+
   const ano = new Date().getFullYear();
   const matRows: any[] = [];
-  const totais: { ibge_id: number; matriculas_total: number }[] = [];
-  for (const [ibge, etapas] of agregado) {
+  const totais: { ibge_id: number; matriculas_total: number; escolas: number }[] = [];
+  for (const [ibge, agg] of agregado) {
     let total = 0;
-    for (const [etapa, mat] of Object.entries(etapas)) {
+    for (const [etapa, mat] of Object.entries(agg.etapas)) {
       if (mat > 0) {
         matRows.push({ ibge_id: ibge, etapa, matriculas: mat, ano });
         total += mat;
       }
     }
-    if (total > 0) totais.push({ ibge_id: ibge, matriculas_total: total });
+    const escolas = agg.escolas.size > 0 ? agg.escolas.size : agg.escolasCount;
+    totais.push({ ibge_id: ibge, matriculas_total: total, escolas });
   }
 
-  // Apaga matrículas do ano corrente para todos os municípios afetados, depois insere.
+  // Limpa matrículas do ano corrente para os municípios afetados.
   await send({ type: "progress", message: `Limpando matrículas do ano ${ano} para reprocessar...` });
   const ibgeList = Array.from(agregado.keys());
   for (let i = 0; i < ibgeList.length; i += 500) {
@@ -321,21 +330,33 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
     }
   }
 
-  // Atualiza total por município em paralelo.
+  // Atualiza totais + escolas por município em paralelo.
   const CONC = 20;
   let idx = 0;
+  let updated = 0;
   async function worker() {
     while (idx < totais.length) {
       const i = idx++;
       const t = totais[i];
-      const { error } = await supabaseAdmin.from("municipios").update({ matriculas_total: t.matriculas_total }).eq("ibge_id", t.ibge_id);
+      const { error } = await supabaseAdmin
+        .from("municipios")
+        .update({ matriculas_total: t.matriculas_total, escolas: t.escolas })
+        .eq("ibge_id", t.ibge_id);
       if (error) throw new Error(`municipios ${t.ibge_id}: ${error.message}`);
+      updated++;
     }
   }
   await Promise.all(Array.from({ length: CONC }, worker));
+
   const totalGeral = totais.reduce((a, b) => a + b.matriculas_total, 0);
-  await send({ type: "progress", message: `Concluído: ${totalGeral.toLocaleString("pt-BR")} matrículas municipais em ${totais.length.toLocaleString("pt-BR")} municípios.` });
+  const totalEscolas = totais.reduce((a, b) => a + b.escolas, 0);
+  const amostra = totais.slice(0, 3).map((t) => `${t.ibge_id}: ${t.matriculas_total} mat / ${t.escolas} esc`).join(" · ");
+  await send({
+    type: "progress",
+    message: `Concluído: ${totalGeral.toLocaleString("pt-BR")} matrículas · ${totalEscolas.toLocaleString("pt-BR")} escolas municipais ativas em ${updated.toLocaleString("pt-BR")} municípios. Amostra: ${amostra}`,
+  });
 }
+
 
 async function processFnde(content: Uint8Array, supabaseAdmin: any, send: any, filename: string) {
   let rows: Record<string, string>[] = [];
