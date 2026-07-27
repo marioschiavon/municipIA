@@ -223,12 +223,23 @@ async function processInepEscolas(content: Uint8Array, supabaseAdmin: any, send:
 
 async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, send: any) {
   const text = decodeCsv(content);
-  const rows = parseCsvSemicolon(text);
+  const { rows, delimiter, headers } = parseCsvAuto(text);
+  await send({
+    type: "progress",
+    message: `Headers detectados (delimitador="${delimiter === "\t" ? "\\t" : delimiter}", ${headers.length} colunas).`,
+    data: { delimiter, headers: headers.slice(0, 20) },
+  });
   await send({ type: "progress", message: `${rows.length.toLocaleString("pt-BR")} linhas detectadas no arquivo.` });
   if (!rows.length) throw new Error("Arquivo vazio ou formato inválido");
+
+  const detected = detectInepType(headers);
+  if (detected === "inep_escolas") {
+    throw new Error("Arquivo parece ser Tabela_Escola (sem colunas QT_MAT_*). Selecione 'INEP — Escolas' no seletor.");
+  }
   const sample = rows[0];
-  if (!("CO_ENTIDADE" in sample)) {
-    throw new Error("Coluna CO_ENTIDADE ausente. Faça upload do arquivo Tabela_Matricula do Censo Escolar.");
+  const coEntidadeKey = pickField(sample, ["CO_ENTIDADE"]);
+  if (!coEntidadeKey) {
+    throw new Error(`Coluna CO_ENTIDADE ausente. Encontradas: ${headers.slice(0, 10).join(", ")}...`);
   }
 
   // Carrega mapa CO_ENTIDADE → IBGE (apenas escolas municipais ativas).
