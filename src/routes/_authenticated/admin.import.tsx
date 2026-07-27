@@ -8,6 +8,7 @@ import { Upload, ArrowLeft, Loader2, CheckCircle, AlertCircle } from "lucide-rea
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { adminSyncPopulacao, adminRecalcularScores } from "@/lib/admin.functions";
 import { useServerFn } from "@tanstack/react-start";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/_authenticated/admin/import")({
   component: AdminImportPage,
