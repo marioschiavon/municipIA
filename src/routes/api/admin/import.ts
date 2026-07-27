@@ -126,6 +126,59 @@ function parseCsvAuto(text: string): { rows: Record<string, string>[]; delimiter
   return best!;
 }
 
+function detectDelimiterFromHeader(headerLine: string): string {
+  const candidates = [";", ",", "\t", "|"];
+  return candidates.reduce((best, current) => (headerLine.split(current).length > headerLine.split(best).length ? current : best), candidates[0]);
+}
+
+function cleanHeader(value: string): string {
+  return value.replace(/^\uFEFF/, "").trim();
+}
+
+function parseHeaderOnly(text: string): { delimiter: string; headers: string[]; firstDataValues: string[]; dataLineCount: number } {
+  const firstBreak = text.indexOf("\n");
+  const headerLine = (firstBreak >= 0 ? text.slice(0, firstBreak) : text).replace(/\r$/, "");
+  const delimiter = detectDelimiterFromHeader(headerLine);
+  const headers = headerLine.split(delimiter).map(cleanHeader);
+  let firstDataValues: string[] = [];
+  let dataLineCount = 0;
+  let start = firstBreak >= 0 ? firstBreak + 1 : text.length;
+  while (start < text.length) {
+    let end = text.indexOf("\n", start);
+    if (end < 0) end = text.length;
+    const line = text.slice(start, end).replace(/\r$/, "");
+    if (line.trim()) {
+      dataLineCount++;
+      if (firstDataValues.length === 0) firstDataValues = line.split(delimiter);
+    }
+    start = end + 1;
+  }
+  return { delimiter, headers, firstDataValues, dataLineCount };
+}
+
+function pickHeader(headers: string[], candidates: string[]): string | undefined {
+  for (const c of candidates) {
+    const found = headers.find((h) => h.toUpperCase() === c.toUpperCase());
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function headerIndex(headers: string[], key: string | undefined): number {
+  if (!key) return -1;
+  return headers.findIndex((h) => h.toUpperCase() === key.toUpperCase());
+}
+
+function valueAt(values: string[], index: number): string {
+  return index >= 0 ? (values[index] ?? "") : "";
+}
+
+function numberAt(values: string[], index: number, fallback = 0): number {
+  if (index < 0) return fallback;
+  const value = Number(values[index]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
 function detectInepType(headers: string[]): "inep_escolas" | "inep_matriculas" | "unknown" {
   const set = new Set(headers.map((h) => h.toUpperCase()));
   const hasMatCols = ["QT_MAT_INF_CRE", "QT_MAT_FUND_AI", "QT_MAT_MED", "QT_MAT_INF_PRE"].some((c) => set.has(c));
@@ -295,26 +348,34 @@ async function processInepEscolas(content: Uint8Array, supabaseAdmin: any, send:
 
 async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, send: any) {
   const text = decodeCsv(content);
-  const { rows, delimiter, headers } = parseCsvAuto(text);
+  const { delimiter, headers, firstDataValues, dataLineCount } = parseHeaderOnly(text);
   await send({
     type: "progress",
     message: `Headers detectados (delimitador="${delimiter === "\t" ? "\\t" : delimiter}", ${headers.length} colunas).`,
     data: { delimiter, headers: headers.slice(0, 40) },
   });
-  await send({ type: "progress", message: `${rows.length.toLocaleString("pt-BR")} linhas detectadas no arquivo.` });
-  if (!rows.length) throw new Error("Arquivo vazio ou formato inválido");
+  await send({ type: "progress", message: `${dataLineCount.toLocaleString("pt-BR")} linhas detectadas no arquivo (processamento por streaming interno, sem carregar tudo em memória).` });
+  if (!dataLineCount || firstDataValues.length === 0) throw new Error("Arquivo vazio ou formato inválido");
 
   const detected = detectInepType(headers);
   if (detected === "inep_escolas") {
     throw new Error("Arquivo parece ser Tabela_Escola (sem colunas QT_MAT_*). Selecione 'INEP — Escolas' no seletor.");
   }
 
-  const sample = rows[0];
-  const coEntidadeKey = pickField(sample, ["CO_ENTIDADE"]);
-  const coMunicipioKey = pickField(sample, ["CO_MUNICIPIO", "CO_MUNICIPIO_IBGE"]);
-  const tpDepKey = pickField(sample, ["TP_DEPENDENCIA"]);
-  const tpSitKey = pickField(sample, ["TP_SITUACAO_FUNCIONAMENTO", "TP_SITUACAO"]);
-  const anoKey = pickField(sample, ["NU_ANO_CENSO"]);
+  const coEntidadeKey = pickHeader(headers, ["CO_ENTIDADE"]);
+  const coMunicipioKey = pickHeader(headers, ["CO_MUNICIPIO", "CO_MUNICIPIO_IBGE"]);
+  const tpDepKey = pickHeader(headers, ["TP_DEPENDENCIA"]);
+  const tpSitKey = pickHeader(headers, ["TP_SITUACAO_FUNCIONAMENTO", "TP_SITUACAO"]);
+  const anoKey = pickHeader(headers, ["NU_ANO_CENSO"]);
+  const coEntidadeIdx = headerIndex(headers, coEntidadeKey);
+  const coMunicipioIdx = headerIndex(headers, coMunicipioKey);
+  const tpDepIdx = headerIndex(headers, tpDepKey);
+  const tpSitIdx = headerIndex(headers, tpSitKey);
+  const anoIdx = headerIndex(headers, anoKey);
+  const matBasIdx = headerIndex(headers, "QT_MAT_BAS");
+  const etapaIndexes = Object.fromEntries(
+    Object.entries(ETAPA_COLS).map(([etapa, cols]) => [etapa, cols.map((col) => headerIndex(headers, col)).filter((idx) => idx >= 0)]),
+  ) as Record<string, number[]>;
   const useEscolaMap = Boolean(coEntidadeKey && (!coMunicipioKey || !tpDepKey));
   await send({
     type: "progress",
@@ -326,15 +387,16 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
       tpDepKey: tpDepKey ?? null,
       tpSitKey: tpSitKey ?? null,
       anoKey: anoKey ?? null,
+      etapaColumnsFound: Object.fromEntries(Object.entries(etapaIndexes).map(([etapa, indexes]) => [etapa, indexes.length])),
       sample: {
-        CO_ENTIDADE: coEntidadeKey ? sample[coEntidadeKey] : null,
-        CO_MUNICIPIO: coMunicipioKey ? sample[coMunicipioKey] : null,
-        TP_DEPENDENCIA: tpDepKey ? sample[tpDepKey] : null,
-        TP_SITUACAO: tpSitKey ? sample[tpSitKey] : null,
-        NU_ANO_CENSO: anoKey ? sample[anoKey] : null,
-        QT_MAT_BAS: sample.QT_MAT_BAS ?? null,
-        QT_MAT_INF_CRE: sample.QT_MAT_INF_CRE ?? null,
-        QT_MAT_INF_PRE: sample.QT_MAT_INF_PRE ?? null,
+        CO_ENTIDADE: valueAt(firstDataValues, coEntidadeIdx) || null,
+        CO_MUNICIPIO: valueAt(firstDataValues, coMunicipioIdx) || null,
+        TP_DEPENDENCIA: valueAt(firstDataValues, tpDepIdx) || null,
+        TP_SITUACAO: valueAt(firstDataValues, tpSitIdx) || null,
+        NU_ANO_CENSO: valueAt(firstDataValues, anoIdx) || null,
+        QT_MAT_BAS: valueAt(firstDataValues, matBasIdx) || null,
+        QT_MAT_INF_CRE: valueAt(firstDataValues, headerIndex(headers, "QT_MAT_INF_CRE")) || null,
+        QT_MAT_INF_PRE: valueAt(firstDataValues, headerIndex(headers, "QT_MAT_INF_PRE")) || null,
       },
     },
   });
@@ -368,14 +430,24 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
   let totalMatBasArquivo = 0;
   const sampleSemMapa: number[] = [];
   const sampleAgregado: string[] = [];
+  let processedLogMark = 0;
 
-  for (const r of rows) {
+  let lineStart = text.indexOf("\n");
+  lineStart = lineStart >= 0 ? lineStart + 1 : text.length;
+  while (lineStart < text.length) {
+    let lineEnd = text.indexOf("\n", lineStart);
+    if (lineEnd < 0) lineEnd = text.length;
+    const line = text.slice(lineStart, lineEnd).replace(/\r$/, "");
+    lineStart = lineEnd + 1;
+    if (!line.trim()) continue;
+
+    const values = line.split(delimiter);
     totalLinhas++;
-    totalMatBasArquivo += Number(r.QT_MAT_BAS) || 0;
-    const co = numberFrom(r, coEntidadeKey);
-    let ibge = numberFrom(r, coMunicipioKey);
-    let dep = numberFrom(r, tpDepKey);
-    let sit = tpSitKey ? numberFrom(r, tpSitKey, 1) : 1;
+    totalMatBasArquivo += numberAt(values, matBasIdx);
+    const co = numberAt(values, coEntidadeIdx);
+    let ibge = numberAt(values, coMunicipioIdx);
+    let dep = numberAt(values, tpDepIdx);
+    let sit = tpSitKey ? numberAt(values, tpSitIdx, 1) : 1;
 
     if (escolaMap) {
       if (!co) { semEntidade++; continue; }
@@ -407,10 +479,19 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
 
     for (const [etapa, cols] of Object.entries(ETAPA_COLS)) {
       let sum = 0;
-      for (const col of cols) sum += Number(r[col]) || 0;
+      const indexes = etapaIndexes[etapa] ?? [];
+      for (const idx of indexes) sum += numberAt(values, idx);
       if (sum > 0) entry.etapas[etapa] = (entry.etapas[etapa] ?? 0) + sum;
     }
-    if (sampleAgregado.length < 5) sampleAgregado.push(`${ibge}/${co || "sem_entidade"}: ${Number(r.QT_MAT_BAS) || 0} básicas`);
+    if (sampleAgregado.length < 5) sampleAgregado.push(`${ibge}/${co || "sem_entidade"}: ${numberAt(values, matBasIdx)} básicas`);
+
+    if (totalLinhas - processedLogMark >= 50000) {
+      processedLogMark = totalLinhas;
+      await send({
+        type: "progress",
+        message: `Processadas ${totalLinhas.toLocaleString("pt-BR")} linhas até agora · agregando ${agregado.size.toLocaleString("pt-BR")} municípios.`,
+      });
+    }
   }
 
   await send({
@@ -434,7 +515,7 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
     throw new Error("Nenhuma linha municipal ativa (TP_DEPENDENCIA=3 e TP_SITUACAO_FUNCIONAMENTO=1) foi encontrada. Verifique se o arquivo é o Tabela_Matricula do Censo Escolar.");
   }
 
-  const ano = anoKey ? numberFrom(sample, anoKey, new Date().getFullYear()) : new Date().getFullYear();
+  const ano = anoKey ? numberAt(firstDataValues, anoIdx, new Date().getFullYear()) : new Date().getFullYear();
   const matRows: any[] = [];
   const totais: { ibge_id: number; matriculas_total: number; escolas: number }[] = [];
   for (const [ibge, agg] of agregado) {
