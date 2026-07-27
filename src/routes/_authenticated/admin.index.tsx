@@ -73,7 +73,8 @@ function AdminDashboard() {
       <div className="rounded-lg border border-border bg-white p-6">
         <h3 className="text-lg font-semibold">Próximos passos</h3>
         <ul className="mt-3 space-y-2 text-sm text-slate-700">
-          <li>→ <Link to="/admin/municipios" className="text-primary hover:underline">Editar municípios</Link> — inserir dados reais de IBGE (população/PIB), INEP (matrículas por etapa, escolas) e FNDE (repasses).</li>
+          <li>→ <Link to="/admin/import" className="text-primary hover:underline">Importar dados oficiais</Link> — upload de CSV/XLSX do INEP (matrículas/escolas) e FNDE (repasses), além de sincronização automática da população via IBGE.</li>
+          <li>→ <Link to="/admin/municipios" className="text-primary hover:underline">Editar municípios</Link> — revisar e ajustar dados individualmente.</li>
           <li>→ <Link to="/admin/score" className="text-primary hover:underline">Configurar pesos do score</Link> — ajustar como cada indicador impacta o ranking.</li>
         </ul>
       </div>
