@@ -169,23 +169,56 @@ function AdminImportPage() {
             <RadioGroup value={type} onValueChange={(v) => setType(v as typeof type)} className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
                 <RadioGroupItem value="inep_matriculas" id="inep_matriculas" className="sr-only" />
-                <Label htmlFor="inep_matriculas" className="cursor-pointer">
+                <Label htmlFor="inep_matriculas" className="cursor-pointer space-y-2 block">
                   <div className="font-semibold">INEP - Matrículas</div>
-                  <div className="text-xs text-muted-foreground mt-1">Microdados ou resumido por etapa.</div>
+                  <div className="text-xs text-muted-foreground">
+                    Microdados do Censo Escolar (arquivo <code>matricula_*.CSV</code>) ou versão resumida por etapa (<code>ibge_id, etapa, matriculas</code>).
+                  </div>
+                  <a
+                    href="https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/microdados/censo-escolar"
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-xs text-primary hover:underline inline-block"
+                  >
+                    Baixar Microdados do Censo Escolar (INEP) →
+                  </a>
                 </Label>
               </div>
               <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
                 <RadioGroupItem value="inep_escolas" id="inep_escolas" className="sr-only" />
-                <Label htmlFor="inep_escolas" className="cursor-pointer">
+                <Label htmlFor="inep_escolas" className="cursor-pointer space-y-2 block">
                   <div className="font-semibold">INEP - Escolas</div>
-                  <div className="text-xs text-muted-foreground mt-1">Cadastro de escolas ativas por município.</div>
+                  <div className="text-xs text-muted-foreground">
+                    Catálogo de escolas ativas por município (<code>escolas.CSV</code> do Censo ou resumo <code>ibge_id, escolas</code>).
+                  </div>
+                  <a
+                    href="https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/inep-data/catalogo-de-escolas"
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-xs text-primary hover:underline inline-block"
+                  >
+                    Catálogo de Escolas (INEP) →
+                  </a>
                 </Label>
               </div>
               <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
                 <RadioGroupItem value="fnde" id="fnde" className="sr-only" />
-                <Label htmlFor="fnde" className="cursor-pointer">
+                <Label htmlFor="fnde" className="cursor-pointer space-y-2 block">
                   <div className="font-semibold">FNDE - Liberações</div>
-                  <div className="text-xs text-muted-foreground mt-1">Planilha de repasses financeiros.</div>
+                  <div className="text-xs text-muted-foreground">
+                    Planilha de liberações financeiras por município. Aceita colunas mensais (jan..dez) ou uma coluna <code>Total/Valor Liberado</code>.
+                  </div>
+                  <a
+                    href="https://www.fnde.gov.br/sigefweb/index.php/liberacoes"
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-xs text-primary hover:underline inline-block"
+                  >
+                    Consulta de Liberações (SIGEF/FNDE) →
+                  </a>
                 </Label>
               </div>
             </RadioGroup>
