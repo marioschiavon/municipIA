@@ -1,95 +1,36 @@
-## Alpha v0.31 — Ingestão de dados reais (IBGE API + upload INEP/FNDE)
+## Alpha v0.35 — Diagnóstico e robustez do importador INEP
 
-Meta: sair de dados zerados para catálogo com população (IBGE), matrículas/escolas (INEP) e repasses (FNDE) reais. Sem versionamento por ano — cada import sobrescreve o valor mais recente.
+Dois sintomas relatados:
 
----
+1. **Matrículas** → erro `Colunas obrigatórias ausentes (CO_ENTIDADE, CO_MUNICIPIO, TP_DEPENDENCIA)`. Essa mensagem só existe em `processInepEscolas`, ou seja, ou o tipo selecionado ficou em "INEP - Escolas" (default do radio) e o usuário subiu o CSV de matrículas, ou a detecção do header falha e o parser trata como escolas por engano.
+2. **Escolas** → upload conclui sem erro, mas nenhuma contagem muda. Sinal típico de: (a) delimitador/encoding diferente do esperado (Papa devolve 1 coluna gigante, headers não batem, `municipais` fica vazio), ou (b) o `sample` é lido mas as linhas de dado caem no filtro `!co || !ibge || !dep`.
 
-### 1. IBGE — População via API (automático)
+### Correções
 
-Novo server fn `adminSyncPopulacao` em `src/lib/admin.functions.ts`:
-- Chama `https://servicodados.ibge.gov.br/api/v3/agregados/6579/periodos/-1/variaveis/9324?localidades=N6[all]` (última estimativa disponível, todos os 5.570 municípios em uma única resposta).
-- Faz parse de `resultados[0].series[].localidade.id` + `serie[<ano>]` → `{ ibge_id, populacao }`.
-- Faz **UPDATE** em lote (chunks de 500) na tabela `municipios` — nunca apaga os municípios.
-- Retorna `{ total, ano }` para exibir no admin.
+**1. Detecção automática de delimitador e header do CSV (`src/routes/api/admin/import.ts`)**
+- Substituir `parseCsvSemicolon` por `parseCsvAuto`: tenta `;`, depois `,`, depois `\t`, e escolhe o que produz o maior número de colunas no header.
+- Strip de BOM (`\uFEFF`) do primeiro campo.
+- Log inicial: `[headers detectados] delimiter=";" cols=57 primeiras=[NU_ANO_CENSO, CO_ENTIDADE, ...]` — envia via `send({ type:"progress", data:{ headers, delimiter } })` para aparecer no painel de log.
 
-UI: botão "Sincronizar população (IBGE)" no `admin.index.tsx`, ao lado do "Sincronizar municípios IBGE", com toast do ano de referência.
+**2. Autodetecção do tipo de arquivo INEP**
+- Antes de processar, inspecionar o header:
+  - Tem `TP_DEPENDENCIA` + `NO_ENTIDADE` → Tabela_Escola.
+  - Tem `QT_MAT_INF_CRE` ou `QT_MAT_FUND_AI` → Tabela_Matricula.
+- Se o tipo escolhido no radio não bate com o detectado, abortar com mensagem clara: `"Arquivo parece ser Tabela_Matricula, mas o tipo selecionado é 'INEP - Escolas'. Ajuste o seletor."` — evita o erro genérico atual.
 
----
+**3. Telemetria dos updates em Escolas**
+- Contar e reportar: linhas totais, linhas com `TP_DEPENDENCIA=3`, linhas com `TP_SITUACAO_FUNCIONAMENTO=1`, escolas municipais ativas, municípios afetados, updates bem-sucedidos.
+- Enviar amostra dos 3 primeiros IBGEs atualizados no log final para o admin conferir no banco.
 
-### 2. INEP — Upload CSV (dois formatos)
+**4. Compatibilidade de nomes de coluna**
+- `TP_SITUACAO_FUNCIONAMENTO` já é tratado, mas algumas releases usam `TP_SITUACAO`. Aceitar ambos.
+- `CO_MUNICIPIO` vs `CO_MUNICIPIO_IBGE` — aceitar ambos como fallback.
 
-Nova rota `src/routes/_authenticated/admin.import.tsx` com upload de arquivo + seletor de tipo (INEP matrículas | INEP escolas | FNDE repasses).
+**5. Bump de versão** em `src/lib/version.ts` para `Alpha v0.35`.
 
-**Server fn** `adminImportInep` (aceita `FormData`):
-- Parser detecta formato automaticamente pelas colunas do header:
-  - **Bruto (microdados)**: colunas `CO_MUNICIPIO`, `TP_ETAPA_ENSINO` (e `NU_MATRICULAS`/`CO_PESSOA_FISICA`) → agrega `count()`/`sum()` por município e mapeia código IBGE + etapa (enum `etapa_ensino`).
-  - **Resumido**: colunas `ibge_id, etapa, matriculas` (opcional `escolas`) → mapeamento direto.
-- Mapeamento de etapas INEP → enum:
-  - Creche (1,2) → `creche`
-  - Pré-escola (3,4) → `pre_escola`
-  - Fund. AI (5–8, 14, 15) → `fundamental_ai`
-  - Fund. AF (9–14, 41) → `fundamental_af`
-  - Médio (25–38) → `medio`
-  - EJA (65–74) → `eja`
-  - Especial (varia) → `especial`
-  - Prof. (30, 39, 40) → `profissionalizante`
-- Para `municipios_matriculas_etapa`: **limpa as linhas daquele município** e reinsere as etapas do arquivo. Isso garante que etapas removidas/zeradas no novo arquivo desapareçam do banco.
-- Atualiza `municipios.matriculas_total` = soma agregada e `municipios.escolas` (se arquivo de escolas) via **UPDATE**.
+### Fora de escopo
+- Alterações de esquema (não há migração).
+- Mudanças no FNDE (não relatadas nesta rodada).
 
-**Parser**: usar `papaparse` (streaming, aguenta arquivo grande) — adicionar dependência.
-
-**Limite prático**: arquivos > 50 MB devem ser pré-processados. Aviso na UI. Processamento em chunks de 5k linhas com barra de progresso via NDJSON stream (server route `/api/admin/import` com auth via bearer no header).
-
----
-
-### 3. FNDE — Upload CSV/XLSX
-
-Server fn `adminImportFnde` (mesma rota de upload):
-- Aceita CSV ou XLSX (usar `xlsx` — já usado no export).
-- Formato esperado: `codigo_ibge` (ou `municipio`+`uf`), `valor_total` (ou colunas de parcelas mensais).
-- Auto-detect: se houver `janeiro..dezembro`, soma; senão usa `valor_total`.
-- Faz **UPDATE** de `municipios.fnde_anual` por `ibge_id`.
-- Relatório: `{ atualizados, nao_encontrados: [] }`.
-
----
-
-### 4. UI Admin — nova aba "Importar dados"
-
-`src/routes/_authenticated/admin.import.tsx`:
-- Cards por fonte (IBGE / INEP Matrículas / INEP Escolas / FNDE).
-- IBGE: botão de sync direto.
-- INEP/FNDE: dropzone + preview das primeiras 5 linhas + botão "Processar".
-- Log em tempo real (usa `debug-log.ts` já existente) com progresso.
-- Após import, botão "Recalcular scores" que dispara `adminRecalcularScores` (novo server fn que roda `calcularScore` em todos os `municipios_educacao`).
-
-Menu lateral do admin (em `admin.tsx`) ganha item "Importar dados" → `/admin/import`.
-
----
-
-### 5. Recálculo em massa
-
-Novo `adminRecalcularScores` (server fn):
-- Lê todos `municipios` + `municipios_educacao` em batches de 500.
-- Recalcula `score`, `faixa`, `breakdown` via `calcularScore`.
-- Faz **UPDATE** em batch.
-- Retorna `{ total, faixas: { alto, medio, baixo } }`.
-
-Chamado automaticamente ao fim de cada import (IBGE, INEP, FNDE) e disponível como botão manual.
-
----
-
-### Detalhes técnicos
-
-- **Dependências novas**: `papaparse` (+ `@types/papaparse`). `xlsx` já existe.
-- **Upload**: `<input type="file">` + `FormData` para `/api/admin/import` (server route com `requireSupabaseAuth` inline + check de admin). Server fn não é ideal para arquivos > alguns MB.
-- **Segurança**: rota `/api/admin/import` valida bearer via `requireSupabaseAuth` e chama `has_role(userId, 'admin')` antes de processar.
-- **Bump**: `Alpha v0.30 → v0.31` em `src/lib/version.ts`.
-- **Sem migração SQL**: schema atual (`municipios`, `municipios_matriculas_etapa`) já cobre todos os campos.
-- **Fora de escopo**: histórico por ano, scraping automatizado FNDE, dashboard comparativo.
-
----
-
-### Onde baixar (instruções na UI, ao lado de cada card)
-
-- INEP Matrículas/Escolas: portal INEP → Censo Escolar → Microdados (ZIP anual, ~500 MB descompactado — o usuário deve extrair apenas `MATRICULAS_*.CSV` e `ESCOLAS.CSV`).
-- FNDE: portal FNDE → Consultas → Liberações → filtrar por ano → exportar CSV/XLSX.
+### Nota técnica
+As duas causas mais prováveis do sintoma "Escolas sem efeito" são delimitador errado (Papa devolve 1 coluna, `CO_ENTIDADE in sample` é falso, mas ainda assim passa da checagem porque o `sample` pode ter só uma chave composta) ou header com BOM (`"\uFEFFCO_ENTIDADE"` ≠ `"CO_ENTIDADE"`). O plano cobre ambos e adiciona log suficiente para diagnosticar qualquer novo caso sem precisar de novo turno.
