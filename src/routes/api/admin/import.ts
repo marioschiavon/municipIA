@@ -270,7 +270,7 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
   let matched = 0;
   let skipped = 0;
   for (const r of rows) {
-    const co = Number(r.CO_ENTIDADE);
+    const co = Number(r[coEntidadeKey]);
     if (!co) { skipped++; continue; }
     const ibge = escolasMap.get(co);
     if (!ibge) { skipped++; continue; }
