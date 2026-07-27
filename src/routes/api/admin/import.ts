@@ -308,7 +308,7 @@ async function recalcScores(supabaseAdmin: any) {
     .select("ibge_id, secretario, cargo, email, telefone, horario, equipe, atualizado_em");
   if (eErr) throw new Error(eErr.message);
 
-  const eduMap = new Map((edus ?? []).map((e: any) => [e.ibge_id, e]));
+  const eduMap = new Map<number, any>((edus ?? []).map((e: any) => [e.ibge_id, e]));
   const faixas = { alto: 0, medio: 0, baixo: 0 };
   const BATCH = 500;
   let processed = 0;
