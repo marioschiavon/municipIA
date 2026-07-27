@@ -477,7 +477,7 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
     if (co) entry.escolas.add(co);
     entry.escolasCount++;
 
-    for (const [etapa, cols] of Object.entries(ETAPA_COLS)) {
+    for (const etapa of Object.keys(ETAPA_COLS)) {
       let sum = 0;
       const indexes = etapaIndexes[etapa] ?? [];
       for (const idx of indexes) sum += numberAt(values, idx);
