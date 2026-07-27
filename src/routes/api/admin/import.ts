@@ -99,40 +99,97 @@ function decodeCsv(content: Uint8Array): string {
   return new TextDecoder("latin1").decode(content);
 }
 
-function parseCsvSemicolon(text: string): Record<string, string>[] {
-  const parsed = Papa.parse(text, { header: true, skipEmptyLines: true, delimiter: ";" });
-  return parsed.data as Record<string, string>[];
+function parseCsvAuto(text: string): { rows: Record<string, string>[]; delimiter: string; headers: string[] } {
+  // Remove BOM.
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  const candidates = [";", ",", "\t", "|"];
+  let best: { rows: Record<string, string>[]; delimiter: string; headers: string[] } | null = null;
+  for (const d of candidates) {
+    const parsed = Papa.parse(text, { header: true, skipEmptyLines: true, delimiter: d });
+    const rows = parsed.data as Record<string, string>[];
+    const headers = parsed.meta.fields ?? Object.keys(rows[0] ?? {});
+    const cleanHeaders = headers.map((h) => h.replace(/^\uFEFF/, "").trim());
+    // Renomeia chaves das linhas com headers limpos (BOM strip).
+    const cleanRows = rows.map((r) => {
+      const o: Record<string, string> = {};
+      for (const k of headers) o[k.replace(/^\uFEFF/, "").trim()] = r[k];
+      return o;
+    });
+    if (!best || cleanHeaders.length > best.headers.length) {
+      best = { rows: cleanRows, delimiter: d, headers: cleanHeaders };
+    }
+  }
+  return best!;
+}
+
+function detectInepType(headers: string[]): "inep_escolas" | "inep_matriculas" | "unknown" {
+  const set = new Set(headers.map((h) => h.toUpperCase()));
+  const hasMatCols = ["QT_MAT_INF_CRE", "QT_MAT_FUND_AI", "QT_MAT_MED", "QT_MAT_INF_PRE"].some((c) => set.has(c));
+  if (hasMatCols) return "inep_matriculas";
+  if (set.has("TP_DEPENDENCIA") && (set.has("NO_ENTIDADE") || set.has("TP_SITUACAO_FUNCIONAMENTO") || set.has("TP_SITUACAO"))) {
+    return "inep_escolas";
+  }
+  return "unknown";
+}
+
+function pickField(row: Record<string, string>, candidates: string[]): string | undefined {
+  const keys = Object.keys(row);
+  for (const c of candidates) {
+    const found = keys.find((k) => k.toUpperCase() === c.toUpperCase());
+    if (found) return found;
+  }
+  return undefined;
 }
 
 async function processInepEscolas(content: Uint8Array, supabaseAdmin: any, send: any) {
   const text = decodeCsv(content);
-  const rows = parseCsvSemicolon(text);
+  const { rows, delimiter, headers } = parseCsvAuto(text);
+  await send({
+    type: "progress",
+    message: `Headers detectados (delimitador="${delimiter === "\t" ? "\\t" : delimiter}", ${headers.length} colunas).`,
+    data: { delimiter, headers: headers.slice(0, 20) },
+  });
   await send({ type: "progress", message: `${rows.length.toLocaleString("pt-BR")} escolas detectadas no arquivo.` });
   if (!rows.length) throw new Error("Arquivo vazio ou formato inválido");
 
-  const sample = rows[0];
-  if (!("CO_ENTIDADE" in sample) || !("CO_MUNICIPIO" in sample) || !("TP_DEPENDENCIA" in sample)) {
-    throw new Error("Colunas obrigatórias ausentes (CO_ENTIDADE, CO_MUNICIPIO, TP_DEPENDENCIA)");
+  const detected = detectInepType(headers);
+  if (detected === "inep_matriculas") {
+    throw new Error("Arquivo parece ser Tabela_Matricula (contém colunas QT_MAT_*). Selecione 'INEP — Matrículas' no seletor.");
   }
-  const anoCol = "NU_ANO_CENSO" in sample ? "NU_ANO_CENSO" : null;
+
+  const sample = rows[0];
+  const coEntidadeKey = pickField(sample, ["CO_ENTIDADE"]);
+  const coMunicipioKey = pickField(sample, ["CO_MUNICIPIO", "CO_MUNICIPIO_IBGE"]);
+  const tpDepKey = pickField(sample, ["TP_DEPENDENCIA"]);
+  const tpSitKey = pickField(sample, ["TP_SITUACAO_FUNCIONAMENTO", "TP_SITUACAO"]);
+  if (!coEntidadeKey || !coMunicipioKey || !tpDepKey) {
+    throw new Error(`Colunas obrigatórias ausentes. Necessárias: CO_ENTIDADE, CO_MUNICIPIO(_IBGE), TP_DEPENDENCIA. Encontradas: ${headers.slice(0, 10).join(", ")}...`);
+  }
+  const anoCol = pickField(sample, ["NU_ANO_CENSO"]);
   const ano = anoCol ? Number(sample[anoCol]) || new Date().getFullYear() : new Date().getFullYear();
 
   const escolasRows: { co_entidade: number; ibge_id: number; tp_dependencia: number; tp_situacao: number; ano: number }[] = [];
-  const municipais = new Map<number, number>(); // ibge_id -> contagem de escolas municipais ativas
+  const municipais = new Map<number, number>();
   let ignored = 0;
+  let countDep3 = 0;
+  let countSit1 = 0;
 
   for (const r of rows) {
-    const co = Number(r.CO_ENTIDADE);
-    const ibge = Number(r.CO_MUNICIPIO);
-    const dep = Number(r.TP_DEPENDENCIA);
-    const sit = Number(r.TP_SITUACAO_FUNCIONAMENTO ?? 1);
+    const co = Number(r[coEntidadeKey]);
+    const ibge = Number(r[coMunicipioKey]);
+    const dep = Number(r[tpDepKey]);
+    const sit = tpSitKey ? Number(r[tpSitKey] ?? 1) : 1;
     if (!co || !ibge || !dep) { ignored++; continue; }
     escolasRows.push({ co_entidade: co, ibge_id: ibge, tp_dependencia: dep, tp_situacao: sit, ano });
+    if (dep === 3) countDep3++;
+    if (sit === 1) countSit1++;
     if (dep === 3 && sit === 1) municipais.set(ibge, (municipais.get(ibge) ?? 0) + 1);
   }
-  await send({ type: "progress", message: `${escolasRows.length.toLocaleString("pt-BR")} escolas válidas · ${municipais.size.toLocaleString("pt-BR")} municípios com rede municipal ativa.` });
+  await send({
+    type: "progress",
+    message: `${escolasRows.length.toLocaleString("pt-BR")} escolas válidas · dep=3: ${countDep3.toLocaleString("pt-BR")} · sit=1: ${countSit1.toLocaleString("pt-BR")} · municipais ativas: ${Array.from(municipais.values()).reduce((a,b)=>a+b,0).toLocaleString("pt-BR")} em ${municipais.size.toLocaleString("pt-BR")} municípios.`,
+  });
 
-  // Upsert do mapa de escolas em lotes.
   const BATCH = 1000;
   for (let i = 0; i < escolasRows.length; i += BATCH) {
     const slice = escolasRows.slice(i, i + BATCH);
@@ -143,30 +200,46 @@ async function processInepEscolas(content: Uint8Array, supabaseAdmin: any, send:
     }
   }
 
-  // Atualiza contagem de escolas municipais ativas por município.
   const CONC = 20;
   const entries = Array.from(municipais.entries());
   let idx = 0;
+  let updated = 0;
   async function worker() {
     while (idx < entries.length) {
       const i = idx++;
       const [ibge, count] = entries[i];
       const { error } = await supabaseAdmin.from("municipios").update({ escolas: count }).eq("ibge_id", ibge);
       if (error) throw new Error(`municipios ${ibge}: ${error.message}`);
+      updated++;
     }
   }
   await Promise.all(Array.from({ length: CONC }, worker));
-  await send({ type: "progress", message: `Contagem de escolas municipais atualizada em ${municipais.size.toLocaleString("pt-BR")} municípios. Ignoradas: ${ignored.toLocaleString("pt-BR")}.` });
+  const amostra = entries.slice(0, 3).map(([ibge, c]) => `${ibge}=${c}`).join(", ");
+  await send({
+    type: "progress",
+    message: `Contagem de escolas municipais atualizada em ${updated.toLocaleString("pt-BR")} municípios (amostra: ${amostra}). Ignoradas: ${ignored.toLocaleString("pt-BR")}.`,
+  });
 }
 
 async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, send: any) {
   const text = decodeCsv(content);
-  const rows = parseCsvSemicolon(text);
+  const { rows, delimiter, headers } = parseCsvAuto(text);
+  await send({
+    type: "progress",
+    message: `Headers detectados (delimitador="${delimiter === "\t" ? "\\t" : delimiter}", ${headers.length} colunas).`,
+    data: { delimiter, headers: headers.slice(0, 20) },
+  });
   await send({ type: "progress", message: `${rows.length.toLocaleString("pt-BR")} linhas detectadas no arquivo.` });
   if (!rows.length) throw new Error("Arquivo vazio ou formato inválido");
+
+  const detected = detectInepType(headers);
+  if (detected === "inep_escolas") {
+    throw new Error("Arquivo parece ser Tabela_Escola (sem colunas QT_MAT_*). Selecione 'INEP — Escolas' no seletor.");
+  }
   const sample = rows[0];
-  if (!("CO_ENTIDADE" in sample)) {
-    throw new Error("Coluna CO_ENTIDADE ausente. Faça upload do arquivo Tabela_Matricula do Censo Escolar.");
+  const coEntidadeKey = pickField(sample, ["CO_ENTIDADE"]);
+  if (!coEntidadeKey) {
+    throw new Error(`Coluna CO_ENTIDADE ausente. Encontradas: ${headers.slice(0, 10).join(", ")}...`);
   }
 
   // Carrega mapa CO_ENTIDADE → IBGE (apenas escolas municipais ativas).
@@ -197,7 +270,7 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
   let matched = 0;
   let skipped = 0;
   for (const r of rows) {
-    const co = Number(r.CO_ENTIDADE);
+    const co = Number(r[coEntidadeKey]);
     if (!co) { skipped++; continue; }
     const ibge = escolasMap.get(co);
     if (!ibge) { skipped++; continue; }
