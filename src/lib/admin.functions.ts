@@ -311,25 +311,12 @@ export const adminSyncPopulacao = createServerFn({ method: "POST" })
       if (!ibgeId || Number.isNaN(pop)) continue;
       rows.push({ ibge_id: ibgeId, populacao: pop });
     }
-    const CHUNK = 500;
-    for (let i = 0; i < rows.length; i += CHUNK) {
+    for (const r of rows) {
       const { error } = await supabaseAdmin
         .from("municipios")
-        .update({ populacao: rows[i].populacao })
-        .eq("ibge_id", rows[i].ibge_id);
-      if (error) throw new Error(`populacao: ${error.message}`);
-    }
-    // Correção: atualizar cada registro individualmente acima seria ineficiente. Usamos upsert via RPC.
-    // O Supabase REST não permite multi-update por PK, então fazemos upsert por chunk mantendo os outros campos.
-    for (let i = 0; i < rows.length; i += CHUNK) {
-      const chunk = rows.slice(i, i + CHUNK).map((r) => ({
-        ibge_id: r.ibge_id,
-        populacao: r.populacao,
-      }));
-      const { error } = await supabaseAdmin
-        .from("municipios")
-        .upsert(chunk, { onConflict: "ibge_id", ignoreDuplicates: false });
-      if (error) throw new Error(`populacao chunk: ${error.message}`);
+        .update({ populacao: r.populacao })
+        .eq("ibge_id", r.ibge_id);
+      if (error) throw new Error(`populacao ${r.ibge_id}: ${error.message}`);
     }
     return { total: rows.length, ano };
   });
