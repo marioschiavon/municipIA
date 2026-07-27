@@ -19,8 +19,10 @@ import { Route as ApiProspectRouteImport } from './routes/api/prospect'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin.index'
 import { Route as ApiDebugApifyRouteImport } from './routes/api/debug.apify'
+import { Route as ApiAdminImportRouteImport } from './routes/api/admin/import'
 import { Route as AuthenticatedAdminScoreRouteImport } from './routes/_authenticated/admin.score'
 import { Route as AuthenticatedAdminMunicipiosRouteImport } from './routes/_authenticated/admin.municipios'
+import { Route as AuthenticatedAdminImportRouteImport } from './routes/_authenticated/admin.import'
 import { Route as AuthenticatedAdminMunicipiosIbgeIdRouteImport } from './routes/_authenticated/admin.municipios.$ibgeId'
 
 const DebugRoute = DebugRouteImport.update({
@@ -72,6 +74,11 @@ const ApiDebugApifyRoute = ApiDebugApifyRouteImport.update({
   path: '/api/debug/apify',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAdminImportRoute = ApiAdminImportRouteImport.update({
+  id: '/api/admin/import',
+  path: '/api/admin/import',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedAdminScoreRoute = AuthenticatedAdminScoreRouteImport.update({
   id: '/score',
   path: '/score',
@@ -81,6 +88,12 @@ const AuthenticatedAdminMunicipiosRoute =
   AuthenticatedAdminMunicipiosRouteImport.update({
     id: '/municipios',
     path: '/municipios',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
+const AuthenticatedAdminImportRoute =
+  AuthenticatedAdminImportRouteImport.update({
+    id: '/import',
+    path: '/import',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
 const AuthenticatedAdminMunicipiosIbgeIdRoute =
@@ -98,8 +111,10 @@ export interface FileRoutesByFullPath {
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
   '/municipio/$ibgeId': typeof MunicipioIbgeIdRoute
+  '/admin/import': typeof AuthenticatedAdminImportRoute
   '/admin/municipios': typeof AuthenticatedAdminMunicipiosRouteWithChildren
   '/admin/score': typeof AuthenticatedAdminScoreRoute
+  '/api/admin/import': typeof ApiAdminImportRoute
   '/api/debug/apify': typeof ApiDebugApifyRoute
   '/admin/': typeof AuthenticatedAdminIndexRoute
   '/admin/municipios/$ibgeId': typeof AuthenticatedAdminMunicipiosIbgeIdRoute
@@ -111,8 +126,10 @@ export interface FileRoutesByTo {
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
   '/municipio/$ibgeId': typeof MunicipioIbgeIdRoute
+  '/admin/import': typeof AuthenticatedAdminImportRoute
   '/admin/municipios': typeof AuthenticatedAdminMunicipiosRouteWithChildren
   '/admin/score': typeof AuthenticatedAdminScoreRoute
+  '/api/admin/import': typeof ApiAdminImportRoute
   '/api/debug/apify': typeof ApiDebugApifyRoute
   '/admin': typeof AuthenticatedAdminIndexRoute
   '/admin/municipios/$ibgeId': typeof AuthenticatedAdminMunicipiosIbgeIdRoute
@@ -127,8 +144,10 @@ export interface FileRoutesById {
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
   '/municipio/$ibgeId': typeof MunicipioIbgeIdRoute
+  '/_authenticated/admin/import': typeof AuthenticatedAdminImportRoute
   '/_authenticated/admin/municipios': typeof AuthenticatedAdminMunicipiosRouteWithChildren
   '/_authenticated/admin/score': typeof AuthenticatedAdminScoreRoute
+  '/api/admin/import': typeof ApiAdminImportRoute
   '/api/debug/apify': typeof ApiDebugApifyRoute
   '/_authenticated/admin/': typeof AuthenticatedAdminIndexRoute
   '/_authenticated/admin/municipios/$ibgeId': typeof AuthenticatedAdminMunicipiosIbgeIdRoute
@@ -143,8 +162,10 @@ export interface FileRouteTypes {
     | '/api/prospect'
     | '/debug/apify'
     | '/municipio/$ibgeId'
+    | '/admin/import'
     | '/admin/municipios'
     | '/admin/score'
+    | '/api/admin/import'
     | '/api/debug/apify'
     | '/admin/'
     | '/admin/municipios/$ibgeId'
@@ -156,8 +177,10 @@ export interface FileRouteTypes {
     | '/api/prospect'
     | '/debug/apify'
     | '/municipio/$ibgeId'
+    | '/admin/import'
     | '/admin/municipios'
     | '/admin/score'
+    | '/api/admin/import'
     | '/api/debug/apify'
     | '/admin'
     | '/admin/municipios/$ibgeId'
@@ -171,8 +194,10 @@ export interface FileRouteTypes {
     | '/api/prospect'
     | '/debug/apify'
     | '/municipio/$ibgeId'
+    | '/_authenticated/admin/import'
     | '/_authenticated/admin/municipios'
     | '/_authenticated/admin/score'
+    | '/api/admin/import'
     | '/api/debug/apify'
     | '/_authenticated/admin/'
     | '/_authenticated/admin/municipios/$ibgeId'
@@ -185,6 +210,7 @@ export interface RootRouteChildren {
   DebugRoute: typeof DebugRouteWithChildren
   ApiProspectRoute: typeof ApiProspectRoute
   MunicipioIbgeIdRoute: typeof MunicipioIbgeIdRoute
+  ApiAdminImportRoute: typeof ApiAdminImportRoute
   ApiDebugApifyRoute: typeof ApiDebugApifyRoute
 }
 
@@ -260,6 +286,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDebugApifyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/admin/import': {
+      id: '/api/admin/import'
+      path: '/api/admin/import'
+      fullPath: '/api/admin/import'
+      preLoaderRoute: typeof ApiAdminImportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/admin/score': {
       id: '/_authenticated/admin/score'
       path: '/score'
@@ -272,6 +305,13 @@ declare module '@tanstack/react-router' {
       path: '/municipios'
       fullPath: '/admin/municipios'
       preLoaderRoute: typeof AuthenticatedAdminMunicipiosRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
+    '/_authenticated/admin/import': {
+      id: '/_authenticated/admin/import'
+      path: '/import'
+      fullPath: '/admin/import'
+      preLoaderRoute: typeof AuthenticatedAdminImportRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
     '/_authenticated/admin/municipios/$ibgeId': {
@@ -300,12 +340,14 @@ const AuthenticatedAdminMunicipiosRouteWithChildren =
   )
 
 interface AuthenticatedAdminRouteChildren {
+  AuthenticatedAdminImportRoute: typeof AuthenticatedAdminImportRoute
   AuthenticatedAdminMunicipiosRoute: typeof AuthenticatedAdminMunicipiosRouteWithChildren
   AuthenticatedAdminScoreRoute: typeof AuthenticatedAdminScoreRoute
   AuthenticatedAdminIndexRoute: typeof AuthenticatedAdminIndexRoute
 }
 
 const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
+  AuthenticatedAdminImportRoute: AuthenticatedAdminImportRoute,
   AuthenticatedAdminMunicipiosRoute:
     AuthenticatedAdminMunicipiosRouteWithChildren,
   AuthenticatedAdminScoreRoute: AuthenticatedAdminScoreRoute,
@@ -343,18 +385,9 @@ const rootRouteChildren: RootRouteChildren = {
   DebugRoute: DebugRouteWithChildren,
   ApiProspectRoute: ApiProspectRoute,
   MunicipioIbgeIdRoute: MunicipioIbgeIdRoute,
+  ApiAdminImportRoute: ApiAdminImportRoute,
   ApiDebugApifyRoute: ApiDebugApifyRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

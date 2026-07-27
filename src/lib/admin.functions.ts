@@ -284,3 +284,98 @@ export const adminSyncIBGE = createServerFn({ method: "POST" })
     }
     return { total: munis.length };
   });
+
+// ============ SYNC POPULAÇÃO IBGE ============
+export const adminSyncPopulacao = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const res = await fetch(
+      "https://servicodados.ibge.gov.br/api/v3/agregados/6579/periodos/-1/variaveis/9324?localidades=N6[all]"
+    );
+    if (!res.ok) throw new Error(`IBGE HTTP ${res.status}`);
+    const json = await res.json() as any[];
+    const resultados = json?.[0]?.resultados;
+    if (!resultados || !Array.isArray(resultados)) throw new Error("Resposta do IBGE inesperada");
+    const serie = resultados[0]?.serie;
+    const ano = Object.keys(serie ?? {})[0];
+    if (!ano) throw new Error("Não foi possível identificar o ano de referência");
+    const rows: { ibge_id: number; populacao: number }[] = [];
+    for (const r of resultados) {
+      const id = r?.localidade?.id;
+      const val = r?.serie?.[ano];
+      if (!id || val == null) continue;
+      const ibgeId = Number(id);
+      const pop = Number(val);
+      if (!ibgeId || Number.isNaN(pop)) continue;
+      rows.push({ ibge_id: ibgeId, populacao: pop });
+    }
+    for (const r of rows) {
+      const { error } = await supabaseAdmin
+        .from("municipios")
+        .update({ populacao: r.populacao })
+        .eq("ibge_id", r.ibge_id);
+      if (error) throw new Error(`populacao ${r.ibge_id}: ${error.message}`);
+    }
+    return { total: rows.length, ano };
+  });
+
+// ============ RECALCULAR SCORES ============
+export const adminRecalcularScores = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { calcularScore, contarCampos } = await import("./catalog-score");
+
+    const { data: munis, error: mErr } = await supabaseAdmin
+      .from("municipios")
+      .select("ibge_id, populacao, matriculas_total, fnde_anual");
+    if (mErr) throw new Error(mErr.message);
+
+    const { data: edus, error: eErr } = await supabaseAdmin
+      .from("municipios_educacao")
+      .select("ibge_id, secretario, cargo, email, telefone, horario, equipe, atualizado_em");
+    if (eErr) throw new Error(eErr.message);
+
+    const eduMap = new Map((edus ?? []).map((e: any) => [e.ibge_id, e]));
+    const faixas = { alto: 0, medio: 0, baixo: 0 };
+    const BATCH = 500;
+    let processed = 0;
+    const updates: any[] = [];
+
+    for (const m of munis ?? []) {
+      const e = eduMap.get(m.ibge_id);
+      const campos = contarCampos({
+        secretario: e?.secretario, cargo: e?.cargo, email: e?.email,
+        telefone: e?.telefone, horario: e?.horario, equipe: e?.equipe,
+      });
+      const { score, faixa, breakdown } = calcularScore({
+        populacao: m.populacao ?? 0,
+        matriculas_total: m.matriculas_total ?? 0,
+        fnde_anual: Number(m.fnde_anual ?? 0),
+        campos_preenchidos: campos,
+        atualizado_em: e?.atualizado_em ?? null,
+      });
+      faixas[faixa]++;
+      updates.push({
+        ibge_id: m.ibge_id,
+        score,
+        faixa,
+        breakdown,
+      });
+      if (updates.length >= BATCH) {
+        const { error } = await supabaseAdmin.from("municipios_educacao").upsert(updates, { onConflict: "ibge_id" });
+        if (error) throw new Error(error.message);
+        processed += updates.length;
+        updates.length = 0;
+      }
+    }
+    if (updates.length) {
+      const { error } = await supabaseAdmin.from("municipios_educacao").upsert(updates, { onConflict: "ibge_id" });
+      if (error) throw new Error(error.message);
+      processed += updates.length;
+    }
+    return { total: processed, faixas };
+  });
