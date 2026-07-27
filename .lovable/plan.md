@@ -1,36 +1,42 @@
-## Alpha v0.35 — Diagnóstico e robustez do importador INEP
 
-Dois sintomas relatados:
+## Problema
 
-1. **Matrículas** → erro `Colunas obrigatórias ausentes (CO_ENTIDADE, CO_MUNICIPIO, TP_DEPENDENCIA)`. Essa mensagem só existe em `processInepEscolas`, ou seja, ou o tipo selecionado ficou em "INEP - Escolas" (default do radio) e o usuário subiu o CSV de matrículas, ou a detecção do header falha e o parser trata como escolas por engano.
-2. **Escolas** → upload conclui sem erro, mas nenhuma contagem muda. Sinal típico de: (a) delimitador/encoding diferente do esperado (Papa devolve 1 coluna gigante, headers não batem, `municipais` fica vazio), ou (b) o `sample` é lido mas as linhas de dado caem no filtro `!co || !ibge || !dep`.
+O fluxo atual exige dois uploads (Escolas → Matrículas) e faz o join via `CO_ENTIDADE` na tabela `inep_escolas`. Resultado prático:
 
-### Correções
+- Se o admin sobe só o `Tabela_Matricula`, o passo de agregação depende do mapa `inep_escolas` estar populado — se não estiver, tudo é ignorado silenciosamente e "não aparece nada".
+- Mesmo quando os dois uploads rodam, qualquer diferença no `CO_ENTIDADE` (ou filtro `dep=3/sit=1` estrito) zera o batch.
+- O `Tabela_Matricula` do Censo Escolar **já traz `CO_MUNICIPIO`, `TP_DEPENDENCIA` e `TP_SITUACAO_FUNCIONAMENTO` em cada linha** (uma linha por escola). Então o join escola↔município é redundante.
 
-**1. Detecção automática de delimitador e header do CSV (`src/routes/api/admin/import.ts`)**
-- Substituir `parseCsvSemicolon` por `parseCsvAuto`: tenta `;`, depois `,`, depois `\t`, e escolhe o que produz o maior número de colunas no header.
-- Strip de BOM (`\uFEFF`) do primeiro campo.
-- Log inicial: `[headers detectados] delimiter=";" cols=57 primeiras=[NU_ANO_CENSO, CO_ENTIDADE, ...]` — envia via `send({ type:"progress", data:{ headers, delimiter } })` para aparecer no painel de log.
+## Solução — importação única de matrículas
 
-**2. Autodetecção do tipo de arquivo INEP**
-- Antes de processar, inspecionar o header:
-  - Tem `TP_DEPENDENCIA` + `NO_ENTIDADE` → Tabela_Escola.
-  - Tem `QT_MAT_INF_CRE` ou `QT_MAT_FUND_AI` → Tabela_Matricula.
-- Se o tipo escolhido no radio não bate com o detectado, abortar com mensagem clara: `"Arquivo parece ser Tabela_Matricula, mas o tipo selecionado é 'INEP - Escolas'. Ajuste o seletor."` — evita o erro genérico atual.
+Um único upload (`Tabela_Matricula_YYYY.csv`) resolve tudo:
 
-**3. Telemetria dos updates em Escolas**
-- Contar e reportar: linhas totais, linhas com `TP_DEPENDENCIA=3`, linhas com `TP_SITUACAO_FUNCIONAMENTO=1`, escolas municipais ativas, municípios afetados, updates bem-sucedidos.
-- Enviar amostra dos 3 primeiros IBGEs atualizados no log final para o admin conferir no banco.
+1. Ler o CSV com autodetecção de delimitador/encoding (já existe).
+2. Para cada linha, filtrar `TP_DEPENDENCIA=3` (municipal) e `TP_SITUACAO_FUNCIONAMENTO=1` (ativa).
+3. Agregar por `CO_MUNICIPIO`:
+   - Soma das colunas `QT_MAT_*` → matrículas por etapa (creche, pré, fund_ai, fund_af, médio, EJA, especial, profissionalizante).
+   - Contagem de linhas → número de escolas municipais ativas.
+4. Persistir:
+   - `municipios.matriculas_total` e `municipios.escolas` via `UPDATE` por `ibge_id`.
+   - `municipios_matriculas_etapa` (apaga ano corrente e reinsere).
+5. Recalcular scores em massa.
 
-**4. Compatibilidade de nomes de coluna**
-- `TP_SITUACAO_FUNCIONAMENTO` já é tratado, mas algumas releases usam `TP_SITUACAO`. Aceitar ambos.
-- `CO_MUNICIPIO` vs `CO_MUNICIPIO_IBGE` — aceitar ambos como fallback.
+## Mudanças
 
-**5. Bump de versão** em `src/lib/version.ts` para `Alpha v0.35`.
+**1. `src/routes/api/admin/import.ts`**
+- Reescrever `processInepMatriculas` para não depender de `inep_escolas`: ler `CO_MUNICIPIO`, `TP_DEPENDENCIA`, `TP_SITUACAO_FUNCIONAMENTO`, `CO_ENTIDADE` + `QT_MAT_*` direto do CSV de matrículas.
+- Telemetria clara: total de linhas, quantas passaram o filtro dep=3/sit=1, quantos municípios agregados, soma total de matrículas, amostra dos 3 primeiros IBGEs com totais.
+- Manter `processInepEscolas` como opcional (só atualiza contagem de escolas se o admin quiser importar antes), mas deixar de ser pré-requisito.
 
-### Fora de escopo
-- Alterações de esquema (não há migração).
-- Mudanças no FNDE (não relatadas nesta rodada).
+**2. `src/routes/_authenticated/admin.import.tsx`**
+- Reordenar/renomear cartões:
+  - **1. INEP — Matrículas** (principal, único obrigatório): agora também popula contagem de escolas.
+  - **2. INEP — Escolas** (opcional): rotulado como "opcional / dados detalhados por escola".
+  - **3. FNDE — FUNDEB**: inalterado.
+- Ajustar textos explicativos: "só o arquivo de Matrículas já é suficiente para popular matrículas por etapa e contagem de escolas municipais ativas".
 
-### Nota técnica
-As duas causas mais prováveis do sintoma "Escolas sem efeito" são delimitador errado (Papa devolve 1 coluna, `CO_ENTIDADE in sample` é falso, mas ainda assim passa da checagem porque o `sample` pode ter só uma chave composta) ou header com BOM (`"\uFEFFCO_ENTIDADE"` ≠ `"CO_ENTIDADE"`). O plano cobre ambos e adiciona log suficiente para diagnosticar qualquer novo caso sem precisar de novo turno.
+**3. `src/lib/version.ts`** → `Alpha v0.36`.
+
+## Fora de escopo
+- Nenhuma alteração de schema (a tabela `inep_escolas` continua existindo, apenas deixa de ser pré-requisito).
+- Nenhuma alteração no FNDE ou no cálculo do score.
