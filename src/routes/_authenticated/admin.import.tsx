@@ -263,22 +263,34 @@ function AdminImportPage() {
         </Alert>
       )}
 
-      {logs.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-semibold">Log de execução</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="bg-muted rounded-lg p-4 h-64 overflow-y-auto font-mono text-xs space-y-1">
-              {logs.map((l, i) => (
-                <div key={i} className="break-words">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="text-sm font-semibold">Log detalhado de execução</CardTitle>
+            <CardDescription className="text-xs">
+              Cada evento do servidor (parsing, mapeamento de colunas, lotes, contagens) aparece aqui em tempo real.
+            </CardDescription>
+          </div>
+          {logs.length > 0 && (
+            <Button type="button" variant="outline" size="sm" onClick={() => setLogs([])}>
+              Limpar
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent>
+          <div className="bg-muted rounded-lg p-4 h-96 overflow-y-auto font-mono text-xs space-y-1">
+            {logs.length === 0 ? (
+              <div className="text-muted-foreground">Aguardando execução...</div>
+            ) : (
+              logs.map((l, i) => (
+                <div key={i} className="break-words whitespace-pre-wrap">
                   {l}
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
