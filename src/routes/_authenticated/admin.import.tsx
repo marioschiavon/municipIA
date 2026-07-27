@@ -21,7 +21,7 @@ export const Route = createFileRoute("/_authenticated/admin/import")({
 });
 
 function AdminImportPage() {
-  const [type, setType] = useState<"inep_escolas" | "inep_matriculas" | "fnde">("inep_escolas");
+  const [type, setType] = useState<"inep_matriculas" | "inep_escolas" | "fnde">("inep_matriculas");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
