@@ -2,13 +2,13 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
-import { adminGetMunicipio, adminSaveMunicipio } from "@/lib/admin.functions";
+import { adminGetMunicipio, adminSaveMunicipio, adminFetchFndeAtual } from "@/lib/admin.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Loader2, Plus, Trash2, Save } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, Trash2, Save, Search } from "lucide-react";
 
 const ETAPAS: Array<{ id: string; label: string; hint: string }> = [
   { id: "creche", label: "Creche", hint: "0 a 3 anos" },
@@ -32,6 +32,7 @@ function AdminEditMunicipio() {
   const navigate = useNavigate();
   const getFn = useServerFn(adminGetMunicipio);
   const saveFn = useServerFn(adminSaveMunicipio);
+  const fetchFndeFn = useServerFn(adminFetchFndeAtual);
   const data = useQuery({ queryKey: ["admin-muni", id], queryFn: () => getFn({ data: { ibge_id: id } }) });
 
   // form state
@@ -69,6 +70,13 @@ function AdminEditMunicipio() {
     for (const row of et) map[row.etapa] = row.matriculas;
     setMatriculas(map);
   }, [data.data]);
+
+  const fndeMut = useMutation({
+    mutationFn: async () => fetchFndeFn({ data: { ibge_id: id } }),
+    onSuccess: (r) => {
+      if (r.ok) setFnde(r.valor);
+    },
+  });
 
   const saveMut = useMutation({
     mutationFn: async () => saveFn({
@@ -115,7 +123,22 @@ function AdminEditMunicipio() {
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <Field label="População (IBGE)"><Input type="number" min={0} value={populacao} onChange={(e) => setPopulacao(+e.target.value || 0)} /></Field>
           <Field label="Escolas (INEP)"><Input type="number" min={0} value={escolas} onChange={(e) => setEscolas(+e.target.value || 0)} /></Field>
-          <Field label="FNDE anual (R$)"><Input type="number" min={0} step="0.01" value={fnde} onChange={(e) => setFnde(+e.target.value || 0)} /></Field>
+          <Field label="FNDE anual (R$)">
+            <div className="space-y-1.5">
+              <div className="flex gap-2">
+                <Input type="number" min={0} step="0.01" value={fnde} onChange={(e) => setFnde(+e.target.value || 0)} />
+                <Button type="button" size="icon" variant="outline" onClick={() => fndeMut.mutate()} disabled={fndeMut.isPending} title="Buscar FUNDEB atual (SICONFI)">
+                  {fndeMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                </Button>
+              </div>
+              {fndeMut.data && (
+                fndeMut.data.ok
+                  ? <p className="text-xs text-emerald-700">FUNDEB últimos 12 meses — dado de {fndeMut.data.ano}, bimestre {fndeMut.data.periodo}. Clique em Salvar para confirmar.</p>
+                  : <p className="text-xs text-amber-700">Nenhum dado de FUNDEB encontrado no SICONFI para este município.</p>
+              )}
+              {fndeMut.error && <p className="text-xs text-red-600">{(fndeMut.error as Error).message}</p>}
+            </div>
+          </Field>
           <Field label="PIB per capita (R$)"><Input type="number" min={0} step="0.01" value={pib} onChange={(e) => setPib(+e.target.value || 0)} /></Field>
         </div>
       </section>

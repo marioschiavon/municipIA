@@ -237,6 +237,48 @@ export const adminSaveMunicipio = createServerFn({ method: "POST" })
     return { ok: true, score, faixa };
   });
 
+// ============ BUSCAR FUNDEB ATUAL (SICONFI/RREO) ============
+export const adminFetchFndeAtual = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ ibge_id: z.number().int() }).parse(d))
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { fetchFundebAtual } = await import("./fnde.server");
+    const resultado = await fetchFundebAtual(data.ibge_id);
+    if (!resultado) return { ok: false as const };
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { calcularScore, contarCampos } = await import("./catalog-score");
+
+    const { error: mErr } = await supabaseAdmin
+      .from("municipios")
+      .update({ fnde_anual: resultado.valor })
+      .eq("ibge_id", data.ibge_id);
+    if (mErr) throw new Error(`municipios: ${mErr.message}`);
+
+    const [{ data: m }, { data: edu }] = await Promise.all([
+      supabaseAdmin.from("municipios").select("populacao, matriculas_total").eq("ibge_id", data.ibge_id).maybeSingle(),
+      supabaseAdmin.from("municipios_educacao").select("secretario, cargo, emails, telefones, horario, equipe, atualizado_em").eq("ibge_id", data.ibge_id).maybeSingle() as any,
+    ]);
+    const campos = contarCampos({
+      secretario: edu?.secretario, cargo: edu?.cargo, emails: edu?.emails,
+      telefones: edu?.telefones, horario: edu?.horario, equipe: edu?.equipe,
+    });
+    const { score, faixa, breakdown } = calcularScore({
+      populacao: m?.populacao ?? 0,
+      matriculas_total: m?.matriculas_total ?? 0,
+      fnde_anual: resultado.valor,
+      campos_preenchidos: campos,
+      atualizado_em: edu?.atualizado_em ?? null,
+    });
+    const { error: eErr } = await supabaseAdmin
+      .from("municipios_educacao")
+      .upsert({ ibge_id: data.ibge_id, score, faixa, breakdown }, { onConflict: "ibge_id" });
+    if (eErr) throw new Error(`educacao: ${eErr.message}`);
+
+    return { ok: true as const, ano: resultado.ano, periodo: resultado.periodo, valor: resultado.valor, score, faixa };
+  });
+
 // ============ SCORE CONFIG ============
 export const adminGetScoreConfig = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
