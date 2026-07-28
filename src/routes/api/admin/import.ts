@@ -74,6 +74,13 @@ export const Route = createFileRoute("/api/admin/import")({
                 await processInepEscolas(request.body, supabaseAdmin, send);
               } else if (type === "inep_matriculas") {
                 await processInepMatriculas(request.body, supabaseAdmin, send);
+              } else if (type === "fundeb_matriculas") {
+                let body = request.body;
+                if (/\.gz$/i.test(filename) && typeof DecompressionStream !== "undefined") {
+                  await send({ type: "progress", message: "Arquivo .gz detectado — descompactando em streaming." });
+                  body = body.pipeThrough(new DecompressionStream("gzip"));
+                }
+                await processFundebMatriculas(body, supabaseAdmin, send);
               } else {
                 const buffer = await new Response(request.body).arrayBuffer();
                 await processFnde(new Uint8Array(buffer), supabaseAdmin, send, filename);
