@@ -156,8 +156,8 @@ function MunicipioPage() {
               <div className="space-y-3">
                 <Field icon={<User className="h-4 w-4" />} label="Secretário(a)" value={edu.secretario} />
                 <Field icon={<Building2 className="h-4 w-4" />} label="Cargo" value={edu.cargo} />
-                <Field icon={<Mail className="h-4 w-4" />} label="E-mail" value={edu.email} mono />
-                <Field icon={<Phone className="h-4 w-4" />} label="Telefone" value={edu.telefone} />
+                <Field icon={<Mail className="h-4 w-4" />} label="E-mail" value={edu.emails.length ? edu.emails.join(", ") : null} mono />
+                <Field icon={<Phone className="h-4 w-4" />} label="Telefone" value={edu.telefones.length ? edu.telefones.join(", ") : null} />
                 <Field icon={<Clock className="h-4 w-4" />} label="Atendimento" value={edu.horario} />
                 {edu.fonte_url && (
                   <a href={edu.fonte_url} target="_blank" rel="noreferrer"

@@ -33,8 +33,8 @@ export type MockRow = {
   educacao: {
     secretario: string | null;
     cargo: string | null;
-    email: string | null;
-    telefone: string | null;
+    emails: string[];
+    telefones: string[];
     horario: string | null;
     equipe: Array<{ nome: string; cargo: string; email?: string | null; telefone?: string | null }>;
     fonte: string | null;
@@ -79,8 +79,8 @@ export function gerarMock(ibgeId: number, nome: string, uf: string, slug: string
   const dom = `${slug}.${uf.toLowerCase()}.gov.br`;
   let secretario: string | null = null;
   let cargo: string | null = null;
-  let email: string | null = null;
-  let telefone: string | null = null;
+  let emails: string[] = [];
+  let telefones: string[] = [];
   let horario: string | null = null;
   let equipe: MockRow["educacao"]["equipe"] = [];
   let fonte: string | null = null;
@@ -91,10 +91,10 @@ export function gerarMock(ibgeId: number, nome: string, uf: string, slug: string
     secretario = NOMES[Math.floor(rnd() * NOMES.length)];
     cargo = "Secretário(a) Municipal de Educação";
     if (status === "validado") {
-      email = `seduc@${dom}`;
+      emails = [`seduc@${dom}`];
       const ddd = 11 + Math.floor(rnd() * 88);
       const num = 30000000 + Math.floor(rnd() * 69999999);
-      telefone = `(${ddd}) ${String(num).slice(0, 4)}-${String(num).slice(4, 8)}`;
+      telefones = [`(${ddd}) ${String(num).slice(0, 4)}-${String(num).slice(4, 8)}`];
       horario = "Segunda a sexta, 8h às 17h";
       const nEquipe = 2 + Math.floor(rnd() * 3);
       for (let i = 0; i < nEquipe; i++) {
@@ -114,7 +114,7 @@ export function gerarMock(ibgeId: number, nome: string, uf: string, slug: string
     }
   }
 
-  const campos = contarCampos({ secretario, cargo, email, telefone, horario, equipe });
+  const campos = contarCampos({ secretario, cargo, emails, telefones, horario, equipe });
   const { score, faixa, breakdown } = calcularScore({
     populacao,
     matriculas_total,
@@ -131,7 +131,7 @@ export function gerarMock(ibgeId: number, nome: string, uf: string, slug: string
     fnde_anual,
     pib_percapita,
     educacao: {
-      secretario, cargo, email, telefone, horario, equipe, fonte, fonte_url,
+      secretario, cargo, emails, telefones, horario, equipe, fonte, fonte_url,
       status, atualizado_em, score, faixa, breakdown,
     },
   };

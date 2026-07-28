@@ -92,7 +92,7 @@ export type Database = {
           breakdown: Json
           cargo: string | null
           created_at: string
-          email: string | null
+          emails: string[]
           equipe: Json
           faixa: string
           fonte: string | null
@@ -102,7 +102,7 @@ export type Database = {
           score: number
           secretario: string | null
           status: string
-          telefone: string | null
+          telefones: string[]
           updated_at: string
         }
         Insert: {
@@ -110,7 +110,7 @@ export type Database = {
           breakdown?: Json
           cargo?: string | null
           created_at?: string
-          email?: string | null
+          emails?: string[]
           equipe?: Json
           faixa?: string
           fonte?: string | null
@@ -120,7 +120,7 @@ export type Database = {
           score?: number
           secretario?: string | null
           status?: string
-          telefone?: string | null
+          telefones?: string[]
           updated_at?: string
         }
         Update: {
@@ -128,7 +128,7 @@ export type Database = {
           breakdown?: Json
           cargo?: string | null
           created_at?: string
-          email?: string | null
+          emails?: string[]
           equipe?: Json
           faixa?: string
           fonte?: string | null
@@ -138,7 +138,7 @@ export type Database = {
           score?: number
           secretario?: string | null
           status?: string
-          telefone?: string | null
+          telefones?: string[]
           updated_at?: string
         }
         Relationships: [

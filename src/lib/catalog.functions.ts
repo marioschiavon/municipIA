@@ -30,8 +30,8 @@ export type MunicipioFicha = {
   educacao: {
     secretario: string | null;
     cargo: string | null;
-    email: string | null;
-    telefone: string | null;
+    emails: string[];
+    telefones: string[];
     horario: string | null;
     equipe: Array<{ nome: string; cargo: string; email?: string | null; telefone?: string | null }>;
     fonte: string | null;
@@ -135,8 +135,8 @@ export const getMunicipio = createServerFn({ method: "POST" })
       educacao: {
         secretario: edu.secretario ?? null,
         cargo: edu.cargo ?? null,
-        email: edu.email ?? null,
-        telefone: edu.telefone ?? null,
+        emails: edu.emails ?? [],
+        telefones: edu.telefones ?? [],
         horario: edu.horario ?? null,
         equipe: edu.equipe ?? [],
         fonte: edu.fonte ?? null,
@@ -193,8 +193,8 @@ export const seedCatalog = createServerFn({ method: "POST" }).handler(async () =
       ibge_id: m.id,
       secretario: mock.educacao.secretario,
       cargo: mock.educacao.cargo,
-      email: mock.educacao.email,
-      telefone: mock.educacao.telefone,
+      emails: mock.educacao.emails,
+      telefones: mock.educacao.telefones,
       horario: mock.educacao.horario,
       equipe: mock.educacao.equipe,
       fonte: mock.educacao.fonte,

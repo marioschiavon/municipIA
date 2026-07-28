@@ -41,9 +41,11 @@ function AdminEditMunicipio() {
   const [pib, setPib] = useState(0);
   const [matriculas, setMatriculas] = useState<Record<string, number>>({});
   const [edu, setEdu] = useState({
-    secretario: "", cargo: "", email: "", telefone: "", horario: "", fonte: "", fonte_url: "",
+    secretario: "", cargo: "", horario: "", fonte: "", fonte_url: "",
     status: "pendente" as "validado" | "pendente" | "sem_dados",
   });
+  const [emailsText, setEmailsText] = useState("");
+  const [telefonesText, setTelefonesText] = useState("");
   const [equipe, setEquipe] = useState<Array<{ nome: string; cargo: string; email?: string | null; telefone?: string | null }>>([]);
 
   useEffect(() => {
@@ -55,10 +57,12 @@ function AdminEditMunicipio() {
     }
     if (e) {
       setEdu({
-        secretario: e.secretario ?? "", cargo: e.cargo ?? "", email: e.email ?? "",
-        telefone: e.telefone ?? "", horario: e.horario ?? "", fonte: e.fonte ?? "", fonte_url: e.fonte_url ?? "",
+        secretario: e.secretario ?? "", cargo: e.cargo ?? "",
+        horario: e.horario ?? "", fonte: e.fonte ?? "", fonte_url: e.fonte_url ?? "",
         status: (e.status as any) ?? "pendente",
       });
+      setEmailsText(Array.isArray(e.emails) ? e.emails.join("\n") : "");
+      setTelefonesText(Array.isArray(e.telefones) ? e.telefones.join("\n") : "");
       setEquipe(Array.isArray(e.equipe) ? (e.equipe as any) : []);
     }
     const map: Record<string, number> = {};
@@ -76,7 +80,8 @@ function AdminEditMunicipio() {
         },
         educacao: {
           secretario: edu.secretario || null, cargo: edu.cargo || null,
-          email: edu.email || null, telefone: edu.telefone || null,
+          emails: emailsText.split("\n").map((s) => s.trim()).filter(Boolean),
+          telefones: telefonesText.split("\n").map((s) => s.trim()).filter(Boolean),
           horario: edu.horario || null, fonte: edu.fonte || null,
           fonte_url: edu.fonte_url || null, status: edu.status, equipe,
         },
@@ -142,8 +147,8 @@ function AdminEditMunicipio() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Field label="Secretário(a)"><Input value={edu.secretario} onChange={(e) => setEdu({ ...edu, secretario: e.target.value })} /></Field>
           <Field label="Cargo"><Input value={edu.cargo} onChange={(e) => setEdu({ ...edu, cargo: e.target.value })} /></Field>
-          <Field label="E-mail"><Input type="email" value={edu.email} onChange={(e) => setEdu({ ...edu, email: e.target.value })} /></Field>
-          <Field label="Telefone"><Input value={edu.telefone} onChange={(e) => setEdu({ ...edu, telefone: e.target.value })} /></Field>
+          <Field label="E-mail(s) — um por linha"><Textarea rows={3} value={emailsText} onChange={(e) => setEmailsText(e.target.value)} /></Field>
+          <Field label="Telefone(s) — um por linha"><Textarea rows={3} value={telefonesText} onChange={(e) => setTelefonesText(e.target.value)} /></Field>
           <Field label="Horário de atendimento"><Input value={edu.horario} onChange={(e) => setEdu({ ...edu, horario: e.target.value })} /></Field>
           <Field label="Status">
             <Select value={edu.status} onValueChange={(v: any) => setEdu({ ...edu, status: v })}>

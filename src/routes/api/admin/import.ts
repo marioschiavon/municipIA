@@ -728,7 +728,7 @@ async function recalcScores(supabaseAdmin: any) {
   if (mErr) throw new Error(mErr.message);
   const { data: edus, error: eErr } = await supabaseAdmin
     .from("municipios_educacao")
-    .select("ibge_id, secretario, cargo, email, telefone, horario, equipe, atualizado_em");
+    .select("ibge_id, secretario, cargo, emails, telefones, horario, equipe, atualizado_em");
   if (eErr) throw new Error(eErr.message);
 
   const eduMap = new Map<number, any>((edus ?? []).map((e: any) => [e.ibge_id, e]));
@@ -740,8 +740,8 @@ async function recalcScores(supabaseAdmin: any) {
   for (const m of munis ?? []) {
     const e = eduMap.get(m.ibge_id);
     const campos = contarCampos({
-      secretario: e?.secretario, cargo: e?.cargo, email: e?.email,
-      telefone: e?.telefone, horario: e?.horario, equipe: e?.equipe,
+      secretario: e?.secretario, cargo: e?.cargo, emails: e?.emails,
+      telefones: e?.telefones, horario: e?.horario, equipe: e?.equipe,
     });
     const { score, faixa, breakdown } = calcularScore({
       populacao: m.populacao ?? 0,

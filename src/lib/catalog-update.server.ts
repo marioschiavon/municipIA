@@ -12,8 +12,8 @@ export async function persistProspectResult(ibgeId: number, result: ProspectResu
     .eq("ibge_id", ibgeId)
     .maybeSingle();
 
-  const email = result.emails[0] ?? null;
-  const telefone = result.telefones[0] ?? null;
+  const emails = result.emails ?? [];
+  const telefones = result.telefones ?? [];
   const equipe = (result.equipe ?? []).map((e) => ({
     nome: e.nome,
     cargo: e.cargo ?? "",
@@ -27,8 +27,8 @@ export async function persistProspectResult(ibgeId: number, result: ProspectResu
   const campos = contarCampos({
     secretario: result.secretario,
     cargo: result.cargo,
-    email,
-    telefone,
+    emails,
+    telefones,
     horario: result.horarioAtendimento ?? null,
     equipe,
   });
@@ -46,8 +46,8 @@ export async function persistProspectResult(ibgeId: number, result: ProspectResu
       ibge_id: ibgeId,
       secretario: result.secretario,
       cargo: result.cargo,
-      email,
-      telefone,
+      emails,
+      telefones,
       horario: result.horarioAtendimento ?? null,
       equipe,
       fonte: result.fonte,

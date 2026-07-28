@@ -55,16 +55,16 @@ export function calcularScore(i: ScoreInputs): { score: number; faixa: Faixa; br
 export function contarCampos(row: {
   secretario?: string | null;
   cargo?: string | null;
-  email?: string | null;
-  telefone?: string | null;
+  emails?: string[] | null;
+  telefones?: string[] | null;
   horario?: string | null;
   equipe?: unknown[] | null;
 }): number {
   let n = 0;
   if (row.secretario) n++;
   if (row.cargo) n++;
-  if (row.email) n++;
-  if (row.telefone) n++;
+  if (row.emails && row.emails.length > 0) n++;
+  if (row.telefones && row.telefones.length > 0) n++;
   if (row.horario) n++;
   if (row.equipe && row.equipe.length > 0) n++;
   return n;

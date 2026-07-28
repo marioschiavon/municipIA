@@ -32,7 +32,7 @@ export const adminGetStats = createServerFn({ method: "GET" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const [{ count: total }, { count: comContatos }, { count: validados }, { count: comMatriculas }] = await Promise.all([
       supabaseAdmin.from("municipios").select("ibge_id", { count: "exact", head: true }),
-      supabaseAdmin.from("municipios_educacao").select("ibge_id", { count: "exact", head: true }).not("email", "is", null),
+      supabaseAdmin.from("municipios_educacao").select("ibge_id", { count: "exact", head: true }).not("emails", "eq", "{}"),
       supabaseAdmin.from("municipios_educacao").select("ibge_id", { count: "exact", head: true }).eq("status", "validado"),
       supabaseAdmin.from("municipios").select("ibge_id", { count: "exact", head: true }).gt("matriculas_total", 0),
     ]);
@@ -60,7 +60,7 @@ export const adminListMunicipios = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     let q = supabaseAdmin
       .from("municipios")
-      .select("ibge_id, nome, uf, populacao, matriculas_total, fnde_anual, municipios_educacao!inner(status, score, faixa, email, secretario, atualizado_em)", { count: "exact" });
+      .select("ibge_id, nome, uf, populacao, matriculas_total, fnde_anual, municipios_educacao!inner(status, score, faixa, emails, secretario, atualizado_em)", { count: "exact" });
     if (data.uf) q = q.eq("uf", data.uf);
     if (data.q) q = q.ilike("nome", `%${data.q}%`);
     if (data.status) q = q.eq("municipios_educacao.status", data.status);
@@ -78,7 +78,7 @@ export const adminListMunicipios = createServerFn({ method: "POST" })
         status: r.municipios_educacao?.status ?? "sem_dados",
         score: r.municipios_educacao?.score ?? 0,
         faixa: r.municipios_educacao?.faixa ?? "baixo",
-        email: r.municipios_educacao?.email ?? null,
+        emails: r.municipios_educacao?.emails ?? [],
         secretario: r.municipios_educacao?.secretario ?? null,
         atualizado_em: r.municipios_educacao?.atualizado_em ?? null,
       })),
@@ -113,8 +113,8 @@ const SaveInput = z.object({
   educacao: z.object({
     secretario: z.string().nullable(),
     cargo: z.string().nullable(),
-    email: z.string().nullable(),
-    telefone: z.string().nullable(),
+    emails: z.array(z.string()).default([]),
+    telefones: z.array(z.string()).default([]),
     horario: z.string().nullable(),
     fonte: z.string().nullable(),
     fonte_url: z.string().nullable(),
@@ -174,7 +174,7 @@ export const adminSaveMunicipio = createServerFn({ method: "POST" })
     const now = new Date().toISOString();
     const campos = contarCampos({
       secretario: data.educacao.secretario, cargo: data.educacao.cargo,
-      email: data.educacao.email, telefone: data.educacao.telefone,
+      emails: data.educacao.emails, telefones: data.educacao.telefones,
       horario: data.educacao.horario, equipe: data.educacao.equipe,
     });
     const { score, faixa, breakdown } = calcularScore({
@@ -189,8 +189,8 @@ export const adminSaveMunicipio = createServerFn({ method: "POST" })
       ibge_id: data.ibge_id,
       secretario: data.educacao.secretario,
       cargo: data.educacao.cargo,
-      email: data.educacao.email,
-      telefone: data.educacao.telefone,
+      emails: data.educacao.emails,
+      telefones: data.educacao.telefones,
       horario: data.educacao.horario,
       fonte: data.educacao.fonte,
       fonte_url: data.educacao.fonte_url,
@@ -249,7 +249,7 @@ export const adminResetDados = createServerFn({ method: "POST" })
       populacao: 0, matriculas_total: 0, escolas: 0, fnde_anual: 0, pib_percapita: 0,
     }).gt("ibge_id", 0);
     await supabaseAdmin.from("municipios_educacao").update({
-      secretario: null, cargo: null, email: null, telefone: null, horario: null,
+      secretario: null, cargo: null, emails: [], telefones: [], horario: null,
       equipe: [], fonte: null, fonte_url: null, status: "sem_dados",
       score: 0, faixa: "baixo", breakdown: {}, atualizado_em: null,
     }).gt("ibge_id", 0);
@@ -350,7 +350,7 @@ export const adminRecalcularScores = createServerFn({ method: "POST" })
 
     const { data: edus, error: eErr } = await supabaseAdmin
       .from("municipios_educacao")
-      .select("ibge_id, secretario, cargo, email, telefone, horario, equipe, atualizado_em");
+      .select("ibge_id, secretario, cargo, emails, telefones, horario, equipe, atualizado_em");
     if (eErr) throw new Error(eErr.message);
 
     const eduMap = new Map((edus ?? []).map((e: any) => [e.ibge_id, e]));
@@ -362,8 +362,8 @@ export const adminRecalcularScores = createServerFn({ method: "POST" })
     for (const m of munis ?? []) {
       const e = eduMap.get(m.ibge_id);
       const campos = contarCampos({
-        secretario: e?.secretario, cargo: e?.cargo, email: e?.email,
-        telefone: e?.telefone, horario: e?.horario, equipe: e?.equipe,
+        secretario: e?.secretario, cargo: e?.cargo, emails: e?.emails,
+        telefones: e?.telefones, horario: e?.horario, equipe: e?.equipe,
       });
       const { score, faixa, breakdown } = calcularScore({
         populacao: m.populacao ?? 0,

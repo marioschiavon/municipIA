@@ -1153,8 +1153,8 @@ export async function prospectar(
           return sendFinal({
             status: "found",
             hierarquia: "educacao",
-            secretario: ext.secretario ?? nomeSecretario,
-            cargo: ext.cargo ?? cargoSecretario,
+            secretario: nomeSecretario ?? ext.secretario,
+            cargo: cargoSecretario ?? ext.cargo,
             emails: ext.emails,
             telefones: ext.telefones,
             fonte: usedRag ? "Site oficial da Secretaria de Educação (via RAG)" : "Site oficial da Secretaria de Educação",
@@ -1213,7 +1213,7 @@ export async function prospectar(
           modo: "snippets",
           topHost,
         });
-        if (aiExt) ext = mergeExtracted(aiExt, deterministic, municipio, uf, topHost);
+        if (aiExt) ext = mergeExtracted(deterministic, aiExt, municipio, uf, topHost);
       }
       const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
       if (ext.secretario && (hasGoodEmail || ext.telefones.length > 0)) {
@@ -1221,8 +1221,8 @@ export async function prospectar(
         return sendFinal({
           status: hasGoodEmail ? "found" : "partial",
           hierarquia: "educacao",
-          secretario: ext.secretario,
-          cargo: ext.cargo ?? cargoSecretario,
+          secretario: nomeSecretario ?? ext.secretario,
+          cargo: cargoSecretario ?? ext.cargo,
           emails: ext.emails,
           telefones: ext.telefones,
           fonte: "Google SERP Scraper (Apify)",
@@ -1264,8 +1264,8 @@ export async function prospectar(
         return {
           status: "found",
           hierarquia,
-          secretario: ext.secretario ?? nomeSecretario,
-          cargo: ext.cargo ?? cargoSecretario,
+          secretario: nomeSecretario ?? ext.secretario,
+          cargo: cargoSecretario ?? ext.cargo,
           emails: ext.emails,
           telefones: ext.telefones,
           fonte: via,
@@ -1325,8 +1325,8 @@ export async function prospectar(
             return sendFinal({
               status: "found",
               hierarquia: "educacao",
-              secretario: ext.secretario ?? nomeSecretario,
-              cargo: ext.cargo ?? cargoSecretario,
+              secretario: nomeSecretario ?? ext.secretario,
+              cargo: cargoSecretario ?? ext.cargo,
               emails: ext.emails,
               telefones: ext.telefones,
               fonte: "Site oficial (busca por nome)",
@@ -1369,8 +1369,8 @@ export async function prospectar(
           return sendFinal({
             status: "found",
             hierarquia: "educacao",
-            secretario: e.secretario ?? nomeSecretario,
-            cargo: e.cargo ?? cargoSecretario,
+            secretario: nomeSecretario ?? e.secretario,
+            cargo: cargoSecretario ?? e.cargo,
             emails: e.emails,
             telefones: e.telefones,
             fonte: "RAG Web Browser (Apify)",
@@ -1440,8 +1440,8 @@ export async function prospectar(
           return sendFinal({
             status: "found",
             hierarquia: "educacao",
-            secretario: cext.secretario ?? nomeSecretario,
-            cargo: cext.cargo ?? cargoSecretario,
+            secretario: nomeSecretario ?? cext.secretario,
+            cargo: cargoSecretario ?? cext.cargo,
             emails: cext.emails,
             telefones: cext.telefones,
             fonte: "Página de contato da Secretaria",
@@ -1474,8 +1474,8 @@ export async function prospectar(
           return sendFinal({
             status: "found",
             hierarquia: "educacao",
-            secretario: ext.secretario ?? nomeSecretario,
-            cargo: ext.cargo ?? cargoSecretario,
+            secretario: nomeSecretario ?? ext.secretario,
+            cargo: cargoSecretario ?? ext.cargo,
             emails: ext.emails,
             telefones: ext.telefones,
             fonte: fonteLabel("educacao"),
@@ -1508,8 +1508,8 @@ export async function prospectar(
           return sendFinal({
             status: "found",
             hierarquia: "educacao",
-            secretario: ext.secretario ?? nomeSecretario,
-            cargo: ext.cargo ?? cargoSecretario,
+            secretario: nomeSecretario ?? ext.secretario,
+            cargo: cargoSecretario ?? ext.cargo,
             emails: ext.emails,
             telefones: ext.telefones,
             fonte: "RAG Web Browser (Apify)",
@@ -1534,8 +1534,8 @@ export async function prospectar(
     return sendFinal({
       status: "partial",
       hierarquia: "educacao",
-      secretario: ext.secretario ?? nomeSecretario,
-      cargo: ext.cargo ?? cargoSecretario,
+      secretario: nomeSecretario ?? ext.secretario,
+      cargo: cargoSecretario ?? ext.cargo,
       emails: ext.emails,
       telefones: ext.telefones,
       fonte: via,
