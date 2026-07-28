@@ -172,13 +172,22 @@ function AdminImportPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
-            <RadioGroup value={type} onValueChange={(v) => setType(v as typeof type)} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <RadioGroup value={type} onValueChange={(v) => setType(v as typeof type)} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
+                <RadioGroupItem value="fundeb_matriculas" id="fundeb_matriculas" className="sr-only" />
+                <Label htmlFor="fundeb_matriculas" className="cursor-pointer space-y-2 block">
+                  <div className="font-semibold">1. FUNDEB — Matrículas por município (recomendado)</div>
+                  <div className="text-xs text-muted-foreground">
+                    Arquivo <code>FUNDEB_Matriculas.txt</code> (aceita <code>.gz</code>), com colunas <code>sg_uf</code>, <code>no_municipio_ge</code>, <code>esfera_administrativa</code> e <code>qtd_matricula</code>. Só ~35 MB e já vem agregado: filtra <strong>GOVERNO MUNICIPAL</strong>, cruza por UF + nome e distribui por etapa (creche, pré, fund AI/AF, médio, EJA, especial, profissionalizante). Não traz contagem de escolas.
+                  </div>
+                </Label>
+              </div>
               <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
                 <RadioGroupItem value="inep_matriculas" id="inep_matriculas" className="sr-only" />
                 <Label htmlFor="inep_matriculas" className="cursor-pointer space-y-2 block">
-                  <div className="font-semibold">1. INEP — Matrículas (principal)</div>
+                  <div className="font-semibold">2. INEP — Matrículas</div>
                   <div className="text-xs text-muted-foreground">
-                    Arquivo <code>Tabela_Matricula_YYYY.csv</code> do Censo Escolar. Se vier com <code>CO_MUNICIPIO</code>, agrega direto; se vier só com <code>CO_ENTIDADE</code>, cruza com o arquivo de Escolas já importado. Popula matrículas por etapa (creche, pré, fund AI/AF, médio, EJA, esp., prof.) e a contagem de escolas municipais ativas.
+                    Arquivo <code>Tabela_Matricula_YYYY.csv</code> do Censo Escolar. Se vier com <code>CO_MUNICIPIO</code>, agrega direto; se vier só com <code>CO_ENTIDADE</code>, cruza com o arquivo de Escolas já importado. Popula matrículas por etapa e a contagem de escolas municipais ativas.
                   </div>
                   <a
                     href="https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/microdados/censo-escolar"
