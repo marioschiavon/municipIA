@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useRef, useState, useMemo } from "react";
-import { adminListMunicipios, adminListMunicipioIds } from "@/lib/admin.functions";
+import { adminListMunicipios, adminListMunicipioIds, adminFetchFndeAtual } from "@/lib/admin.functions";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,9 +14,12 @@ import { Search, Loader2, ChevronLeft, ChevronRight, Pencil, PlayCircle, StopCir
 const UFS = ["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO"];
 const PAGE_SIZE = 50;
 const INTERVALO_MS = 30_000;
+// SICONFI (Tesouro Nacional) limita a 1 requisição/segundo — folga de 300ms.
+const INTERVALO_FNDE_MS = 1_300;
 
 type QueueMunicipio = { ibge_id: number; nome: string; uf: string };
 type QueueLogEntry = { ibge_id: number; nome: string; uf: string; status: "found" | "partial" | "not_found" | "error"; detalhe?: string };
+type FndeLogEntry = { ibge_id: number; nome: string; uf: string; status: "found" | "not_found" | "error"; detalhe?: string };
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -151,6 +154,71 @@ function AdminMunicipios() {
     abortRef.current?.abort();
   }
 
+  // ===== Busca de FUNDEB em massa (fila com pausa curta — limite de 1 req/s do SICONFI) =====
+  const fetchFndeFn = useServerFn(adminFetchFndeAtual);
+  const [fndeRunning, setFndeRunning] = useState(false);
+  const [fndeTotal, setFndeTotal] = useState(0);
+  const [fndeDone, setFndeDone] = useState(0);
+  const [fndeCurrent, setFndeCurrent] = useState<QueueMunicipio | null>(null);
+  const [fndeLog, setFndeLog] = useState<FndeLogEntry[]>([]);
+  const [fndeLoadingIds, setFndeLoadingIds] = useState(false);
+  const fndeAbortRef = useRef<AbortController | null>(null);
+
+  async function processarUmFnde(m: QueueMunicipio): Promise<FndeLogEntry> {
+    try {
+      const r = await fetchFndeFn({ data: { ibge_id: m.ibge_id } });
+      if (!r.ok) return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: "not_found" };
+      return {
+        ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: "found",
+        detalhe: `R$ ${r.valor.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} (${r.ano}/${r.periodo})`,
+      };
+    } catch (e) {
+      return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: "error", detalhe: e instanceof Error ? e.message : "Falha" };
+    }
+  }
+
+  async function iniciarBuscaFndeEmMassa() {
+    setFndeLoadingIds(true);
+    try {
+      const { items } = await listIdsFn({
+        data: { uf: filters.uf, status: filters.status, q: filters.q },
+      });
+      if (items.length === 0) return;
+      const controller = new AbortController();
+      fndeAbortRef.current = controller;
+      setFndeTotal(items.length);
+      setFndeDone(0);
+      setFndeLog([]);
+      setFndeRunning(true);
+      try {
+        for (let i = 0; i < items.length; i++) {
+          if (controller.signal.aborted) break;
+          const m = items[i];
+          setFndeCurrent(m);
+          const entry = await processarUmFnde(m);
+          setFndeLog((prev) => [entry, ...prev].slice(0, 300));
+          setFndeDone((d) => d + 1);
+          if (i < items.length - 1) {
+            await sleep(INTERVALO_FNDE_MS, controller.signal);
+          }
+        }
+      } catch (e) {
+        if (!(e instanceof DOMException && e.name === "AbortError")) throw e;
+      } finally {
+        setFndeRunning(false);
+        setFndeCurrent(null);
+        fndeAbortRef.current = null;
+        qc.invalidateQueries({ queryKey: ["admin-municipios"] });
+      }
+    } finally {
+      setFndeLoadingIds(false);
+    }
+  }
+
+  function cancelarBuscaFndeEmMassa() {
+    fndeAbortRef.current?.abort();
+  }
+
   return (
     <div className="space-y-4">
       <div>
@@ -187,9 +255,19 @@ function AdminMunicipios() {
             <StopCircle className="mr-1.5 h-4 w-4" /> Cancelar
           </Button>
         ) : (
-          <Button size="sm" variant="outline" onClick={iniciarProspeccaoEmMassa} disabled={queueLoadingIds}>
+          <Button size="sm" variant="outline" onClick={iniciarProspeccaoEmMassa} disabled={queueLoadingIds || fndeRunning}>
             {queueLoadingIds ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-1.5 h-4 w-4" />}
             Prospectar todos os filtrados
+          </Button>
+        )}
+        {fndeRunning ? (
+          <Button size="sm" variant="destructive" onClick={cancelarBuscaFndeEmMassa}>
+            <StopCircle className="mr-1.5 h-4 w-4" /> Cancelar
+          </Button>
+        ) : (
+          <Button size="sm" variant="outline" onClick={iniciarBuscaFndeEmMassa} disabled={fndeLoadingIds || queueRunning}>
+            {fndeLoadingIds ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-1.5 h-4 w-4" />}
+            Buscar FUNDEB de todos os filtrados
           </Button>
         )}
       </div>
@@ -220,6 +298,38 @@ function AdminMunicipios() {
                   <span className="flex items-center gap-2">
                     {e.detalhe && <span className="text-muted-foreground">{e.detalhe}</span>}
                     <Badge variant={e.status === "found" ? "default" : e.status === "partial" ? "secondary" : e.status === "error" ? "destructive" : "outline"}>
+                      {e.status}
+                    </Badge>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {(fndeRunning || fndeLog.length > 0) && (
+        <div className="rounded-lg border border-border bg-white p-4 space-y-3">
+          <div className="flex items-center justify-between text-sm">
+            <span className="font-semibold">
+              Busca de FUNDEB em massa {fndeRunning ? "— em andamento" : "— finalizada"}
+            </span>
+            <span className="text-muted-foreground">{fndeDone}/{fndeTotal} processado(s)</span>
+          </div>
+          <Progress value={fndeTotal > 0 ? (fndeDone / fndeTotal) * 100 : 0} />
+          {fndeRunning && (
+            <p className="text-xs text-muted-foreground">
+              {fndeCurrent ? `Processando: ${fndeCurrent.nome}/${fndeCurrent.uf}...` : "Iniciando..."}
+            </p>
+          )}
+          {fndeLog.length > 0 && (
+            <div className="max-h-64 overflow-y-auto space-y-1">
+              {fndeLog.map((e, i) => (
+                <div key={`${e.ibge_id}-${i}`} className="flex items-center justify-between rounded border border-border px-2 py-1 text-xs">
+                  <span>{e.nome}/{e.uf}</span>
+                  <span className="flex items-center gap-2">
+                    {e.detalhe && <span className="text-muted-foreground">{e.detalhe}</span>}
+                    <Badge variant={e.status === "found" ? "default" : e.status === "error" ? "destructive" : "outline"}>
                       {e.status}
                     </Badge>
                   </span>
