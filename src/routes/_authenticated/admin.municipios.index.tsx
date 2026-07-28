@@ -29,7 +29,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-export const Route = createFileRoute("/_authenticated/admin/municipios")({
+export const Route = createFileRoute("/_authenticated/admin/municipios/")({
   component: AdminMunicipios,
 });
 
