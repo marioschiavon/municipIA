@@ -21,7 +21,7 @@ export const Route = createFileRoute("/_authenticated/admin/import")({
 });
 
 function AdminImportPage() {
-  const [type, setType] = useState<"inep_matriculas" | "inep_escolas" | "fnde">("inep_matriculas");
+  const [type, setType] = useState<"fundeb_matriculas" | "inep_matriculas" | "inep_escolas" | "fnde">("fundeb_matriculas");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
@@ -172,13 +172,22 @@ function AdminImportPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
-            <RadioGroup value={type} onValueChange={(v) => setType(v as typeof type)} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <RadioGroup value={type} onValueChange={(v) => setType(v as typeof type)} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
+                <RadioGroupItem value="fundeb_matriculas" id="fundeb_matriculas" className="sr-only" />
+                <Label htmlFor="fundeb_matriculas" className="cursor-pointer space-y-2 block">
+                  <div className="font-semibold">1. FUNDEB — Matrículas por município (recomendado)</div>
+                  <div className="text-xs text-muted-foreground">
+                    Arquivo <code>FUNDEB_Matriculas.txt</code> (aceita <code>.gz</code>), com colunas <code>sg_uf</code>, <code>no_municipio_ge</code>, <code>esfera_administrativa</code> e <code>qtd_matricula</code>. Só ~35 MB e já vem agregado: filtra <strong>GOVERNO MUNICIPAL</strong>, cruza por UF + nome e distribui por etapa (creche, pré, fund AI/AF, médio, EJA, especial, profissionalizante). Não traz contagem de escolas.
+                  </div>
+                </Label>
+              </div>
               <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
                 <RadioGroupItem value="inep_matriculas" id="inep_matriculas" className="sr-only" />
                 <Label htmlFor="inep_matriculas" className="cursor-pointer space-y-2 block">
-                  <div className="font-semibold">1. INEP — Matrículas (principal)</div>
+                  <div className="font-semibold">2. INEP — Matrículas</div>
                   <div className="text-xs text-muted-foreground">
-                    Arquivo <code>Tabela_Matricula_YYYY.csv</code> do Censo Escolar. Se vier com <code>CO_MUNICIPIO</code>, agrega direto; se vier só com <code>CO_ENTIDADE</code>, cruza com o arquivo de Escolas já importado. Popula matrículas por etapa (creche, pré, fund AI/AF, médio, EJA, esp., prof.) e a contagem de escolas municipais ativas.
+                    Arquivo <code>Tabela_Matricula_YYYY.csv</code> do Censo Escolar. Se vier com <code>CO_MUNICIPIO</code>, agrega direto; se vier só com <code>CO_ENTIDADE</code>, cruza com o arquivo de Escolas já importado. Popula matrículas por etapa e a contagem de escolas municipais ativas.
                   </div>
                   <a
                     href="https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/microdados/censo-escolar"
@@ -194,7 +203,7 @@ function AdminImportPage() {
               <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
                 <RadioGroupItem value="inep_escolas" id="inep_escolas" className="sr-only" />
                 <Label htmlFor="inep_escolas" className="cursor-pointer space-y-2 block">
-                  <div className="font-semibold">2. INEP — Escolas (opcional)</div>
+                  <div className="font-semibold">3. INEP — Escolas (opcional)</div>
                   <div className="text-xs text-muted-foreground">
                     Arquivo <code>Tabela_Escola_YYYY.csv</code>. Necessário quando o arquivo de Matrículas não possui <code>CO_MUNICIPIO</code>/<code>TP_DEPENDENCIA</code>. Ele cria o mapa <code>CO_ENTIDADE → município/rede/situação</code> usado no cruzamento.
                   </div>
@@ -212,7 +221,7 @@ function AdminImportPage() {
               <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
                 <RadioGroupItem value="fnde" id="fnde" className="sr-only" />
                 <Label htmlFor="fnde" className="cursor-pointer space-y-2 block">
-                  <div className="font-semibold">3. FNDE — FUNDEB</div>
+                  <div className="font-semibold">4. FNDE — FUNDEB (valores R$)</div>
                   <div className="text-xs text-muted-foreground">
                     Planilha de liberações do <strong>FUNDEB</strong> por município (principal repasse à educação básica). Se o arquivo tiver coluna <code>Programa</code>, apenas linhas do FUNDEB são consideradas. Aceita colunas mensais (jan..dez) ou <code>Total/Valor Liberado</code>.
                   </div>
@@ -235,7 +244,7 @@ function AdminImportPage() {
               <input
                 id="file"
                 type="file"
-                accept=".csv,.xlsx,.xls"
+                accept=".csv,.txt,.gz,.xlsx,.xls"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
               />
