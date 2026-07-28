@@ -1053,6 +1053,7 @@ export async function prospectar(
     let confianca: "alta" | "media" | "baixa" = nomeRes?.confianca ?? "baixa";
     let appearsCount = 0;
     let appearsInOwnGov = false;
+    let aggregateMatch = false;
     if (nomeRes?.secretario) {
       for (const c of rankedNome) {
         const blob = `${c.title ?? ""} ${c.description ?? ""} ${c.url}`;
@@ -1061,21 +1062,34 @@ export async function prospectar(
         const host = shortHost(c.url).toLowerCase();
         if (/\.gov\.br$/.test(host) && host.includes(slug)) appearsInOwnGov = true;
       }
+      // Match agregado: soma de TODOS os snippets, para pegar nomes montados a
+      // partir de fragmentos espalhados em snippets diferentes (comum quando o
+      // Google trunca resultados). Mantém a mesma checagem literal, só amplia
+      // a evidência considerada de "um snippet" para "todos os snippets".
+      const aggregateBlob = rankedNome.map(c => `${c.title ?? ""} ${c.description ?? ""} ${c.url}`).join(" ");
+      aggregateMatch = nameAppearsIn(nomeRes.secretario, aggregateBlob);
+
       if (appearsInOwnGov) confianca = "alta";
       else if (appearsCount >= 1 && confianca === "baixa") confianca = "media";
       else if (appearsCount >= 2) confianca = "media";
-      emit("info", "nome", `Confiança ajustada: IA=${nomeRes.confianca} → ${confianca} (aparições=${appearsCount}, govPróprio=${appearsInOwnGov})`);
+      else if (aggregateMatch && confianca === "baixa") confianca = "media";
+
+      emit("info", "nome", `Confiança ajustada: IA=${nomeRes.confianca} → ${confianca} (aparições=${appearsCount}, agregado=${aggregateMatch}, govPróprio=${appearsInOwnGov})`);
       // Warn detalhado se ainda não bateu — facilita debug futuro.
-      if (appearsCount === 0) {
+      if (appearsCount === 0 && !aggregateMatch) {
         const sample = rankedNome.slice(0, 3).map(c => norm(`${c.title} ${c.description}`));
-        emit("warn", "nome", `Nome "${norm(nomeRes.secretario)}" não bateu em nenhum snippet — blobs normalizados:`, { sample });
+        emit("warn", "nome", `Nome "${norm(nomeRes.secretario)}" não bateu em nenhum snippet nem no agregado — blobs normalizados:`, { sample });
+      } else if (appearsCount === 0 && aggregateMatch) {
+        emit("info", "nome", `Nome "${norm(nomeRes.secretario)}" não bateu em um snippet isolado, mas bateu no agregado de todos os snippets — aceitando.`);
       }
     }
-    // Aceita o nome se: existe E (confiança não-baixa OU aparece em pelo menos 1 snippet OU a própria IA retornou media/alta).
+    // Aceita o nome se: existe E (confiança não-baixa OU aparece em pelo menos 1 snippet
+    // OU bate no agregado de todos os snippets OU a própria IA retornou media/alta).
     const aceitaNome =
       !!nomeRes?.secretario &&
       (confianca !== "baixa" ||
         appearsCount >= 1 ||
+        aggregateMatch ||
         nomeRes.confianca === "media" ||
         nomeRes.confianca === "alta");
     if (nomeRes?.secretario && !aceitaNome) {
