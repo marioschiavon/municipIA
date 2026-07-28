@@ -364,7 +364,9 @@ function dedupeByUrl(arr: SearchCandidate[]): SearchCandidate[] {
 const GENERIC_LOCAL = /^(ouvidoria|faleconosco|fale-conosco|falecom|contato|imprensa|gabinete|prefeito|atendimento|protocolo|rh)@/i;
 const EDUCATION_LOCAL = /^(seduc|sme|smed|educacao|educa|secretariadeeducacao|secretaria\.educacao)/i;
 // Escolas/CMEIs/creches/conselhos — NUNCA devem virar contato da Secretaria.
-const SCHOOL_LOCAL = /^(escola|colegio|col[ée]gio|em[._-]|emef|emei|emeif|emeief|cmei|cmeb|cei|creche|biblioteca|cras|cmdca|conselho)/i;
+// "em[a-z]{2,}" cobre a convenção comum de sigla "EM + iniciais da escola"
+// (ex.: emsha@ = "EM Secretário Humberto Almeida"), não só emef/emei/etc.
+const SCHOOL_LOCAL = /^(escola|colegio|col[ée]gio|em[a-z]{2,}|cmei|cmeb|cei|creche|biblioteca|cras|cmdca|conselho)/i;
 const SCHOOL_DOMAIN = /(^|\.)(escola|colegio|cmei|emei|emef|creche)\./i;
 
 function isSchoolEmail(e: string): boolean {
@@ -750,21 +752,11 @@ Responda APENAS com JSON válido seguindo o schema.`;
     return out;
   } catch (e) {
     const err = e as { message?: string };
-    emit("error", etapa, "IA falhou — tentando regex como fallback", { message: err?.message });
-    if (hints.emails.length || hints.telefones.length) {
-      const fallback: Extracted = {
-        secretario: nomeAlvo ?? null,
-        cargo: null,
-        emails: filterEmailsForFinal(hints.emails.slice(0, 8), municipio, uf, topHost),
-        telefones: hints.telefones.slice(0, 5),
-        contexto: "IA falhou — contatos por regex",
-        confianca: "baixa",
-        dataReferencia: null,
-        horarioAtendimento: null,
-        equipe: [],
-      };
-      return fallback;
-    }
+    // Sem fallback burro por regex: regex não entende contexto (não distingue
+    // e-mail da Secretaria de e-mail de escola/pessoa), então uma falha da IA
+    // aqui deve virar "não encontrado nesta fonte" e deixar o próximo estágio
+    // tentar — nunca um contato de baixa confiança inventado por regex.
+    emit("error", etapa, "IA falhou ao extrair contatos — não encontrado, seguindo para próxima fonte", { message: err?.message });
     return null;
   }
 }
