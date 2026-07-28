@@ -158,6 +158,39 @@ const LARGE_MUNI_SLUGS = new Set([
   "manaus","recife","portoalegre","goiania","florianopolis","campinas","maringa",
 ]);
 
+// Domínio oficial real, para municípios cujo site NÃO segue o padrão
+// {slug}.{uf}.gov.br (ex.: Belo Horizonte usa pbh.gov.br). Sem essa exceção,
+// a query "site:{slug}.{uf}.gov.br" não acha nada e o fallback genérico
+// "site:{uf}.gov.br {municipio}" acaba varrendo o PORTAL DO ESTADO — que
+// menciona a capital o tempo todo por outros motivos (é onde o governo
+// estadual fica sediado) e pode contaminar o resultado com o secretário
+// ESTADUAL de educação em vez do municipal.
+const DOMINIO_OFICIAL_ESPECIAL: Record<string, string> = {
+  belohorizonte: "prefeitura.pbh.gov.br",
+  saopaulo: "prefeitura.sp.gov.br",
+  riodejaneiro: "rio.rj.gov.br",
+  florianopolis: "pmf.sc.gov.br",
+};
+
+function stripWww(host: string): string {
+  return host.toLowerCase().replace(/^www\./, "");
+}
+
+/** true se `host` é o domínio oficial especial (ou subdomínio dele), ignorando "www." */
+function isDominioOficialEspecial(host: string, dominioOficial?: string): boolean {
+  if (!dominioOficial) return false;
+  const h = stripWww(host);
+  const d = stripWww(dominioOficial);
+  return h === d || h.endsWith(`.${d}`);
+}
+
+/** true se o host é o portal genérico do ESTADO (ex.: mg.gov.br) — nunca é a
+ * fonte certa para o secretário MUNICIPAL, mesmo quando a UF bate. */
+function isBareStateHost(host: string, ufLow: string): boolean {
+  const h = stripWww(host);
+  return h === `${ufLow}.gov.br` || h === `educacao.${ufLow}.gov.br` || h === `see.${ufLow}.gov.br` || h === `seduc.${ufLow}.gov.br`;
+}
+
 type SearchCandidate = {
   url: string;
   title: string;
@@ -293,7 +326,7 @@ function snippetsBlock(cands: SearchCandidate[]): string {
   return `### Resultados do Google (snippets — frequentemente já trazem nome/contato)\n${lines.join("\n")}\n`;
 }
 
-function preferGov(cands: SearchCandidate[], extra?: (u: string) => boolean): SearchCandidate[] {
+function preferGov(cands: SearchCandidate[], extra?: (u: string) => boolean, ufLow?: string): SearchCandidate[] {
   const OTHER_SECRETARIAS = /(esporte|saude|sa[uú]de|obras|tr[âa]nsito|transito|turismo|cultura|assistencia|assist[êe]ncia|meio[-_.\s]?ambiente|fazenda|planejamento|habitacao|habita[çc][ãa]o|agricultura)/i;
   const SCHOOL_PAGE = /(\bescola\b|cmei|creche|colegio|col[ée]gio|educacao-infantil|ensino-fundamental|educacao-especial|alimentacao-escolar)/i;
   const score = (c: SearchCandidate) => {
@@ -307,6 +340,9 @@ function preferGov(cands: SearchCandidate[], extra?: (u: string) => boolean): Se
     if (OTHER_SECRETARIAS.test(blob) && !/(educa|seduc|sme|smed)/i.test(blob)) s -= 8;
     // Página de escola/departamento/unidade não deve vencer a página-mãe da Secretaria.
     if (SCHOOL_PAGE.test(blob) && !/secret[áa]ri[ao]\s*:/i.test(blob)) s -= 12;
+    // Portal genérico do ESTADO nunca é a fonte certa do secretário MUNICIPAL —
+    // penaliza forte (evita contaminação em buscas de capitais de estado).
+    if (ufLow && isBareStateHost(shortHost(c.url), ufLow)) s -= 20;
     return -s;
   };
   return [...cands].sort((a, b) => score(a) - score(b));
@@ -425,6 +461,12 @@ function extractHorario(source: string): string | null {
 function looksLikeOfficialEducationPage(c: SearchCandidate, slug: string, ufLow: string): boolean {
   const url = c.url.toLowerCase();
   const host = shortHost(url).toLowerCase();
+  const dominioOficial = DOMINIO_OFICIAL_ESPECIAL[slug];
+  if (isDominioOficialEspecial(host, dominioOficial)) {
+    return /(secretaria[^/]*educacao|secretarias\/secretaria-educacao|secretaria-de-educacao|secretaria\s+de\s+educa|secretaria municipal de educa|\/educacao\b)/i.test(
+      `${url} ${c.title} ${c.description}`,
+    );
+  }
   if (!host.endsWith(".gov.br")) return false;
   if (!host.includes(slug) && !url.includes(slug) && !url.includes(`${ufLow}.gov.br`)) return false;
   return /(secretaria[^/]*educacao|secretarias\/secretaria-educacao|secretaria-de-educacao|secretaria\s+de\s+educa|secretaria municipal de educa)/i.test(
@@ -996,25 +1038,32 @@ export async function prospectar(
   // ESTÁGIO 1 — NOME ATUAL (apenas nome, sem contato)
   // ============================================================
   emit("info", "nome", "Estágio 1 — identificar NOME atual do(a) Secretário(a) de Educação");
+  const dominioOficial = DOMINIO_OFICIAL_ESPECIAL[slug];
+  if (dominioOficial) emit("info", "nome", `Domínio oficial conhecido para ${municipio}: ${dominioOficial} (não segue o padrão {slug}.{uf}.gov.br)`);
   const queryNomeA = `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual`;
   const queryNomeB = `secretário OR secretária de educação ${municipio} ${uf} ${anoAtual} atual`;
-  const queryNomeC = `site:${slug}.${ufLow}.gov.br secretaria educação secretário`;
+  const queryNomeC = `site:${dominioOficial ?? `${slug}.${ufLow}.gov.br`} secretaria educação secretário`;
   const [candsNomeA, candsNomeB, candsNomeC] = await Promise.all([
     gSearch(fc, queryNomeA, emit, "nome", { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf }),
     gSearch(fc, queryNomeB, emit, "nome", { limit: 6, tbs: "qdr:y", timeoutMs: 8000, uf }),
     gSearch(fc, queryNomeC, emit, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf }),
   ]);
-  // Fallback de domínio: se o domínio padrão {slug}.{uf}.gov.br não retornou nada,
-  // tenta {uf}.gov.br com o nome do município.
+  // Fallback de domínio: se o domínio padrão {slug}.{uf}.gov.br não retornou nada e não
+  // conhecemos o domínio real do município, tenta {uf}.gov.br com o nome do município.
+  // CUIDADO: em capitais de estado, o portal do próprio ESTADO ({uf}.gov.br) menciona a
+  // capital o tempo todo (é onde o governo estadual fica sediado) e pode contaminar o
+  // resultado com o secretário ESTADUAL de educação em vez do municipal — por isso só
+  // usamos esse fallback quando não há domínio oficial conhecido, e os resultados vindos
+  // do portal estadual "puro" são descartados logo abaixo (preferGov penaliza isBareStateHost).
   let candsNomeCfb: SearchCandidate[] = [];
-  if (candsNomeC.length === 0) {
+  if (candsNomeC.length === 0 && !dominioOficial) {
     const queryNomeCfb = `site:${ufLow}.gov.br "${municipio}" secretaria educação secretário`;
     candsNomeCfb = await gSearch(fc, queryNomeCfb, emit, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf });
   }
   // Priorizar resultados do domínio oficial do município (queryNomeC/fb) ANTES de A/B.
   const candsNome = dedupeByUrl([...candsNomeC, ...candsNomeCfb, ...candsNomeA, ...candsNomeB]);
   addToPool(candsNome);
-  const rankedNome = preferGov(candsNome, (u) => /(educa|secretari)/i.test(u));
+  const rankedNome = preferGov(candsNome, (u) => /(educa|secretari)/i.test(u), ufLow);
   const snippetsNome = snippetsBlock(rankedNome);
   const topNome = rankedNome[0] ?? null;
   const topHost = topNome ? shortHost(topNome.url) : undefined;
@@ -1060,7 +1109,7 @@ export async function prospectar(
         if (!nameAppearsIn(nomeRes.secretario, blob)) continue;
         appearsCount += 1;
         const host = shortHost(c.url).toLowerCase();
-        if (/\.gov\.br$/.test(host) && host.includes(slug)) appearsInOwnGov = true;
+        if ((/\.gov\.br$/.test(host) && host.includes(slug)) || isDominioOficialEspecial(host, dominioOficial)) appearsInOwnGov = true;
       }
       // Match agregado: soma de TODOS os snippets, para pegar nomes montados a
       // partir de fragmentos espalhados em snippets diferentes (comum quando o
@@ -1182,15 +1231,17 @@ export async function prospectar(
       { limit: 10, timeoutMs: 45_000, uf },
     );
     const apifyPagina = await apifySearch(
-      `site:www.${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/ ${municipio} Secretaria de Educação email telefone horário`,
+      dominioOficial
+        ? `site:${dominioOficial} ${municipio} Secretaria de Educação email telefone horário`
+        : `site:www.${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/ ${municipio} Secretaria de Educação email telefone horário`,
       emit,
       "educacao",
       { limit: 10, timeoutMs: 45_000, uf },
     );
     const apifyCands = dedupeByUrl([...apifyNome, ...apifyPagina]);
     addToPool(apifyCands);
-    const official = preferGov(apifyCands.filter((c) => looksLikeOfficialEducationPage(c, slug, ufLow)), (u) => /(educa|seduc|sme)/i.test(u));
-    const ranked = official.length > 0 ? official : preferGov(apifyCands, (u) => /(educa|seduc|sme)/i.test(u));
+    const official = preferGov(apifyCands.filter((c) => looksLikeOfficialEducationPage(c, slug, ufLow)), (u) => /(educa|seduc|sme)/i.test(u), ufLow);
+    const ranked = official.length > 0 ? official : preferGov(apifyCands, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
     const snippets = snippetsBlock(ranked);
     if (snippets) {
       const line = extractSecretaryLine(snippets);
@@ -1250,7 +1301,7 @@ export async function prospectar(
     const cands = await gSearch(fc, query, emit, etapaTag, { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf });
     addToPool(cands);
     if (cands.length === 0) return null;
-    const ranked = preferGov(cands, (u) => /(educa|seduc|sme)/i.test(u));
+    const ranked = preferGov(cands, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
     const snippets = snippetsBlock(ranked);
     const ext = await runExtract(snippets, ranked[0]?.url ?? "(snippets)", hierarquia, municipio, uf, emit, {
       nomeAlvo: nomeSecretario,
@@ -1306,7 +1357,7 @@ export async function prospectar(
       ...(await gSearch(fc, `"${nomeSecretario}" secretaria educação ${municipio} ${uf}`, emit, "contato-secretario", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf })),
     ]);
     addToPool(all);
-    const rankedAll = preferGov(all, (u) => /(educa|seduc|sme)/i.test(u));
+    const rankedAll = preferGov(all, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
     const topGov = rankedAll.find((c) => /\.gov\.br/i.test(c.url));
     if (topGov) {
       emit("info", "contato-secretario", `Estágio 2.3 — scrape do site oficial (${shortHost(topGov.url)})`);
@@ -1409,7 +1460,7 @@ export async function prospectar(
     ...(await gSearch(fc, `secretaria municipal de educação ${municipio} ${uf} contato`, emit, "educacao", { limit: 6, timeoutMs: 8000, uf })),
   ]);
   addToPool(all3);
-  const ranked3 = preferGov(all3, (u) => /(educa|seduc|sme)/i.test(u));
+  const ranked3 = preferGov(all3, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
   const top3 = ranked3.find((c) => /\.gov\.br|\.leg\.br/i.test(c.url)) ?? ranked3[0];
 
   // Estágio 3.2 — scrape DEDICADO da página de contato do host de top3 (Correção 3).
@@ -1554,7 +1605,7 @@ export async function prospectar(
     emit("info", etapa, `${label} — snippet-only`);
     const cands = await gSearch(fc, query, emit, etapa, { limit: 8, timeoutMs: 5000, uf });
     addToPool(cands);
-    const ranked = preferGov(cands);
+    const ranked = preferGov(cands, undefined, ufLow);
     if (ranked.length === 0) return null;
     const snippets = snippetsBlock(ranked);
     let ext = await runExtract(snippets, ranked[0].url, etapa, municipio, uf, emit, { modo: "snippets", topHost });
