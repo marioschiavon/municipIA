@@ -611,6 +611,197 @@ async function processInepMatriculas(body: ReadableStream<Uint8Array>, supabaseA
   });
 }
 
+// ============ FUNDEB — Matrículas por município (SIOPE/FNDE) ============
+// Formato: nu_ano_censo;sg_uf;no_municipio_ge;esfera_administrativa;ds_tipo_rede_educacao;
+//          ds_tipo_educacao;ds_tipo_ensino;ds_tipo_turma;ds_tipo_carga_horaria;ds_tipo_localizacao;qtd_matricula
+// Não traz código IBGE: o cruzamento é feito por UF + nome normalizado do município.
+function normalizeMunName(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .trim();
+}
+
+function mapFundebEtapa(tipoEducacao: string, tipoEnsino: string, tipoTurma: string): string | null {
+  const edu = normalizeMunName(tipoEducacao);
+  const ensino = normalizeMunName(tipoEnsino);
+  const turma = normalizeMunName(tipoTurma);
+  if (edu.includes("ESPECIAL")) return "especial";
+  if (edu.includes("EJA") || ensino === "EJA") return "eja";
+  if (ensino.includes("PROFISSIONAL")) return "profissionalizante";
+  if (ensino.includes("MEDIO")) return "medio";
+  if (ensino.includes("INFANTIL")) return turma.includes("CRECHE") ? "creche" : "pre_escola";
+  if (ensino.includes("FUNDAMENTAL")) {
+    if (turma.includes("FINAIS")) return "fundamental_af";
+    return "fundamental_ai";
+  }
+  return null;
+}
+
+async function loadMunicipioNameMap(supabaseAdmin: any, send: any): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  const pageSize = 2000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseAdmin
+      .from("municipios")
+      .select("ibge_id, nome, uf")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`municipios: ${error.message}`);
+    if (!data || data.length === 0) break;
+    for (const row of data) map.set(`${row.uf.toUpperCase()}|${normalizeMunName(row.nome)}`, row.ibge_id);
+    if (data.length < pageSize) break;
+  }
+  await send({ type: "progress", message: `Catálogo carregado: ${map.size.toLocaleString("pt-BR")} municípios para cruzamento por UF + nome.` });
+  return map;
+}
+
+async function processFundebMatriculas(body: ReadableStream<Uint8Array>, supabaseAdmin: any, send: any) {
+  const src = createLineSource(body);
+  const { delimiter, headers } = await readHeader(src);
+  await send({
+    type: "progress",
+    message: `Headers detectados (delimitador="${delimiter === "\t" ? "\\t" : delimiter}", ${headers.length} colunas).`,
+    data: { delimiter, headers },
+  });
+
+  const idxAno = headerIndex(headers, pickHeader(headers, ["nu_ano_censo", "ano"]));
+  const idxUf = headerIndex(headers, pickHeader(headers, ["sg_uf", "uf"]));
+  const idxNome = headerIndex(headers, pickHeader(headers, ["no_municipio_ge", "no_municipio", "municipio"]));
+  const idxEsfera = headerIndex(headers, pickHeader(headers, ["esfera_administrativa"]));
+  const idxEducacao = headerIndex(headers, pickHeader(headers, ["ds_tipo_educacao"]));
+  const idxEnsino = headerIndex(headers, pickHeader(headers, ["ds_tipo_ensino"]));
+  const idxTurma = headerIndex(headers, pickHeader(headers, ["ds_tipo_turma"]));
+  const idxQtd = headerIndex(headers, pickHeader(headers, ["qtd_matricula", "qt_matricula"]));
+
+  if (idxUf < 0 || idxNome < 0 || idxQtd < 0 || idxEsfera < 0) {
+    throw new Error(
+      "Arquivo não parece ser o FUNDEB — Matrículas. Esperado colunas sg_uf, no_municipio_ge, esfera_administrativa e qtd_matricula.",
+    );
+  }
+
+  const nameMap = await loadMunicipioNameMap(supabaseAdmin, send);
+
+  const agregado = new Map<number, Record<string, number>>();
+  let totalLinhas = 0;
+  let municipais = 0;
+  let semEtapa = 0;
+  let semMatch = 0;
+  let ano = new Date().getFullYear();
+  const sampleSemMatch: string[] = [];
+  const sampleSemEtapa: string[] = [];
+
+  for await (const line of allLines(src)) {
+    if (!line.trim()) continue;
+    totalLinhas++;
+    const v = line.split(delimiter);
+    const esfera = normalizeMunName(valueAt(v, idxEsfera));
+    if (!esfera.includes("MUNICIPAL")) continue;
+    municipais++;
+
+    if (idxAno >= 0 && totalLinhas === 1) ano = numberAt(v, idxAno, ano);
+    if (idxAno >= 0 && municipais === 1) ano = numberAt(v, idxAno, ano);
+
+    const key = `${valueAt(v, idxUf).trim().toUpperCase()}|${normalizeMunName(valueAt(v, idxNome))}`;
+    const ibge = nameMap.get(key);
+    if (!ibge) {
+      semMatch++;
+      if (sampleSemMatch.length < 10 && !sampleSemMatch.includes(key)) sampleSemMatch.push(key);
+      continue;
+    }
+
+    const etapa = mapFundebEtapa(valueAt(v, idxEducacao), valueAt(v, idxEnsino), valueAt(v, idxTurma));
+    if (!etapa) {
+      semEtapa++;
+      if (sampleSemEtapa.length < 5) sampleSemEtapa.push(`${valueAt(v, idxEnsino)} | ${valueAt(v, idxTurma)}`);
+      continue;
+    }
+
+    const qtd = Math.round(Number(valueAt(v, idxQtd).replace(",", ".")) || 0);
+    if (qtd <= 0) continue;
+    let entry = agregado.get(ibge);
+    if (!entry) {
+      entry = {};
+      agregado.set(ibge, entry);
+    }
+    entry[etapa] = (entry[etapa] ?? 0) + qtd;
+
+    if (totalLinhas % 50000 === 0) {
+      await send({
+        type: "progress",
+        message: `${totalLinhas.toLocaleString("pt-BR")} linhas lidas · ${agregado.size.toLocaleString("pt-BR")} municípios agregados...`,
+      });
+    }
+  }
+
+  await send({
+    type: "progress",
+    message: `${totalLinhas.toLocaleString("pt-BR")} linhas · ${municipais.toLocaleString("pt-BR")} de rede municipal · ${agregado.size.toLocaleString("pt-BR")} municípios agregados · ${semMatch.toLocaleString("pt-BR")} linhas sem correspondência no catálogo · ${semEtapa.toLocaleString("pt-BR")} sem etapa mapeada.`,
+    data: { ano, sampleSemMatch, sampleSemEtapa },
+  });
+
+  if (agregado.size === 0) throw new Error("Nenhuma matrícula municipal foi agregada. Verifique o arquivo.");
+
+  const matRows: any[] = [];
+  const totais: { ibge_id: number; matriculas_total: number }[] = [];
+  for (const [ibge, etapas] of agregado) {
+    let total = 0;
+    for (const [etapa, mat] of Object.entries(etapas)) {
+      if (mat > 0) {
+        matRows.push({ ibge_id: ibge, etapa, matriculas: mat, ano });
+        total += mat;
+      }
+    }
+    totais.push({ ibge_id: ibge, matriculas_total: total });
+  }
+
+  await send({ type: "progress", message: `Limpando matrículas do ano ${ano} para reprocessar...` });
+  const ibgeList = Array.from(agregado.keys());
+  for (let i = 0; i < ibgeList.length; i += 500) {
+    const { error } = await supabaseAdmin
+      .from("municipios_matriculas_etapa")
+      .delete()
+      .in("ibge_id", ibgeList.slice(i, i + 500))
+      .eq("ano", ano);
+    if (error) throw new Error(`limpeza: ${error.message}`);
+  }
+
+  for (let i = 0; i < matRows.length; i += 500) {
+    const { error } = await supabaseAdmin.from("municipios_matriculas_etapa").insert(matRows.slice(i, i + 500));
+    if (error) throw new Error(`matriculas_etapa: ${error.message}`);
+    if (i % 5000 === 0) {
+      await send({ type: "progress", message: `Inseridas ${Math.min(i + 500, matRows.length).toLocaleString("pt-BR")} linhas de matrículas por etapa...` });
+    }
+  }
+
+  const CONC = 20;
+  let idx = 0;
+  let updated = 0;
+  let notFound = 0;
+  async function worker() {
+    while (idx < totais.length) {
+      const t = totais[idx++];
+      const { data, error } = await supabaseAdmin
+        .from("municipios")
+        .update({ matriculas_total: t.matriculas_total })
+        .eq("ibge_id", t.ibge_id)
+        .select("ibge_id")
+        .maybeSingle();
+      if (error) throw new Error(`municipios ${t.ibge_id}: ${error.message}`);
+      if (data) updated++;
+      else notFound++;
+    }
+  }
+  await Promise.all(Array.from({ length: CONC }, worker));
+
+  const totalGeral = totais.reduce((a, b) => a + b.matriculas_total, 0);
+  await send({
+    type: "progress",
+    message: `Concluído: ${totalGeral.toLocaleString("pt-BR")} matrículas municipais em ${updated.toLocaleString("pt-BR")} municípios atualizados (ano ${ano}). Não encontrados: ${notFound.toLocaleString("pt-BR")}. Obs.: este arquivo não traz contagem de escolas — use o INEP para isso.`,
+  });
+}
+
 function decodeSmallFile(content: Uint8Array): string {
   // INEP/FNDE publicam em UTF-8; alguns arquivos vêm em Latin1. Usado só para
   // FNDE (arquivos pequenos, uma linha por município) — pode decodificar tudo de uma vez.
