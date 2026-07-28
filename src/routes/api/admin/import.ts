@@ -52,7 +52,7 @@ export const Route = createFileRoute("/api/admin/import")({
                 return;
               }
 
-              const type = request.headers.get("x-import-type") as "inep_escolas" | "inep_matriculas" | "fnde" | null;
+              const type = request.headers.get("x-import-type") as "inep_escolas" | "inep_matriculas" | "fundeb_matriculas" | "fnde" | null;
               const rawFilename = request.headers.get("x-import-filename");
               const filename = rawFilename ? decodeURIComponent(rawFilename) : "upload";
               if (!type || !request.body) {
