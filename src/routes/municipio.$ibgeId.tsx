@@ -43,13 +43,15 @@ function MunicipioPage() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [events, setEvents] = useState<ProgressEvent[]>([]);
   const [running, setRunning] = useState(false);
+  const [testMode, setTestMode] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  async function atualizar() {
+  async function atualizar(provider: "firecrawl" | "apify" = "firecrawl") {
     if (!q.data) return;
     setSheetOpen(true);
     setEvents([]);
     setRunning(true);
+    setTestMode(provider === "apify");
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -57,7 +59,13 @@ function MunicipioPage() {
       const res = await fetch("/api/prospect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ municipio: q.data.nome, uf: q.data.uf, ibgeId: id }),
+        // Modo teste (Apify) NUNCA envia ibgeId — não persiste no catálogo,
+        // é só pra comparar lado a lado com o resultado do Firecrawl.
+        body: JSON.stringify(
+          provider === "apify"
+            ? { municipio: q.data.nome, uf: q.data.uf, provider }
+            : { municipio: q.data.nome, uf: q.data.uf, ibgeId: id },
+        ),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -121,9 +129,14 @@ function MunicipioPage() {
           <Link to="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
             <ArrowLeft className="h-4 w-4" /> Catálogo
           </Link>
-          <Button onClick={atualizar} disabled={running}>
-            {running ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Buscando…</> : <><RefreshCw className="mr-2 h-4 w-4" /> Atualizar agora</>}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => atualizar("firecrawl")} disabled={running}>
+              {running && !testMode ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Buscando…</> : <><RefreshCw className="mr-2 h-4 w-4" /> Atualizar agora</>}
+            </Button>
+            <Button variant="outline" onClick={() => atualizar("apify")} disabled={running} title="Roda a mesma busca só com Apify, sem salvar no catálogo — só pra comparar">
+              {running && testMode ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Testando…</> : "Testar com Apify (não salva)"}
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -213,7 +226,7 @@ function MunicipioPage() {
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto">
           <SheetHeader>
-            <SheetTitle>Prospecção em andamento</SheetTitle>
+            <SheetTitle>{testMode ? "Teste com Apify (não salva)" : "Prospecção em andamento"}</SheetTitle>
           </SheetHeader>
           <div className="mt-4 space-y-2">
             {events.length === 0 && !running && (

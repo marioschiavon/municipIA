@@ -5,6 +5,7 @@ const Input = z.object({
   municipio: z.string().min(1),
   uf: z.string().length(2),
   ibgeId: z.number().int().positive().optional(),
+  provider: z.enum(["firecrawl", "apify"]).optional(),
 });
 
 export const Route = createFileRoute("/api/prospect")({
@@ -24,7 +25,7 @@ export const Route = createFileRoute("/api/prospect")({
             headers: { "Content-Type": "application/json" },
           });
         }
-        const { municipio, uf, ibgeId } = parsed.data;
+        const { municipio, uf, ibgeId, provider } = parsed.data;
 
         const { prospectar } = await import("@/lib/prospect.server");
         const encoder = new TextEncoder();
@@ -35,7 +36,7 @@ export const Route = createFileRoute("/api/prospect")({
               controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
             };
             try {
-              const result = await prospectar(municipio, uf, (evt) => send(evt), ibgeId);
+              const result = await prospectar(municipio, uf, (evt) => send(evt), ibgeId, provider ?? "firecrawl");
               // Persistir se temos ibgeId
               if (ibgeId && result) {
                 try {
