@@ -40,19 +40,23 @@ function AdminImportPage() {
     setLogs([]);
     setResult(null);
     try {
-      const form = new FormData();
-      form.append("type", type);
-      form.append("file", file);
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("Sessão não encontrada. Faça login novamente.");
       const abort = new AbortController();
       abortRef.current = abort;
+      // Envia o arquivo como corpo bruto da requisição (sem FormData) para que o
+      // servidor possa consumi-lo em streaming, sem bufferizar o arquivo inteiro
+      // em memória (arquivos do Censo Escolar podem ter centenas de MB).
       const res = await fetch("/api/admin/import", {
         method: "POST",
-        body: form,
+        body: file,
         signal: abort.signal,
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "X-Import-Type": type,
+          "X-Import-Filename": encodeURIComponent(file.name),
+        },
       });
       const reader = res.body?.getReader();
       if (!reader) throw new Error("Resposta vazia");

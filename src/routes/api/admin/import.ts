@@ -51,29 +51,32 @@ export const Route = createFileRoute("/api/admin/import")({
                 controller.close();
                 return;
               }
-              const form = await request.formData();
-              const type = form.get("type") as "inep_escolas" | "inep_matriculas" | "fnde";
-              const file = form.get("file");
-              if (!type || !(file instanceof File)) {
+
+              const type = request.headers.get("x-import-type") as "inep_escolas" | "inep_matriculas" | "fnde" | null;
+              const rawFilename = request.headers.get("x-import-filename");
+              const filename = rawFilename ? decodeURIComponent(rawFilename) : "upload";
+              if (!type || !request.body) {
                 await send({ type: "error", message: "Tipo ou arquivo inválido" });
                 controller.close();
                 return;
               }
+              const contentLength = Number(request.headers.get("content-length") ?? "0");
               await send({ type: "start", message: "Iniciando importação", data: { type } });
-              const buffer = await file.arrayBuffer();
-              const content = new Uint8Array(buffer);
               await send({
                 type: "progress",
-                message: `Arquivo lido: ${(file.size / 1024 / 1024).toFixed(2)} MB`,
-                data: { name: file.name, sizeBytes: file.size, selectedType: type },
+                message: contentLength
+                  ? `Recebendo arquivo em streaming (~${(contentLength / 1024 / 1024).toFixed(2)} MB, sem carregar tudo em memória).`
+                  : "Recebendo arquivo em streaming (sem carregar tudo em memória).",
+                data: { name: filename, sizeBytes: contentLength || null, selectedType: type },
               });
 
               if (type === "inep_escolas") {
-                await processInepEscolas(content, supabaseAdmin, send);
+                await processInepEscolas(request.body, supabaseAdmin, send);
               } else if (type === "inep_matriculas") {
-                await processInepMatriculas(content, supabaseAdmin, send);
+                await processInepMatriculas(request.body, supabaseAdmin, send);
               } else {
-                await processFnde(content, supabaseAdmin, send, file.name);
+                const buffer = await new Response(request.body).arrayBuffer();
+                await processFnde(new Uint8Array(buffer), supabaseAdmin, send, filename);
               }
               await send({ type: "recalc", message: "Recalculando scores em massa..." });
               const recalc = await recalcScores(supabaseAdmin);
@@ -94,36 +97,69 @@ export const Route = createFileRoute("/api/admin/import")({
   },
 });
 
-function decodeCsv(content: Uint8Array): string {
-  // INEP publica em UTF-8; alguns arquivos vêm em Latin1. Detecta pelo BOM ou por caracteres inválidos.
-  try {
-    const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(content);
-    if (!utf8.includes("\uFFFD")) return utf8;
-  } catch {}
-  return new TextDecoder("latin1").decode(content);
-}
+// ============ Leitor de linhas em streaming ============
+// Nunca materializa o arquivo inteiro em memória: lê o ReadableStream do corpo
+// da requisição em chunks, decodifica incrementalmente (detectando UTF-8 vs
+// Latin1 a partir do primeiro chunk) e entrega uma linha completa por vez.
+// Memória usada é limitada ao tamanho do chunk + a linha em processamento,
+// independente do arquivo ter 10 MB ou 1 GB.
+type LineSource = { next(): Promise<string | null> };
 
-function parseCsvAuto(text: string): { rows: Record<string, string>[]; delimiter: string; headers: string[] } {
-  // Remove BOM.
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-  const candidates = [";", ",", "\t", "|"];
-  let best: { rows: Record<string, string>[]; delimiter: string; headers: string[] } | null = null;
-  for (const d of candidates) {
-    const parsed = Papa.parse(text, { header: true, skipEmptyLines: true, delimiter: d });
-    const rows = parsed.data as Record<string, string>[];
-    const headers = parsed.meta.fields ?? Object.keys(rows[0] ?? {});
-    const cleanHeaders = headers.map((h) => h.replace(/^\uFEFF/, "").trim());
-    // Renomeia chaves das linhas com headers limpos (BOM strip).
-    const cleanRows = rows.map((r) => {
-      const o: Record<string, string> = {};
-      for (const k of headers) o[k.replace(/^\uFEFF/, "").trim()] = r[k];
-      return o;
-    });
-    if (!best || cleanHeaders.length > best.headers.length) {
-      best = { rows: cleanRows, delimiter: d, headers: cleanHeaders };
+function createLineSource(body: ReadableStream<Uint8Array>): LineSource {
+  const reader = body.getReader();
+  let decoder: TextDecoder | null = null;
+  let carry = "";
+  let ended = false;
+  const queue: string[] = [];
+
+  function splitCarryIntoLines() {
+    let idx: number;
+    while ((idx = carry.indexOf("\n")) >= 0) {
+      let line = carry.slice(0, idx);
+      carry = carry.slice(idx + 1);
+      if (line.endsWith("\r")) line = line.slice(0, -1);
+      queue.push(line);
     }
   }
-  return best!;
+
+  async function fill() {
+    while (queue.length === 0 && !ended) {
+      const { value, done } = await reader.read();
+      if (done) {
+        ended = true;
+        if (decoder) carry += decoder.decode();
+        let last = carry;
+        carry = "";
+        if (last.endsWith("\r")) last = last.slice(0, -1);
+        if (last.length > 0) queue.push(last);
+        return;
+      }
+      if (!decoder) {
+        // INEP publica em UTF-8; alguns arquivos vêm em Latin1. Detecta pelos
+        // caracteres inválidos no primeiro chunk (a linha de header basta).
+        const probe = new TextDecoder("utf-8", { fatal: false }).decode(value);
+        decoder = new TextDecoder(probe.includes("�") ? "latin1" : "utf-8", { fatal: false });
+      }
+      carry += decoder.decode(value, { stream: true });
+      splitCarryIntoLines();
+    }
+  }
+
+  return {
+    async next() {
+      if (queue.length === 0) await fill();
+      return queue.length > 0 ? queue.shift()! : null;
+    },
+  };
+}
+
+async function* allLines(src: LineSource, prepend?: string | null) {
+  if (prepend !== undefined && prepend !== null) yield prepend;
+  for (;;) {
+    const line = await src.next();
+    if (line === null) return;
+    yield line;
+  }
 }
 
 function detectDelimiterFromHeader(headerLine: string): string {
@@ -132,28 +168,7 @@ function detectDelimiterFromHeader(headerLine: string): string {
 }
 
 function cleanHeader(value: string): string {
-  return value.replace(/^\uFEFF/, "").trim();
-}
-
-function parseHeaderOnly(text: string): { delimiter: string; headers: string[]; firstDataValues: string[]; dataLineCount: number } {
-  const firstBreak = text.indexOf("\n");
-  const headerLine = (firstBreak >= 0 ? text.slice(0, firstBreak) : text).replace(/\r$/, "");
-  const delimiter = detectDelimiterFromHeader(headerLine);
-  const headers = headerLine.split(delimiter).map(cleanHeader);
-  let firstDataValues: string[] = [];
-  let dataLineCount = 0;
-  let start = firstBreak >= 0 ? firstBreak + 1 : text.length;
-  while (start < text.length) {
-    let end = text.indexOf("\n", start);
-    if (end < 0) end = text.length;
-    const line = text.slice(start, end).replace(/\r$/, "");
-    if (line.trim()) {
-      dataLineCount++;
-      if (firstDataValues.length === 0) firstDataValues = line.split(delimiter);
-    }
-    start = end + 1;
-  }
-  return { delimiter, headers, firstDataValues, dataLineCount };
+  return value.replace(/^﻿/, "").trim();
 }
 
 function pickHeader(headers: string[], candidates: string[]): string | undefined {
@@ -189,13 +204,12 @@ function detectInepType(headers: string[]): "inep_escolas" | "inep_matriculas" |
   return "unknown";
 }
 
-function pickField(row: Record<string, string>, candidates: string[]): string | undefined {
-  const keys = Object.keys(row);
-  for (const c of candidates) {
-    const found = keys.find((k) => k.toUpperCase() === c.toUpperCase());
-    if (found) return found;
-  }
-  return undefined;
+async function readHeader(src: LineSource): Promise<{ delimiter: string; headers: string[] }> {
+  const headerLine = await src.next();
+  if (headerLine === null) throw new Error("Arquivo vazio ou formato inválido");
+  const delimiter = detectDelimiterFromHeader(headerLine);
+  const headers = headerLine.split(delimiter).map(cleanHeader);
+  return { delimiter, headers };
 }
 
 type InepEscolaMapRow = {
@@ -204,12 +218,6 @@ type InepEscolaMapRow = {
   tp_dependencia: number;
   tp_situacao: number;
 };
-
-function numberFrom(row: Record<string, string>, key: string | undefined, fallback = 0): number {
-  if (!key) return fallback;
-  const value = Number(row[key]);
-  return Number.isFinite(value) ? value : fallback;
-}
 
 async function loadInepEscolaMap(supabaseAdmin: any, send: any): Promise<Map<number, InepEscolaMapRow>> {
   const map = new Map<number, InepEscolaMapRow>();
@@ -246,77 +254,95 @@ async function loadInepEscolaMap(supabaseAdmin: any, send: any): Promise<Map<num
   return map;
 }
 
-async function processInepEscolas(content: Uint8Array, supabaseAdmin: any, send: any) {
-  const text = decodeCsv(content);
-  const { rows, delimiter, headers } = parseCsvAuto(text);
+async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmin: any, send: any) {
+  const src = createLineSource(body);
+  const { delimiter, headers } = await readHeader(src);
   await send({
     type: "progress",
     message: `Headers detectados (delimitador="${delimiter === "\t" ? "\\t" : delimiter}", ${headers.length} colunas).`,
     data: { delimiter, headers: headers.slice(0, 20) },
   });
-  await send({ type: "progress", message: `${rows.length.toLocaleString("pt-BR")} escolas detectadas no arquivo.` });
-  if (!rows.length) throw new Error("Arquivo vazio ou formato inválido");
 
   const detected = detectInepType(headers);
   if (detected === "inep_matriculas") {
     throw new Error("Arquivo parece ser Tabela_Matricula (contém colunas QT_MAT_*). Selecione 'INEP — Matrículas' no seletor.");
   }
 
-  const sample = rows[0];
-  const coEntidadeKey = pickField(sample, ["CO_ENTIDADE"]);
-  const coMunicipioKey = pickField(sample, ["CO_MUNICIPIO", "CO_MUNICIPIO_IBGE"]);
-  const tpDepKey = pickField(sample, ["TP_DEPENDENCIA"]);
-  const tpSitKey = pickField(sample, ["TP_SITUACAO_FUNCIONAMENTO", "TP_SITUACAO"]);
+  const coEntidadeKey = pickHeader(headers, ["CO_ENTIDADE"]);
+  const coMunicipioKey = pickHeader(headers, ["CO_MUNICIPIO", "CO_MUNICIPIO_IBGE"]);
+  const tpDepKey = pickHeader(headers, ["TP_DEPENDENCIA"]);
+  const tpSitKey = pickHeader(headers, ["TP_SITUACAO_FUNCIONAMENTO", "TP_SITUACAO"]);
+  const anoKey = pickHeader(headers, ["NU_ANO_CENSO"]);
   if (!coEntidadeKey || !coMunicipioKey || !tpDepKey) {
     throw new Error(`Colunas obrigatórias ausentes. Necessárias: CO_ENTIDADE, CO_MUNICIPIO(_IBGE), TP_DEPENDENCIA. Encontradas: ${headers.slice(0, 10).join(", ")}...`);
   }
-  const anoCol = pickField(sample, ["NU_ANO_CENSO"]);
-  const ano = anoCol ? Number(sample[anoCol]) || new Date().getFullYear() : new Date().getFullYear();
+  const coEntidadeIdx = headerIndex(headers, coEntidadeKey);
+  const coMunicipioIdx = headerIndex(headers, coMunicipioKey);
+  const tpDepIdx = headerIndex(headers, tpDepKey);
+  const tpSitIdx = headerIndex(headers, tpSitKey);
+  const anoIdx = headerIndex(headers, anoKey);
 
-  const escolasRows: { co_entidade: number; ibge_id: number; tp_dependencia: number; tp_situacao: number; ano: number }[] = [];
+  const firstDataLine = await src.next();
+  if (firstDataLine === null) throw new Error("Arquivo vazio ou formato inválido");
+  const firstValues = firstDataLine.split(delimiter);
+  const ano = anoKey ? numberAt(firstValues, anoIdx, new Date().getFullYear()) : new Date().getFullYear();
+
   const municipais = new Map<number, number>();
+  let totalLinhas = 0;
   let ignored = 0;
   let countDep3 = 0;
   let countSit1 = 0;
   const sampleIgnored: Record<string, string>[] = [];
+  let batch: { co_entidade: number; ibge_id: number; tp_dependencia: number; tp_situacao: number; ano: number }[] = [];
+  const BATCH = 1000;
+  let processedLogMark = 0;
 
-  for (const r of rows) {
-    const co = numberFrom(r, coEntidadeKey);
-    const ibge = numberFrom(r, coMunicipioKey);
-    const dep = numberFrom(r, tpDepKey);
-    const sit = tpSitKey ? numberFrom(r, tpSitKey, 1) : 1;
+  async function flush() {
+    if (batch.length === 0) return;
+    const { error } = await supabaseAdmin.from("inep_escolas").upsert(batch, { onConflict: "co_entidade" });
+    if (error) throw new Error(`inep_escolas: ${error.message}`);
+    batch = [];
+  }
+
+  for await (const line of allLines(src, firstDataLine)) {
+    if (!line.trim()) continue;
+    const values = line.split(delimiter);
+    totalLinhas++;
+
+    const co = numberAt(values, coEntidadeIdx);
+    const ibge = numberAt(values, coMunicipioIdx);
+    const dep = numberAt(values, tpDepIdx);
+    const sit = tpSitKey ? numberAt(values, tpSitIdx, 1) : 1;
     if (!co || !ibge || !dep) {
       ignored++;
       if (sampleIgnored.length < 3) {
         sampleIgnored.push({
-          CO_ENTIDADE: r[coEntidadeKey] ?? "",
-          CO_MUNICIPIO: r[coMunicipioKey] ?? "",
-          TP_DEPENDENCIA: r[tpDepKey] ?? "",
-          TP_SITUACAO: tpSitKey ? (r[tpSitKey] ?? "") : "sem_coluna",
+          CO_ENTIDADE: valueAt(values, coEntidadeIdx),
+          CO_MUNICIPIO: valueAt(values, coMunicipioIdx),
+          TP_DEPENDENCIA: valueAt(values, tpDepIdx),
+          TP_SITUACAO: tpSitKey ? valueAt(values, tpSitIdx) : "sem_coluna",
         });
       }
       continue;
     }
-    escolasRows.push({ co_entidade: co, ibge_id: ibge, tp_dependencia: dep, tp_situacao: sit, ano });
+    batch.push({ co_entidade: co, ibge_id: ibge, tp_dependencia: dep, tp_situacao: sit, ano });
     if (dep === 3) countDep3++;
     if (sit === 1) countSit1++;
     if (dep === 3 && sit === 1) municipais.set(ibge, (municipais.get(ibge) ?? 0) + 1);
-  }
-  await send({
-    type: "progress",
-    message: `${escolasRows.length.toLocaleString("pt-BR")} escolas válidas · dep=3: ${countDep3.toLocaleString("pt-BR")} · sit=1: ${countSit1.toLocaleString("pt-BR")} · municipais ativas: ${Array.from(municipais.values()).reduce((a,b)=>a+b,0).toLocaleString("pt-BR")} em ${municipais.size.toLocaleString("pt-BR")} municípios.`,
-    data: { ignored, sampleIgnored },
-  });
 
-  const BATCH = 1000;
-  for (let i = 0; i < escolasRows.length; i += BATCH) {
-    const slice = escolasRows.slice(i, i + BATCH);
-    const { error } = await supabaseAdmin.from("inep_escolas").upsert(slice, { onConflict: "co_entidade" });
-    if (error) throw new Error(`inep_escolas: ${error.message}`);
-    if (i % (BATCH * 10) === 0) {
-      await send({ type: "progress", message: `Mapeadas ${Math.min(i + BATCH, escolasRows.length).toLocaleString("pt-BR")} de ${escolasRows.length.toLocaleString("pt-BR")} escolas...` });
+    if (batch.length >= BATCH) await flush();
+    if (totalLinhas - processedLogMark >= 20000) {
+      processedLogMark = totalLinhas;
+      await send({ type: "progress", message: `Processadas ${totalLinhas.toLocaleString("pt-BR")} escolas até agora...` });
     }
   }
+  await flush();
+
+  await send({
+    type: "progress",
+    message: `${totalLinhas.toLocaleString("pt-BR")} escolas lidas · dep=3: ${countDep3.toLocaleString("pt-BR")} · sit=1: ${countSit1.toLocaleString("pt-BR")} · municipais ativas: ${Array.from(municipais.values()).reduce((a, b) => a + b, 0).toLocaleString("pt-BR")} em ${municipais.size.toLocaleString("pt-BR")} municípios.`,
+    data: { ignored, sampleIgnored },
+  });
 
   const CONC = 20;
   const entries = Array.from(municipais.entries());
@@ -346,16 +372,14 @@ async function processInepEscolas(content: Uint8Array, supabaseAdmin: any, send:
   });
 }
 
-async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, send: any) {
-  const text = decodeCsv(content);
-  const { delimiter, headers, firstDataValues, dataLineCount } = parseHeaderOnly(text);
+async function processInepMatriculas(body: ReadableStream<Uint8Array>, supabaseAdmin: any, send: any) {
+  const src = createLineSource(body);
+  const { delimiter, headers } = await readHeader(src);
   await send({
     type: "progress",
     message: `Headers detectados (delimitador="${delimiter === "\t" ? "\\t" : delimiter}", ${headers.length} colunas).`,
     data: { delimiter, headers: headers.slice(0, 40) },
   });
-  await send({ type: "progress", message: `${dataLineCount.toLocaleString("pt-BR")} linhas detectadas no arquivo (processamento por streaming interno, sem carregar tudo em memória).` });
-  if (!dataLineCount || firstDataValues.length === 0) throw new Error("Arquivo vazio ou formato inválido");
 
   const detected = detectInepType(headers);
   if (detected === "inep_escolas") {
@@ -377,6 +401,17 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
     Object.entries(ETAPA_COLS).map(([etapa, cols]) => [etapa, cols.map((col) => headerIndex(headers, col)).filter((idx) => idx >= 0)]),
   ) as Record<string, number[]>;
   const useEscolaMap = Boolean(coEntidadeKey && (!coMunicipioKey || !tpDepKey));
+
+  if (!useEscolaMap && (!coMunicipioKey || !tpDepKey)) {
+    throw new Error(
+      `Colunas obrigatórias ausentes. Necessárias: CO_MUNICIPIO(_IBGE), TP_DEPENDENCIA ou CO_ENTIDADE para cruzar com o arquivo de Escolas. Encontradas (parcial): ${headers.slice(0, 15).join(", ")}...`,
+    );
+  }
+
+  const firstDataLine = await src.next();
+  if (firstDataLine === null) throw new Error("Arquivo vazio ou formato inválido");
+  const firstValues = firstDataLine.split(delimiter);
+
   await send({
     type: "progress",
     message: "Diagnóstico das colunas principais do arquivo de matrículas.",
@@ -389,14 +424,14 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
       anoKey: anoKey ?? null,
       etapaColumnsFound: Object.fromEntries(Object.entries(etapaIndexes).map(([etapa, indexes]) => [etapa, indexes.length])),
       sample: {
-        CO_ENTIDADE: valueAt(firstDataValues, coEntidadeIdx) || null,
-        CO_MUNICIPIO: valueAt(firstDataValues, coMunicipioIdx) || null,
-        TP_DEPENDENCIA: valueAt(firstDataValues, tpDepIdx) || null,
-        TP_SITUACAO: valueAt(firstDataValues, tpSitIdx) || null,
-        NU_ANO_CENSO: valueAt(firstDataValues, anoIdx) || null,
-        QT_MAT_BAS: valueAt(firstDataValues, matBasIdx) || null,
-        QT_MAT_INF_CRE: valueAt(firstDataValues, headerIndex(headers, "QT_MAT_INF_CRE")) || null,
-        QT_MAT_INF_PRE: valueAt(firstDataValues, headerIndex(headers, "QT_MAT_INF_PRE")) || null,
+        CO_ENTIDADE: valueAt(firstValues, coEntidadeIdx) || null,
+        CO_MUNICIPIO: valueAt(firstValues, coMunicipioIdx) || null,
+        TP_DEPENDENCIA: valueAt(firstValues, tpDepIdx) || null,
+        TP_SITUACAO: valueAt(firstValues, tpSitIdx) || null,
+        NU_ANO_CENSO: valueAt(firstValues, anoIdx) || null,
+        QT_MAT_BAS: valueAt(firstValues, matBasIdx) || null,
+        QT_MAT_INF_CRE: valueAt(firstValues, headerIndex(headers, "QT_MAT_INF_CRE")) || null,
+        QT_MAT_INF_PRE: valueAt(firstValues, headerIndex(headers, "QT_MAT_INF_PRE")) || null,
       },
     },
   });
@@ -411,10 +446,6 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
     if (escolaMap.size === 0) {
       throw new Error("O arquivo de matrículas enviado só possui CO_ENTIDADE. Importe primeiro o arquivo Tabela_Escola_2025.csv em 'INEP — Escolas' para criar o mapa escola→município; depois rode Matrículas novamente.");
     }
-  } else if (!coMunicipioKey || !tpDepKey) {
-    throw new Error(
-      `Colunas obrigatórias ausentes. Necessárias: CO_MUNICIPIO(_IBGE), TP_DEPENDENCIA ou CO_ENTIDADE para cruzar com o arquivo de Escolas. Encontradas (parcial): ${headers.slice(0, 15).join(", ")}...`,
-    );
   }
 
   // Agrega direto quando o CSV traz município/dependência; caso contrário cruza por CO_ENTIDADE com Tabela_Escola.
@@ -432,15 +463,8 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
   const sampleAgregado: string[] = [];
   let processedLogMark = 0;
 
-  let lineStart = text.indexOf("\n");
-  lineStart = lineStart >= 0 ? lineStart + 1 : text.length;
-  while (lineStart < text.length) {
-    let lineEnd = text.indexOf("\n", lineStart);
-    if (lineEnd < 0) lineEnd = text.length;
-    const line = text.slice(lineStart, lineEnd).replace(/\r$/, "");
-    lineStart = lineEnd + 1;
+  for await (const line of allLines(src, firstDataLine)) {
     if (!line.trim()) continue;
-
     const values = line.split(delimiter);
     totalLinhas++;
     totalMatBasArquivo += numberAt(values, matBasIdx);
@@ -515,7 +539,7 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
     throw new Error("Nenhuma linha municipal ativa (TP_DEPENDENCIA=3 e TP_SITUACAO_FUNCIONAMENTO=1) foi encontrada. Verifique se o arquivo é o Tabela_Matricula do Censo Escolar.");
   }
 
-  const ano = anoKey ? numberAt(firstDataValues, anoIdx, new Date().getFullYear()) : new Date().getFullYear();
+  const ano = anoKey ? numberAt(firstValues, anoIdx, new Date().getFullYear()) : new Date().getFullYear();
   const matRows: any[] = [];
   const totais: { ibge_id: number; matriculas_total: number; escolas: number }[] = [];
   for (const [ibge, agg] of agregado) {
@@ -587,6 +611,15 @@ async function processInepMatriculas(content: Uint8Array, supabaseAdmin: any, se
   });
 }
 
+function decodeSmallFile(content: Uint8Array): string {
+  // INEP/FNDE publicam em UTF-8; alguns arquivos vêm em Latin1. Usado só para
+  // FNDE (arquivos pequenos, uma linha por município) — pode decodificar tudo de uma vez.
+  try {
+    const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(content);
+    if (!utf8.includes("�")) return utf8;
+  } catch {}
+  return new TextDecoder("latin1").decode(content);
+}
 
 async function processFnde(content: Uint8Array, supabaseAdmin: any, send: any, filename: string) {
   let rows: Record<string, string>[] = [];
@@ -610,7 +643,7 @@ async function processFnde(content: Uint8Array, supabaseAdmin: any, send: any, f
       return obj;
     });
   } else {
-    const text = decodeCsv(content);
+    const text = decodeSmallFile(content);
     // FNDE aceita ; ou ,
     const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
     rows = parsed.data as Record<string, string>[];
