@@ -85,6 +85,39 @@ export const adminListMunicipios = createServerFn({ method: "POST" })
     };
   });
 
+// ============ LIST ALL IDS (sem paginação, para prospecção em massa) ============
+const ListAllIdsInput = z.object({
+  uf: z.string().length(2).optional(),
+  status: z.string().optional(),
+  q: z.string().optional(),
+});
+export const adminListMunicipioIds = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => ListAllIdsInput.parse(d))
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const items: Array<{ ibge_id: number; nome: string; uf: string }> = [];
+    const CHUNK = 1000;
+    let from = 0;
+    for (;;) {
+      let q = supabaseAdmin
+        .from("municipios")
+        .select("ibge_id, nome, uf, municipios_educacao!inner(status)")
+        .order("nome", { ascending: true })
+        .range(from, from + CHUNK - 1);
+      if (data.uf) q = q.eq("uf", data.uf);
+      if (data.q) q = q.ilike("nome", `%${data.q}%`);
+      if (data.status) q = q.eq("municipios_educacao.status", data.status);
+      const { data: rows, error } = await q;
+      if (error) throw new Error(error.message);
+      for (const r of (rows ?? []) as any[]) items.push({ ibge_id: r.ibge_id, nome: r.nome, uf: r.uf });
+      if (!rows || rows.length < CHUNK) break;
+      from += CHUNK;
+    }
+    return { items };
+  });
+
 // ============ GET (completo, com matrículas por etapa) ============
 export const adminGetMunicipio = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
