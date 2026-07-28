@@ -203,7 +203,7 @@ function AdminImportPage() {
               <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
                 <RadioGroupItem value="inep_escolas" id="inep_escolas" className="sr-only" />
                 <Label htmlFor="inep_escolas" className="cursor-pointer space-y-2 block">
-                  <div className="font-semibold">2. INEP — Escolas (opcional)</div>
+                  <div className="font-semibold">3. INEP — Escolas (opcional)</div>
                   <div className="text-xs text-muted-foreground">
                     Arquivo <code>Tabela_Escola_YYYY.csv</code>. Necessário quando o arquivo de Matrículas não possui <code>CO_MUNICIPIO</code>/<code>TP_DEPENDENCIA</code>. Ele cria o mapa <code>CO_ENTIDADE → município/rede/situação</code> usado no cruzamento.
                   </div>
