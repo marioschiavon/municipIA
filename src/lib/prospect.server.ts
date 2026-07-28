@@ -191,6 +191,30 @@ function isBareStateHost(host: string, ufLow: string): boolean {
   return h === `${ufLow}.gov.br` || h === `educacao.${ufLow}.gov.br` || h === `see.${ufLow}.gov.br` || h === `seduc.${ufLow}.gov.br`;
 }
 
+/**
+ * true se `host` segue o padrão-padrão {slug}.{uf}.gov.br mas é de OUTRO
+ * município (ex.: barreiras.ba.gov.br aparecendo numa busca por Paratinga/BA —
+ * cidade vizinha/polo regional que domina os resultados de busca). Sem esse
+ * filtro, o site inteiro de outro município pode ser tratado como se fosse o
+ * oficial do alvo, contaminando nome/cargo/e-mail/telefone com os dados de
+ * outra cidade inteira.
+ */
+function isForeignMunicipioHost(host: string, slug: string): boolean {
+  const h = stripWww(host);
+  const m = /^([a-z-]+)\.[a-z]{2}\.(?:gov|leg)\.br$/.exec(h);
+  if (!m) return false;
+  return slugify(m[1]) !== slug;
+}
+
+/** Remove candidatos cujo host é claramente o site oficial de OUTRO município. */
+function filterForeignMunicipio(cands: SearchCandidate[], slug: string, emit?: Emit, etapa?: EtapaTag): SearchCandidate[] {
+  const kept = cands.filter((c) => !isForeignMunicipioHost(shortHost(c.url), slug));
+  if (emit && etapa && kept.length !== cands.length) {
+    emit("warn", etapa, `Removi ${cands.length - kept.length} resultado(s) de site oficial de OUTRO município`);
+  }
+  return kept;
+}
+
 type SearchCandidate = {
   url: string;
   title: string;
@@ -421,8 +445,9 @@ function filterPresent(extracted: Extracted, source: string, municipio?: string,
 
   // Anti-contaminação: e-mail .gov.br tem que conter o SLUG do município-alvo
   // no domínio. Se não contém, é de outro município mesmo dentro da UF correta
-  // (ex.: educacao@santoantoniodaplatina.pr.gov.br aparecendo em busca de Curitiba/PR).
-  // Mantém o suspeito só se for o único e-mail disponível (último recurso).
+  // (ex.: educacao@barreiras.ba.gov.br aparecendo em busca de Paratinga/BA).
+  // NUNCA mantém como "último recurso" — um e-mail confirmado de outra
+  // cidade é pior que nenhum e-mail (o próximo estágio da cascata tenta de novo).
   if (municipio && uf && emails.length > 0) {
     const slug = slugify(municipio);
     const isForeignGov = (e: string) => {
@@ -430,9 +455,7 @@ function filterPresent(extracted: Extracted, source: string, municipio?: string,
       if (!domain.endsWith(".gov.br")) return false;
       return !domain.includes(slug);
     };
-    const cleaned = emails.filter((e) => !isForeignGov(e));
-    if (cleaned.length > 0) emails = cleaned;
-    // se filtrou tudo, mantém o original (último recurso)
+    emails = emails.filter((e) => !isForeignGov(e));
   }
 
   const sourceDigits = digits(source);
@@ -470,7 +493,11 @@ function looksLikeOfficialEducationPage(c: SearchCandidate, slug: string, ufLow:
     );
   }
   if (!host.endsWith(".gov.br")) return false;
-  if (!host.includes(slug) && !url.includes(slug) && !url.includes(`${ufLow}.gov.br`)) return false;
+  // ATENÇÃO: NÃO usar url.includes(`${ufLow}.gov.br`) aqui — isso bate com o
+  // domínio de QUALQUER outro município do mesmo estado (ex.: "barreiras.ba.gov.br"
+  // contém a substring "ba.gov.br"). Só aceita o slug do alvo ou o portal
+  // genérico do estado (sem subdomínio de outro município).
+  if (!host.includes(slug) && !url.includes(slug) && !isBareStateHost(host, ufLow)) return false;
   return /(secretaria[^/]*educacao|secretarias\/secretaria-educacao|secretaria-de-educacao|secretaria\s+de\s+educa|secretaria municipal de educa)/i.test(
     `${url} ${c.title} ${c.description}`,
   );
@@ -945,6 +972,7 @@ export async function prospectar(
   const addRagPages = (pages: ApifyPage[]) => {
     for (const p of pages) {
       if (!p.url) continue;
+      if (isForeignMunicipioHost(shortHost(p.url), slug)) continue;
       const prev = ragPagesMap.get(p.url);
       if (!prev || (p.markdown?.length ?? 0) > (prev.markdown?.length ?? 0)) {
         ragPagesMap.set(p.url, p);
@@ -952,7 +980,9 @@ export async function prospectar(
     }
   };
   const ragQueryA = `prefeitura ${municipio} ${uf} secretaria municipal de educação secretário atual contato email telefone`;
-  const ragQueryB = `site:${ufLow}.gov.br "${municipio}" "Secretaria Municipal de Educação" contato email telefone`;
+  const ragQueryB = DOMINIO_OFICIAL_ESPECIAL[slug]
+    ? `site:${DOMINIO_OFICIAL_ESPECIAL[slug]} "Secretaria Municipal de Educação" contato email telefone`
+    : `site:${ufLow}.gov.br "${municipio}" "Secretaria Municipal de Educação" contato email telefone`;
   emit("info", "init", `RAG (Apify) A em background: "${ragQueryA.slice(0, 80)}"`);
   emit("info", "init", `RAG (Apify) B em background: "${ragQueryB.slice(0, 80)}"`);
   const runRag = async (
@@ -1053,7 +1083,7 @@ export async function prospectar(
     candsNomeCfb = await gSearch(fc, queryNomeCfb, emit, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf });
   }
   // Priorizar resultados do domínio oficial do município (queryNomeC/fb) ANTES de A/B.
-  const candsNome = dedupeByUrl([...candsNomeC, ...candsNomeCfb, ...candsNomeA, ...candsNomeB]);
+  const candsNome = filterForeignMunicipio(dedupeByUrl([...candsNomeC, ...candsNomeCfb, ...candsNomeA, ...candsNomeB]), slug, emit, "nome");
   addToPool(candsNome);
   const rankedNome = preferGov(candsNome, (u) => /(educa|secretari)/i.test(u), ufLow);
   const snippetsNome = snippetsBlock(rankedNome);
@@ -1230,7 +1260,7 @@ export async function prospectar(
       "educacao",
       { limit: 10, timeoutMs: 45_000, uf },
     );
-    const apifyCands = dedupeByUrl([...apifyNome, ...apifyPagina]);
+    const apifyCands = filterForeignMunicipio(dedupeByUrl([...apifyNome, ...apifyPagina]), slug, emit, "educacao");
     addToPool(apifyCands);
     const official = preferGov(apifyCands.filter((c) => looksLikeOfficialEducationPage(c, slug, ufLow)), (u) => /(educa|seduc|sme)/i.test(u), ufLow);
     const ranked = official.length > 0 ? official : preferGov(apifyCands, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
@@ -1290,7 +1320,7 @@ export async function prospectar(
     etapaTag: EtapaTag,
     hierarquia: Hierarquia,
   ): Promise<ProspectResult | null> => {
-    const cands = await gSearch(fc, query, emit, etapaTag, { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf });
+    const cands = filterForeignMunicipio(await gSearch(fc, query, emit, etapaTag, { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf }), slug, emit, etapaTag);
     addToPool(cands);
     if (cands.length === 0) return null;
     const ranked = preferGov(cands, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
@@ -1345,9 +1375,9 @@ export async function prospectar(
     );
     if (r2b) return sendFinal(r2b);
 
-    const all = dedupeByUrl([
+    const all = filterForeignMunicipio(dedupeByUrl([
       ...(await gSearch(fc, `"${nomeSecretario}" secretaria educação ${municipio} ${uf}`, emit, "contato-secretario", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf })),
-    ]);
+    ]), slug, emit, "contato-secretario");
     addToPool(all);
     const rankedAll = preferGov(all, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
     const topGov = rankedAll.find((c) => /\.gov\.br/i.test(c.url));
@@ -1448,9 +1478,9 @@ export async function prospectar(
   );
   if (r3b) return sendFinal(r3b);
 
-  const all3 = dedupeByUrl([
+  const all3 = filterForeignMunicipio(dedupeByUrl([
     ...(await gSearch(fc, `secretaria municipal de educação ${municipio} ${uf} contato`, emit, "educacao", { limit: 6, timeoutMs: 8000, uf })),
-  ]);
+  ]), slug, emit, "educacao");
   addToPool(all3);
   const ranked3 = preferGov(all3, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
   const top3 = ranked3.find((c) => /\.gov\.br|\.leg\.br/i.test(c.url)) ?? ranked3[0];
@@ -1595,7 +1625,7 @@ export async function prospectar(
   // ============================================================
   async function runFallback(etapa: Hierarquia, query: string, label: string): Promise<ProspectResult | null> {
     emit("info", etapa, `${label} — snippet-only`);
-    const cands = await gSearch(fc, query, emit, etapa, { limit: 8, timeoutMs: 5000, uf });
+    const cands = filterForeignMunicipio(await gSearch(fc, query, emit, etapa, { limit: 8, timeoutMs: 5000, uf }), slug, emit, etapa);
     addToPool(cands);
     const ranked = preferGov(cands, undefined, ufLow);
     if (ranked.length === 0) return null;
