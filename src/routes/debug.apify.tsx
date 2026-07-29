@@ -51,6 +51,47 @@ function DebugApifyPage() {
   const [loading, setLoading] = useState(false);
   const [resp, setResp] = useState<OkResp | ErrResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [health, setHealth] = useState<
+    { ok: boolean; msg: string; ms?: number } | null
+  >(null);
+
+  async function testConnection() {
+    setTesting(true);
+    setHealth(null);
+    const t0 = Date.now();
+    try {
+      const r = await fetch("/api/debug/apify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "serp",
+          query: "teste conexao apify",
+          maxResults: 1,
+          timeoutMs: 60_000,
+        }),
+      });
+      const data = (await r.json()) as OkResp | ErrResp;
+      const ms = Date.now() - t0;
+      if (r.ok && data.ok) {
+        setHealth({
+          ok: true,
+          msg: `Conexão OK — HTTP ${r.status}, ${data.pagesCrawled} resultado(s) retornado(s).`,
+          ms,
+        });
+      } else {
+        setHealth({
+          ok: false,
+          msg: `Falhou — HTTP ${r.status}: ${"reason" in data ? data.reason : "resposta inesperada"}`,
+          ms,
+        });
+      }
+    } catch (e) {
+      setHealth({ ok: false, msg: String(e), ms: Date.now() - t0 });
+    } finally {
+      setTesting(false);
+    }
+  }
 
   async function run() {
     setLoading(true);
@@ -93,7 +134,31 @@ function DebugApifyPage() {
           </Link>
           <h1 className="text-2xl font-semibold">POC Apify</h1>
         </div>
+        <Button variant="outline" size="sm" onClick={testConnection} disabled={testing}>
+          {testing ? (
+            <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Testando...</>
+          ) : (
+            "Testar integração Apify"
+          )}
+        </Button>
       </div>
+
+      {health && (
+        <div
+          className={`rounded border p-3 text-sm ${
+            health.ok
+              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              : "border-red-200 bg-red-50 text-red-700"
+          }`}
+        >
+          <div className="font-medium">
+            {health.ok ? "Integração funcionando" : "Integração com problema"}
+          </div>
+          <div className="break-all">{health.msg}</div>
+          {health.ms != null && <div className="text-xs mt-1 opacity-70">{health.ms} ms</div>}
+        </div>
+      )}
+
 
       <div className="rounded-lg border p-4 space-y-3 bg-white">
         <label className="block text-sm font-medium">Actor</label>
