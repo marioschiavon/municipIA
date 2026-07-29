@@ -9,29 +9,25 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
-import { Route as AuthRouteImport } from './routes/auth'
 import { Route as DebugRouteImport } from './routes/debug'
-import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
-import { Route as ApiProspectRouteImport } from './routes/api/prospect'
-import { Route as DebugApifyRouteImport } from './routes/debug.apify'
+import { Route as AuthRouteImport } from './routes/auth'
+import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
+import { Route as IndexRouteImport } from './routes/index'
 import { Route as MunicipioIbgeIdRouteImport } from './routes/municipio.$ibgeId'
+import { Route as DebugApifyRouteImport } from './routes/debug.apify'
+import { Route as ApiProspectRouteImport } from './routes/api/prospect'
+import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin.index'
-import { Route as AuthenticatedAdminImportRouteImport } from './routes/_authenticated/admin.import'
-import { Route as AuthenticatedAdminScoreRouteImport } from './routes/_authenticated/admin.score'
-import { Route as ApiAdminImportRouteImport } from './routes/api/admin/import'
 import { Route as ApiDebugApifyRouteImport } from './routes/api/debug.apify'
+import { Route as ApiAdminImportRouteImport } from './routes/api/admin/import'
+import { Route as AuthenticatedAdminScoreRouteImport } from './routes/_authenticated/admin.score'
+import { Route as AuthenticatedAdminImportRouteImport } from './routes/_authenticated/admin.import'
 import { Route as AuthenticatedAdminMunicipiosIndexRouteImport } from './routes/_authenticated/admin.municipios.index'
 import { Route as AuthenticatedAdminMunicipiosIbgeIdRouteImport } from './routes/_authenticated/admin.municipios.$ibgeId'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
-  id: '/_authenticated',
+const DebugRoute = DebugRouteImport.update({
+  id: '/debug',
+  path: '/debug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthRoute = AuthRouteImport.update({
@@ -39,19 +35,18 @@ const AuthRoute = AuthRouteImport.update({
   path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
-const DebugRoute = DebugRouteImport.update({
-  id: '/debug',
-  path: '/debug',
+const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
+  id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
-  id: '/admin',
-  path: '/admin',
-  getParentRoute: () => AuthenticatedRouteRoute,
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const ApiProspectRoute = ApiProspectRouteImport.update({
-  id: '/api/prospect',
-  path: '/api/prospect',
+const MunicipioIbgeIdRoute = MunicipioIbgeIdRouteImport.update({
+  id: '/municipio/$ibgeId',
+  path: '/municipio/$ibgeId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DebugApifyRoute = DebugApifyRouteImport.update({
@@ -59,14 +54,34 @@ const DebugApifyRoute = DebugApifyRouteImport.update({
   path: '/apify',
   getParentRoute: () => DebugRoute,
 } as any)
-const MunicipioIbgeIdRoute = MunicipioIbgeIdRouteImport.update({
-  id: '/municipio/$ibgeId',
-  path: '/municipio/$ibgeId',
+const ApiProspectRoute = ApiProspectRouteImport.update({
+  id: '/api/prospect',
+  path: '/api/prospect',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedAdminIndexRoute = AuthenticatedAdminIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AuthenticatedAdminRoute,
+} as any)
+const ApiDebugApifyRoute = ApiDebugApifyRouteImport.update({
+  id: '/api/debug/apify',
+  path: '/api/debug/apify',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAdminImportRoute = ApiAdminImportRouteImport.update({
+  id: '/api/admin/import',
+  path: '/api/admin/import',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedAdminScoreRoute = AuthenticatedAdminScoreRouteImport.update({
+  id: '/score',
+  path: '/score',
   getParentRoute: () => AuthenticatedAdminRoute,
 } as any)
 const AuthenticatedAdminImportRoute =
@@ -75,21 +90,6 @@ const AuthenticatedAdminImportRoute =
     path: '/import',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
-const AuthenticatedAdminScoreRoute = AuthenticatedAdminScoreRouteImport.update({
-  id: '/score',
-  path: '/score',
-  getParentRoute: () => AuthenticatedAdminRoute,
-} as any)
-const ApiAdminImportRoute = ApiAdminImportRouteImport.update({
-  id: '/api/admin/import',
-  path: '/api/admin/import',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiDebugApifyRoute = ApiDebugApifyRouteImport.update({
-  id: '/api/debug/apify',
-  path: '/api/debug/apify',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AuthenticatedAdminMunicipiosIndexRoute =
   AuthenticatedAdminMunicipiosIndexRouteImport.update({
     id: '/municipios/',
@@ -216,18 +216,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/_authenticated': {
-      id: '/_authenticated'
-      path: ''
-      fullPath: '/'
-      preLoaderRoute: typeof AuthenticatedRouteRouteImport
+    '/debug': {
+      id: '/debug'
+      path: '/debug'
+      fullPath: '/debug'
+      preLoaderRoute: typeof DebugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth': {
@@ -237,25 +230,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/debug': {
-      id: '/debug'
-      path: '/debug'
-      fullPath: '/debug'
-      preLoaderRoute: typeof DebugRouteImport
+    '/_authenticated': {
+      id: '/_authenticated'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/admin': {
-      id: '/_authenticated/admin'
-      path: '/admin'
-      fullPath: '/admin'
-      preLoaderRoute: typeof AuthenticatedAdminRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/api/prospect': {
-      id: '/api/prospect'
-      path: '/api/prospect'
-      fullPath: '/api/prospect'
-      preLoaderRoute: typeof ApiProspectRouteImport
+    '/municipio/$ibgeId': {
+      id: '/municipio/$ibgeId'
+      path: '/municipio/$ibgeId'
+      fullPath: '/municipio/$ibgeId'
+      preLoaderRoute: typeof MunicipioIbgeIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/debug/apify': {
@@ -265,12 +258,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DebugApifyRouteImport
       parentRoute: typeof DebugRoute
     }
-    '/municipio/$ibgeId': {
-      id: '/municipio/$ibgeId'
-      path: '/municipio/$ibgeId'
-      fullPath: '/municipio/$ibgeId'
-      preLoaderRoute: typeof MunicipioIbgeIdRouteImport
+    '/api/prospect': {
+      id: '/api/prospect'
+      path: '/api/prospect'
+      fullPath: '/api/prospect'
+      preLoaderRoute: typeof ApiProspectRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/admin': {
+      id: '/_authenticated/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AuthenticatedAdminRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/admin/': {
       id: '/_authenticated/admin/'
@@ -279,19 +279,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminIndexRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
-    '/_authenticated/admin/import': {
-      id: '/_authenticated/admin/import'
-      path: '/import'
-      fullPath: '/admin/import'
-      preLoaderRoute: typeof AuthenticatedAdminImportRouteImport
-      parentRoute: typeof AuthenticatedAdminRoute
-    }
-    '/_authenticated/admin/score': {
-      id: '/_authenticated/admin/score'
-      path: '/score'
-      fullPath: '/admin/score'
-      preLoaderRoute: typeof AuthenticatedAdminScoreRouteImport
-      parentRoute: typeof AuthenticatedAdminRoute
+    '/api/debug/apify': {
+      id: '/api/debug/apify'
+      path: '/api/debug/apify'
+      fullPath: '/api/debug/apify'
+      preLoaderRoute: typeof ApiDebugApifyRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/admin/import': {
       id: '/api/admin/import'
@@ -300,12 +293,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAdminImportRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/debug/apify': {
-      id: '/api/debug/apify'
-      path: '/api/debug/apify'
-      fullPath: '/api/debug/apify'
-      preLoaderRoute: typeof ApiDebugApifyRouteImport
-      parentRoute: typeof rootRouteImport
+    '/_authenticated/admin/score': {
+      id: '/_authenticated/admin/score'
+      path: '/score'
+      fullPath: '/admin/score'
+      preLoaderRoute: typeof AuthenticatedAdminScoreRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
+    '/_authenticated/admin/import': {
+      id: '/_authenticated/admin/import'
+      path: '/import'
+      fullPath: '/admin/import'
+      preLoaderRoute: typeof AuthenticatedAdminImportRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
     }
     '/_authenticated/admin/municipios/': {
       id: '/_authenticated/admin/municipios/'
