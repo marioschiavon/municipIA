@@ -134,7 +134,31 @@ function DebugApifyPage() {
           </Link>
           <h1 className="text-2xl font-semibold">POC Apify</h1>
         </div>
+        <Button variant="outline" size="sm" onClick={testConnection} disabled={testing}>
+          {testing ? (
+            <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Testando...</>
+          ) : (
+            "Testar integração Apify"
+          )}
+        </Button>
       </div>
+
+      {health && (
+        <div
+          className={`rounded border p-3 text-sm ${
+            health.ok
+              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              : "border-red-200 bg-red-50 text-red-700"
+          }`}
+        >
+          <div className="font-medium">
+            {health.ok ? "Integração funcionando" : "Integração com problema"}
+          </div>
+          <div className="break-all">{health.msg}</div>
+          {health.ms != null && <div className="text-xs mt-1 opacity-70">{health.ms} ms</div>}
+        </div>
+      )}
+
 
       <div className="rounded-lg border p-4 space-y-3 bg-white">
         <label className="block text-sm font-medium">Actor</label>
