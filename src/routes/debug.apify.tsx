@@ -51,6 +51,47 @@ function DebugApifyPage() {
   const [loading, setLoading] = useState(false);
   const [resp, setResp] = useState<OkResp | ErrResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [health, setHealth] = useState<
+    { ok: boolean; msg: string; ms?: number } | null
+  >(null);
+
+  async function testConnection() {
+    setTesting(true);
+    setHealth(null);
+    const t0 = Date.now();
+    try {
+      const r = await fetch("/api/debug/apify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "serp",
+          query: "teste conexao apify",
+          maxResults: 1,
+          timeoutMs: 60_000,
+        }),
+      });
+      const data = (await r.json()) as OkResp | ErrResp;
+      const ms = Date.now() - t0;
+      if (r.ok && data.ok) {
+        setHealth({
+          ok: true,
+          msg: `Conexão OK — HTTP ${r.status}, ${data.pagesCrawled} resultado(s) retornado(s).`,
+          ms,
+        });
+      } else {
+        setHealth({
+          ok: false,
+          msg: `Falhou — HTTP ${r.status}: ${"reason" in data ? data.reason : "resposta inesperada"}`,
+          ms,
+        });
+      }
+    } catch (e) {
+      setHealth({ ok: false, msg: String(e), ms: Date.now() - t0 });
+    } finally {
+      setTesting(false);
+    }
+  }
 
   async function run() {
     setLoading(true);
