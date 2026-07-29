@@ -567,6 +567,14 @@ function mergeExtracted(base: Extracted, patch: Partial<Extracted>, municipio: s
 }
 
 
+// Páginas de "estrutura organizacional/organograma" são comuns em sites de
+// prefeitura (geralmente exigidas por lei de transparência) e frequentemente
+// são um diretório renderizado 100% via JS (dados vêm de uma API depois do
+// carregamento) — o fetch nativo baixa só o HTML estático (menu/rodapé, sem
+// nenhum dado real), que ainda assim passa fácil no teste de tamanho.
+const DIRECTORY_PAGE_RE = /(estrutura-organizacional|estrutura-administrativa|organograma|quem-e-quem)/i;
+const HAS_EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
+
 async function scrapeMarkdown(
   fc: Firecrawl,
   url: string,
@@ -581,11 +589,17 @@ async function scrapeMarkdown(
   });
   if (native.ok) {
     const md = htmlToMarkdown(native.html, native.finalUrl);
-    if (md.replace(/\s+/g, " ").trim().length >= 200) {
+    const flat = md.replace(/\s+/g, " ").trim();
+    const pareceVazioPorJs = DIRECTORY_PAGE_RE.test(url) && !HAS_EMAIL_RE.test(flat);
+    if (flat.length >= 200 && !pareceVazioPorJs) {
       emit("success", etapa, `Página baixada direto (${(native.bytes / 1024).toFixed(1)} KB → ${md.length} chars markdown)`, { via: "native" });
       return md.slice(0, 18000);
     }
-    emit("warn", etapa, "HTML nativo curto — caindo para Firecrawl");
+    if (pareceVazioPorJs) {
+      emit("warn", etapa, "Página de estrutura organizacional sem e-mail no HTML estático (provável renderização via JS) — caindo para Firecrawl");
+    } else {
+      emit("warn", etapa, "HTML nativo curto — caindo para Firecrawl");
+    }
   } else {
     emit("warn", etapa, `Fetch nativo falhou (${native.reason}) — caindo para Firecrawl`);
   }
@@ -1504,7 +1518,7 @@ export async function prospectar(
     const contactQuery = `site:${top3Host} contato OR "fale conosco" OR "e-mail" secretaria educação`;
     const contactCands = await search(contactQuery, "educacao", { limit: 3, timeoutMs: 8000, uf });
     addToPool(contactCands);
-    const contactRe = /(\/contato|\/fale[-_]?conosco|\/fale[-_]?com[-_]?nos|\/secretarias?\/educa|\/educacao\/contato|\/atendimento)/i;
+    const contactRe = /(\/contato|\/fale[-_]?conosco|\/fale[-_]?com[-_]?nos|\/secretarias?\/educa|\/educacao\/contato|\/atendimento|estrutura-organizacional|estrutura-administrativa|organograma|quem-e-quem)/i;
     const contactUrls = contactCands
       .filter((c) => contactRe.test(c.url))
       .map((c) => c.url)
