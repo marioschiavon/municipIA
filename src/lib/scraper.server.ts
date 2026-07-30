@@ -13,6 +13,20 @@ export type FetchResult =
   | { ok: true; html: string; finalUrl: string; bytes: number }
   | { ok: false; reason: string };
 
+/** Normaliza um domínio digitado à mão (tira esquema, "www.", path e barra final). */
+export function normalizeHost(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  let host = trimmed;
+  try {
+    host = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`).host;
+  } catch {
+    host = trimmed.replace(/^https?:\/\//i, "").split("/")[0];
+  }
+  return host.toLowerCase().replace(/^www\./, "");
+}
+
 export async function fetchHtml(
   url: string,
   opts: { timeoutMs?: number; emit?: FetchEmit } = {},

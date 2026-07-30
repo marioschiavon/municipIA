@@ -43,8 +43,10 @@ function AdminEditMunicipio() {
   const [matriculas, setMatriculas] = useState<Record<string, number>>({});
   const [edu, setEdu] = useState({
     secretario: "", cargo: "", horario: "", fonte: "", fonte_url: "",
+    dominio_oficial: "", pagina_educacao_url: "",
     status: "pendente" as "validado" | "pendente" | "sem_dados",
   });
+  const [dominioConfirmadoEm, setDominioConfirmadoEm] = useState<string | null>(null);
   const [emailsText, setEmailsText] = useState("");
   const [telefonesText, setTelefonesText] = useState("");
   const [equipe, setEquipe] = useState<Array<{ nome: string; cargo: string; email?: string | null; telefone?: string | null }>>([]);
@@ -60,8 +62,10 @@ function AdminEditMunicipio() {
       setEdu({
         secretario: e.secretario ?? "", cargo: e.cargo ?? "",
         horario: e.horario ?? "", fonte: e.fonte ?? "", fonte_url: e.fonte_url ?? "",
+        dominio_oficial: (e as any).dominio_oficial ?? "", pagina_educacao_url: (e as any).pagina_educacao_url ?? "",
         status: (e.status as any) ?? "pendente",
       });
+      setDominioConfirmadoEm((e as any).dominio_confirmado_em ?? null);
       setEmailsText(Array.isArray(e.emails) ? e.emails.join("\n") : "");
       setTelefonesText(Array.isArray(e.telefones) ? e.telefones.join("\n") : "");
       setEquipe(Array.isArray(e.equipe) ? (e.equipe as any) : []);
@@ -91,7 +95,10 @@ function AdminEditMunicipio() {
           emails: emailsText.split("\n").map((s) => s.trim()).filter(Boolean),
           telefones: telefonesText.split("\n").map((s) => s.trim()).filter(Boolean),
           horario: edu.horario || null, fonte: edu.fonte || null,
-          fonte_url: edu.fonte_url || null, status: edu.status, equipe,
+          fonte_url: edu.fonte_url || null,
+          dominio_oficial: edu.dominio_oficial || null,
+          pagina_educacao_url: edu.pagina_educacao_url || null,
+          status: edu.status, equipe,
         },
         etapas: ETAPAS.map((e) => ({ etapa: e.id as any, matriculas: matriculas[e.id] || 0 })),
       },
@@ -185,6 +192,21 @@ function AdminEditMunicipio() {
           </Field>
           <Field label="Fonte"><Input value={edu.fonte} onChange={(e) => setEdu({ ...edu, fonte: e.target.value })} /></Field>
           <Field label="URL da fonte"><Input value={edu.fonte_url} onChange={(e) => setEdu({ ...edu, fonte_url: e.target.value })} /></Field>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 rounded-md border border-amber-200 bg-amber-50 p-4">
+          <Field label="Domínio oficial confirmado">
+            <Input placeholder="ex.: abadiadegoias.go.gov.br" value={edu.dominio_oficial}
+              onChange={(e) => setEdu({ ...edu, dominio_oficial: e.target.value })} />
+          </Field>
+          <Field label="URL da página de Educação (confirmada)">
+            <Input placeholder="https://..." value={edu.pagina_educacao_url}
+              onChange={(e) => setEdu({ ...edu, pagina_educacao_url: e.target.value })} />
+          </Field>
+          <p className="text-xs text-muted-foreground md:col-span-2">
+            Quando preenchido, a próxima prospecção usa <b>apenas</b> este domínio (sitemap/links internos), sem buscar no Google.
+            Limpe os dois campos e salve para forçar uma nova descoberta completa.
+            {dominioConfirmadoEm && <> Confirmado em {new Date(dominioConfirmadoEm).toLocaleDateString("pt-BR")}.</>}
+          </p>
         </div>
       </section>
 

@@ -206,6 +206,21 @@ function isForeignMunicipioHost(host: string, slug: string): boolean {
   return slugify(m[1]) !== slug;
 }
 
+/**
+ * true se `host` é confiável o suficiente pra ser PERSISTIDO como domínio
+ * oficial do município (fonte exclusiva em runs futuros). NUNCA confirma
+ * Câmara Municipal (.leg.br — outra entidade), portal genérico do estado,
+ * ou o domínio-padrão de outro município.
+ */
+function isConfirmableOfficialHost(host: string, slug: string, ufLow: string, dominioOficialOverride?: string): boolean {
+  const h = stripWww(host);
+  if (h.endsWith(".leg.br")) return false;
+  if (isBareStateHost(h, ufLow)) return false;
+  if (isForeignMunicipioHost(h, slug)) return false;
+  if (isDominioOficialEspecial(h, dominioOficialOverride)) return true;
+  return /\.gov\.br$/.test(h) && h.includes(slug);
+}
+
 /** Remove candidatos cujo host é claramente o site oficial de OUTRO município. */
 function filterForeignMunicipio(cands: SearchCandidate[], slug: string, emit?: Emit, etapa?: EtapaTag): SearchCandidate[] {
   const kept = cands.filter((c) => !isForeignMunicipioHost(shortHost(c.url), slug));
@@ -884,6 +899,8 @@ export async function prospectar(
   onEvent?: (evt: ProgressEvent) => void,
   ibgeId?: number,
   provider: "firecrawl" | "apify" = "firecrawl",
+  dominioConfirmado?: string | null,
+  paginaEducacaoConhecida?: string | null,
 ): Promise<ProspectResult> {
   const t0 = Date.now();
   
@@ -947,10 +964,24 @@ export async function prospectar(
   };
 
 
+  // Decide se o resultado desta run confirma um domínio oficial pra persistir
+  // (usado em runs futuras como fonte exclusiva — ver Estágio 0 mais abaixo).
+  // Câmara Municipal NUNCA confirma (é outra entidade, mesmo que .gov.br por engano).
+  const dominioParaConfirmar = (result: ProspectResult): { dominio: string | null; pagina: string | null } => {
+    if (result.hierarquia === "camara" || !result.fonteUrl) return { dominio: null, pagina: null };
+    const host = shortHost(result.fonteUrl);
+    if (!isConfirmableOfficialHost(host, slug, ufLow, dominioOficial)) return { dominio: null, pagina: null };
+    const dominio = isDominioOficialEspecial(host, dominioOficial) ? dominioOficial! : stripWww(host);
+    return { dominio, pagina: result.hierarquia === "educacao" ? result.fonteUrl : null };
+  };
+
   const sendFinal = (result: ProspectResult) => {
+    const { dominio, pagina } = dominioParaConfirmar(result);
     const merged: ProspectResult = {
       ...result,
       equipe: dedupeEquipe([...(result.equipe ?? []), ...equipePool]),
+      dominioOficialConfirmado: dominio,
+      paginaEducacaoUrl: pagina,
     };
     onEvent?.({ kind: "final", result: merged, ts: Date.now(), elapsedMs: Date.now() - t0 });
     return merged;
@@ -973,6 +1004,87 @@ export async function prospectar(
   const anoAtual = new Date().getFullYear();
   const slug = slugify(municipio);
   const ufLow = uf.toLowerCase();
+  const dominioOficial = DOMINIO_OFICIAL_ESPECIAL[slug];
+  if (dominioOficial) emit("info", "nome", `Domínio oficial conhecido para ${municipio}: ${dominioOficial} (não segue o padrão {slug}.{uf}.gov.br)`);
+
+  // ============================================================
+  // ESTÁGIO 0 — domínio oficial JÁ CONFIRMADO em run anterior (ou pelo admin)
+  // ============================================================
+  // Quando presente, essa é a fonte EXCLUSIVA — não busca no Google/Apify
+  // (por decisão de produto: menos custo, sem risco de contaminação entre
+  // municípios). Precisa rodar ANTES da IIFE do RAG em background (mais
+  // abaixo), senão as chamadas Apify já teriam disparado mesmo com o
+  // short-circuit, anulando o ganho de custo desta feature.
+  if (dominioConfirmado) {
+    const runConfirmedDomainFlow = async (): Promise<ProspectResult | null> => {
+      if (paginaEducacaoConhecida) {
+        const md = await gScrape(fc, paginaEducacaoConhecida, emit, "educacao", { hardTimeoutMs: 8000 });
+        if (md) {
+          const ext = await runExtract(md, paginaEducacaoConhecida, "educacao", municipio, uf, emit, { topHost: dominioConfirmado });
+          const hasGoodEmail = ext?.emails.some((e) => !GENERIC_LOCAL.test(e)) ?? false;
+          if (ext && (hasGoodEmail || ext.telefones.length > 0 || ext.secretario)) {
+            return {
+              status: hasGoodEmail ? "found" : "partial",
+              hierarquia: "educacao",
+              secretario: ext.secretario,
+              cargo: ext.cargo,
+              emails: ext.emails,
+              telefones: ext.telefones,
+              fonte: "Página conhecida da Secretaria (domínio confirmado)",
+              fonteUrl: paginaEducacaoConhecida,
+              contexto: ext.contexto,
+              dataReferencia: ext.dataReferencia,
+              horarioAtendimento: ext.horarioAtendimento,
+            };
+          }
+        }
+      }
+      const { discoverEducationPages } = await import("./sitemap.server");
+      const { candidates, via } = await discoverEducationPages(dominioConfirmado);
+      emit("info", "educacao", `Estágio 0 — ${candidates.length} candidato(s) via ${via} em ${dominioConfirmado}`);
+      let melhor: ProspectResult | null = null;
+      for (const url of candidates) {
+        const md = await gScrape(fc, url, emit, "educacao", { hardTimeoutMs: 8000 });
+        if (!md) continue;
+        const ext = await runExtract(md, url, "educacao", municipio, uf, emit, { topHost: dominioConfirmado });
+        if (!ext || !hasUsefulContact(ext)) continue;
+        const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
+        const candidateResult: ProspectResult = {
+          status: hasGoodEmail ? "found" : "partial",
+          hierarquia: "educacao",
+          secretario: ext.secretario,
+          cargo: ext.cargo,
+          emails: ext.emails,
+          telefones: ext.telefones,
+          fonte: `Sitemap do domínio confirmado (${via})`,
+          fonteUrl: url,
+          contexto: ext.contexto,
+          dataReferencia: ext.dataReferencia,
+          horarioAtendimento: ext.horarioAtendimento,
+        };
+        if (hasGoodEmail) return candidateResult;
+        if (!melhor) melhor = candidateResult;
+      }
+      return melhor;
+    };
+
+    emit("info", "educacao", `Estágio 0 — domínio oficial já confirmado (${dominioConfirmado}); pulando Google/Apify`);
+    const stage0 = await withTimeout(runConfirmedDomainFlow(), 45_000, "runConfirmedDomainFlow", emit, "educacao");
+    if (stage0) return sendFinal(stage0);
+    emit("warn", "educacao", "Domínio confirmado não teve página localizável — not_found (sem fallback ao Google, por decisão de produto)");
+    return sendFinal({
+      status: "not_found",
+      hierarquia: null,
+      secretario: null,
+      cargo: null,
+      emails: [],
+      telefones: [],
+      fonte: null,
+      fonteUrl: null,
+      contexto: `Domínio confirmado (${dominioConfirmado}) sem página de contato localizável via sitemap/links.`,
+      horarioAtendimento: null,
+    });
+  }
 
   // Pool global de snippets — reaproveitado entre estágios.
   const snippetPool: SearchCandidate[] = [];
@@ -1086,8 +1198,6 @@ export async function prospectar(
   // ESTÁGIO 1 — NOME ATUAL (apenas nome, sem contato)
   // ============================================================
   emit("info", "nome", "Estágio 1 — identificar NOME atual do(a) Secretário(a) de Educação");
-  const dominioOficial = DOMINIO_OFICIAL_ESPECIAL[slug];
-  if (dominioOficial) emit("info", "nome", `Domínio oficial conhecido para ${municipio}: ${dominioOficial} (não segue o padrão {slug}.{uf}.gov.br)`);
   const queryNomeA = `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual`;
   const queryNomeB = `secretário OR secretária de educação ${municipio} ${uf} ${anoAtual} atual`;
   const queryNomeC = `site:${dominioOficial ?? `${slug}.${ufLow}.gov.br`} secretaria educação secretário`;
@@ -1157,7 +1267,7 @@ export async function prospectar(
         if (!nameAppearsIn(nomeRes.secretario, blob)) continue;
         appearsCount += 1;
         const host = shortHost(c.url).toLowerCase();
-        if ((/\.gov\.br$/.test(host) && host.includes(slug)) || isDominioOficialEspecial(host, dominioOficial)) appearsInOwnGov = true;
+        if (isConfirmableOfficialHost(host, slug, ufLow, dominioOficial)) appearsInOwnGov = true;
       }
       // Match agregado: soma de TODOS os snippets, para pegar nomes montados a
       // partir de fragmentos espalhados em snippets diferentes (comum quando o

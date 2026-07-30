@@ -151,6 +151,8 @@ const SaveInput = z.object({
     horario: z.string().nullable(),
     fonte: z.string().nullable(),
     fonte_url: z.string().nullable(),
+    dominio_oficial: z.string().nullable().optional(),
+    pagina_educacao_url: z.string().nullable().optional(),
     status: z.enum(["validado", "pendente", "sem_dados"]),
     equipe: z.array(z.object({
       nome: z.string(),
@@ -218,6 +220,7 @@ export const adminSaveMunicipio = createServerFn({ method: "POST" })
       atualizado_em: now,
     });
 
+    const { normalizeHost } = await import("./scraper.server");
     const { error: eErr } = await supabaseAdmin.from("municipios_educacao").upsert({
       ibge_id: data.ibge_id,
       secretario: data.educacao.secretario,
@@ -227,6 +230,8 @@ export const adminSaveMunicipio = createServerFn({ method: "POST" })
       horario: data.educacao.horario,
       fonte: data.educacao.fonte,
       fonte_url: data.educacao.fonte_url,
+      dominio_oficial: normalizeHost(data.educacao.dominio_oficial ?? null),
+      pagina_educacao_url: data.educacao.pagina_educacao_url || null,
       status: data.educacao.status,
       equipe: data.educacao.equipe,
       atualizado_em: now,

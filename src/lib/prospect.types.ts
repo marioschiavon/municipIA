@@ -25,6 +25,10 @@ export type ProspectResult = {
   horarioAtendimento?: string | null;
   /** Equipe da Secretaria — outras pessoas com nome + cargo (coordenadores, diretores, assessores). */
   equipe?: EquipeMembro[];
+  /** Domínio raiz confirmado como oficial do município nesta run; null se nada confirmável (ex.: Câmara Municipal). */
+  dominioOficialConfirmado?: string | null;
+  /** URL específica da página de Educação usada/confirmada nesta run. */
+  paginaEducacaoUrl?: string | null;
 };
 
 

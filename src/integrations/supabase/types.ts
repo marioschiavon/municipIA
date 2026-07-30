@@ -92,6 +92,8 @@ export type Database = {
           breakdown: Json
           cargo: string | null
           created_at: string
+          dominio_confirmado_em: string | null
+          dominio_oficial: string | null
           emails: string[]
           equipe: Json
           faixa: string
@@ -99,6 +101,7 @@ export type Database = {
           fonte_url: string | null
           horario: string | null
           ibge_id: number
+          pagina_educacao_url: string | null
           score: number
           secretario: string | null
           status: string
@@ -110,6 +113,8 @@ export type Database = {
           breakdown?: Json
           cargo?: string | null
           created_at?: string
+          dominio_confirmado_em?: string | null
+          dominio_oficial?: string | null
           emails?: string[]
           equipe?: Json
           faixa?: string
@@ -117,6 +122,7 @@ export type Database = {
           fonte_url?: string | null
           horario?: string | null
           ibge_id: number
+          pagina_educacao_url?: string | null
           score?: number
           secretario?: string | null
           status?: string
@@ -128,6 +134,8 @@ export type Database = {
           breakdown?: Json
           cargo?: string | null
           created_at?: string
+          dominio_confirmado_em?: string | null
+          dominio_oficial?: string | null
           emails?: string[]
           equipe?: Json
           faixa?: string
@@ -135,6 +143,7 @@ export type Database = {
           fonte_url?: string | null
           horario?: string | null
           ibge_id?: number
+          pagina_educacao_url?: string | null
           score?: number
           secretario?: string | null
           status?: string

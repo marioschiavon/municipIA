@@ -27,6 +27,27 @@ export const Route = createFileRoute("/api/prospect")({
         }
         const { municipio, uf, ibgeId, provider } = parsed.data;
 
+        // Se já sabemos o domínio oficial confirmado deste município (de uma run
+        // anterior ou de edição manual do admin), o pipeline usa ele com
+        // exclusividade (sem busca no Google/Apify) — ver Estágio 0 em prospect.server.ts.
+        let dominioConfirmado: string | null = null;
+        let paginaEducacaoConhecida: string | null = null;
+        if (ibgeId) {
+          const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+          const { data: edu } = await supabaseAdmin
+            .from("municipios_educacao")
+            .select("dominio_oficial, pagina_educacao_url, dominio_confirmado_em")
+            .eq("ibge_id", ibgeId)
+            .maybeSingle();
+          dominioConfirmado = edu?.dominio_oficial ?? null;
+          // Só confia cegamente na página específica se a confirmação for recente
+          // (~120 dias) — senão ainda usa o domínio (sitemap), mas redescobre a página.
+          const confirmadoRecente = edu?.dominio_confirmado_em
+            ? Date.now() - new Date(edu.dominio_confirmado_em).getTime() < 120 * 24 * 60 * 60 * 1000
+            : false;
+          paginaEducacaoConhecida = confirmadoRecente ? (edu?.pagina_educacao_url ?? null) : null;
+        }
+
         const { prospectar } = await import("@/lib/prospect.server");
         const encoder = new TextEncoder();
 
@@ -36,7 +57,7 @@ export const Route = createFileRoute("/api/prospect")({
               controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
             };
             try {
-              const result = await prospectar(municipio, uf, (evt) => send(evt), ibgeId, provider ?? "firecrawl");
+              const result = await prospectar(municipio, uf, (evt) => send(evt), ibgeId, provider ?? "firecrawl", dominioConfirmado, paginaEducacaoConhecida);
               // Persistir se temos ibgeId
               if (ibgeId && result) {
                 try {
