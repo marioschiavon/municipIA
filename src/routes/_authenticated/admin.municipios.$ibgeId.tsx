@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Loader2, Plus, Trash2, Save, Search, RefreshCw } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, Trash2, Save, Search, RefreshCw, AlertTriangle } from "lucide-react";
 import type { ProgressEvent } from "@/lib/prospect.types";
+import type { ProspectFase } from "@/lib/use-prospect-queue";
 
 const ETAPAS: Array<{ id: string; label: string; hint: string }> = [
   { id: "creche", label: "Creche", hint: "0 a 3 anos" },
@@ -49,6 +50,10 @@ function AdminEditMunicipio() {
     status: "pendente" as "validado" | "pendente" | "sem_dados",
   });
   const [dominioConfirmadoEm, setDominioConfirmadoEm] = useState<string | null>(null);
+  const [secretarioConfirmadoEm, setSecretarioConfirmadoEm] = useState<string | null>(null);
+  const [contatoConfirmadoEm, setContatoConfirmadoEm] = useState<string | null>(null);
+  const [revisaoNecessaria, setRevisaoNecessaria] = useState(false);
+  const [revisaoMotivos, setRevisaoMotivos] = useState<string[]>([]);
   const [emailsText, setEmailsText] = useState("");
   const [telefonesText, setTelefonesText] = useState("");
   const [equipe, setEquipe] = useState<Array<{ nome: string; cargo: string; email?: string | null; telefone?: string | null }>>([]);
@@ -68,6 +73,10 @@ function AdminEditMunicipio() {
         status: (e.status as any) ?? "pendente",
       });
       setDominioConfirmadoEm((e as any).dominio_confirmado_em ?? null);
+      setSecretarioConfirmadoEm((e as any).secretario_confirmado_em ?? null);
+      setContatoConfirmadoEm((e as any).contato_confirmado_em ?? null);
+      setRevisaoNecessaria((e as any).revisao_necessaria ?? false);
+      setRevisaoMotivos((e as any).revisao_motivos ?? []);
       setEmailsText(Array.isArray(e.emails) ? e.emails.join("\n") : "");
       setTelefonesText(Array.isArray(e.telefones) ? e.telefones.join("\n") : "");
       setEquipe(Array.isArray(e.equipe) ? (e.equipe as any) : []);
@@ -84,18 +93,18 @@ function AdminEditMunicipio() {
     },
   });
 
-  // ===== Prospecção ao vivo (Firecrawl ou Apify) — só admin, sempre salva =====
+  // ===== Prospecção ao vivo (Firecrawl ou Apify, completa ou por fase) — só admin, sempre salva =====
   const [prospRunning, setProspRunning] = useState(false);
-  const [prospTestMode, setProspTestMode] = useState(false);
+  const [activeButton, setActiveButton] = useState<"atualizar" | "apify" | ProspectFase | null>(null);
   const [prospEvents, setProspEvents] = useState<ProgressEvent[]>([]);
   const prospAbortRef = useRef<AbortController | null>(null);
 
-  async function rodarProspeccao(provider: "firecrawl" | "apify" = "firecrawl") {
+  async function rodarProspeccao(opts: { provider?: "firecrawl" | "apify"; fase?: ProspectFase; button: "atualizar" | "apify" | ProspectFase }) {
     if (!data.data?.municipio) return;
     const { nome, uf } = data.data.municipio;
     setProspEvents([]);
     setProspRunning(true);
-    setProspTestMode(provider === "apify");
+    setActiveButton(opts.button);
     const controller = new AbortController();
     prospAbortRef.current = controller;
     try {
@@ -105,10 +114,10 @@ function AdminEditMunicipio() {
       const res = await fetch("/api/prospect", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        // Ao contrário do antigo botão público, os dois modos aqui SEMPRE mandam
-        // ibgeId — o teste com Apify também persiste, pra dar pra comparar o
-        // resultado salvo de verdade.
-        body: JSON.stringify({ municipio: nome, uf, ibgeId: id, provider }),
+        // Ao contrário do antigo botão público, os modos aqui SEMPRE mandam
+        // ibgeId — inclusive o teste com Apify e as fases isoladas persistem,
+        // pra dar pra comparar o resultado salvo de verdade.
+        body: JSON.stringify({ municipio: nome, uf, ibgeId: id, provider: opts.provider ?? "firecrawl", fase: opts.fase ?? "completo" }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -164,6 +173,9 @@ function AdminEditMunicipio() {
           status: edu.status, equipe,
         },
         etapas: ETAPAS.map((e) => ({ etapa: e.id as any, matriculas: matriculas[e.id] || 0 })),
+        // O admin está revisando/corrigindo manualmente aqui — qualquer sinalização
+        // de revisão pendente nas 3 fases sai da fila ao salvar.
+        limparRevisaoFases: revisaoNecessaria ? (["dominio", "secretario", "contato"] as const) : undefined,
       },
     }),
     onSuccess: () => {
@@ -187,16 +199,38 @@ function AdminEditMunicipio() {
         <p className="text-xs text-muted-foreground">IBGE {m.ibge_id}</p>
       </div>
 
+      {/* Fila de revisão — sinalizado por alguma fase isolada com confiança baixa/contato genérico */}
+      {revisaoNecessaria && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+            <AlertTriangle className="h-4 w-4" /> Precisa de revisão manual
+          </div>
+          <ul className="mt-2 list-inside list-disc text-xs text-amber-800">
+            {revisaoMotivos.map((m, i) => <li key={i}>{m}</li>)}
+          </ul>
+        </div>
+      )}
+
       {/* Prospecção ao vivo */}
       <section className="rounded-lg border border-border bg-white p-6">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-lg font-semibold">Prospecção ao vivo</h3>
-          <div className="flex items-center gap-2">
-            <Button size="sm" onClick={() => rodarProspeccao("firecrawl")} disabled={prospRunning}>
-              {prospRunning && !prospTestMode ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Buscando…</> : <><RefreshCw className="mr-1.5 h-4 w-4" /> Atualizar agora</>}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => rodarProspeccao({ provider: "firecrawl", fase: "completo", button: "atualizar" })} disabled={prospRunning}>
+              {prospRunning && activeButton === "atualizar" ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Buscando…</> : <><RefreshCw className="mr-1.5 h-4 w-4" /> Atualizar agora</>}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => rodarProspeccao("apify")} disabled={prospRunning} title="Roda a mesma busca só com Apify — salva no catálogo igual, pra comparar o resultado real">
-              {prospRunning && prospTestMode ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Testando…</> : "Testar com Apify"}
+            <Button size="sm" variant="outline" onClick={() => rodarProspeccao({ provider: "apify", fase: "completo", button: "apify" })} disabled={prospRunning} title="Roda a mesma busca só com Apify — salva no catálogo igual, pra comparar o resultado real">
+              {prospRunning && activeButton === "apify" ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Testando…</> : "Testar com Apify"}
+            </Button>
+            <span className="mx-1 h-5 w-px bg-border" />
+            <Button size="sm" variant="ghost" onClick={() => rodarProspeccao({ fase: "dominio", button: "dominio" })} disabled={prospRunning} title="Roda só a Fase 1 (descobrir domínio oficial)">
+              {prospRunning && activeButton === "dominio" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Só domínio"}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => rodarProspeccao({ fase: "secretario", button: "secretario" })} disabled={prospRunning || !edu.dominio_oficial} title={edu.dominio_oficial ? "Roda só a Fase 2 (descobrir nome do secretário)" : "Precisa de domínio oficial confirmado primeiro"}>
+              {prospRunning && activeButton === "secretario" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Só secretário"}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => rodarProspeccao({ fase: "contato", button: "contato" })} disabled={prospRunning || !edu.dominio_oficial} title={edu.dominio_oficial ? "Roda só a Fase 3 (descobrir e-mails/telefones)" : "Precisa de domínio oficial confirmado primeiro"}>
+              {prospRunning && activeButton === "contato" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Só contato"}
             </Button>
           </div>
         </div>
@@ -281,9 +315,15 @@ function AdminEditMunicipio() {
       <section className="rounded-lg border border-border bg-white p-6">
         <h3 className="mb-4 text-lg font-semibold">Secretaria de Educação</h3>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Field label="Secretário(a)"><Input value={edu.secretario} onChange={(e) => setEdu({ ...edu, secretario: e.target.value })} /></Field>
+          <Field label="Secretário(a)">
+            <Input value={edu.secretario} onChange={(e) => setEdu({ ...edu, secretario: e.target.value })} />
+            {secretarioConfirmadoEm && <p className="mt-1 text-[11px] text-muted-foreground">Confirmado em {new Date(secretarioConfirmadoEm).toLocaleDateString("pt-BR")}</p>}
+          </Field>
           <Field label="Cargo"><Input value={edu.cargo} onChange={(e) => setEdu({ ...edu, cargo: e.target.value })} /></Field>
-          <Field label="E-mail(s) — um por linha"><Textarea rows={3} value={emailsText} onChange={(e) => setEmailsText(e.target.value)} /></Field>
+          <Field label="E-mail(s) — um por linha">
+            <Textarea rows={3} value={emailsText} onChange={(e) => setEmailsText(e.target.value)} />
+            {contatoConfirmadoEm && <p className="mt-1 text-[11px] text-muted-foreground">Confirmado em {new Date(contatoConfirmadoEm).toLocaleDateString("pt-BR")}</p>}
+          </Field>
           <Field label="Telefone(s) — um por linha"><Textarea rows={3} value={telefonesText} onChange={(e) => setTelefonesText(e.target.value)} /></Field>
           <Field label="Horário de atendimento"><Input value={edu.horario} onChange={(e) => setEdu({ ...edu, horario: e.target.value })} /></Field>
           <Field label="Status">

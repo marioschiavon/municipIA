@@ -91,6 +91,7 @@ export type Database = {
           atualizado_em: string | null
           breakdown: Json
           cargo: string | null
+          contato_confirmado_em: string | null
           created_at: string
           dominio_confirmado_em: string | null
           dominio_oficial: string | null
@@ -102,8 +103,11 @@ export type Database = {
           horario: string | null
           ibge_id: number
           pagina_educacao_url: string | null
+          revisao_motivos: string[]
+          revisao_necessaria: boolean
           score: number
           secretario: string | null
+          secretario_confirmado_em: string | null
           status: string
           telefones: string[]
           updated_at: string
@@ -112,6 +116,7 @@ export type Database = {
           atualizado_em?: string | null
           breakdown?: Json
           cargo?: string | null
+          contato_confirmado_em?: string | null
           created_at?: string
           dominio_confirmado_em?: string | null
           dominio_oficial?: string | null
@@ -123,8 +128,11 @@ export type Database = {
           horario?: string | null
           ibge_id: number
           pagina_educacao_url?: string | null
+          revisao_motivos?: string[]
+          revisao_necessaria?: boolean
           score?: number
           secretario?: string | null
+          secretario_confirmado_em?: string | null
           status?: string
           telefones?: string[]
           updated_at?: string
@@ -133,6 +141,7 @@ export type Database = {
           atualizado_em?: string | null
           breakdown?: Json
           cargo?: string | null
+          contato_confirmado_em?: string | null
           created_at?: string
           dominio_confirmado_em?: string | null
           dominio_oficial?: string | null
@@ -144,8 +153,11 @@ export type Database = {
           horario?: string | null
           ibge_id?: number
           pagina_educacao_url?: string | null
+          revisao_motivos?: string[]
+          revisao_necessaria?: boolean
           score?: number
           secretario?: string | null
+          secretario_confirmado_em?: string | null
           status?: string
           telefones?: string[]
           updated_at?: string

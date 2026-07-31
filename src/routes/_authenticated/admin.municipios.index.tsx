@@ -3,14 +3,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useRef, useState, useMemo } from "react";
 import { adminListMunicipios, adminListMunicipioIds, adminFetchFndeAtual } from "@/lib/admin.functions";
-import { supabase } from "@/integrations/supabase/client";
+import { useProspectQueue, type QueueMunicipio } from "@/lib/use-prospect-queue";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Search, Loader2, ChevronLeft, ChevronRight, Pencil, PlayCircle, StopCircle } from "lucide-react";
+import { Search, Loader2, ChevronLeft, ChevronRight, Pencil, PlayCircle, StopCircle, AlertTriangle } from "lucide-react";
 
 const UFS = ["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO"];
 const PAGE_SIZE = 50;
@@ -18,8 +19,6 @@ const INTERVALO_MS = 30_000;
 // SICONFI (Tesouro Nacional) limita a 1 requisição/segundo — folga de 300ms.
 const INTERVALO_FNDE_MS = 1_300;
 
-type QueueMunicipio = { ibge_id: number; nome: string; uf: string };
-type QueueLogEntry = { ibge_id: number; nome: string; uf: string; status: "found" | "partial" | "not_found" | "error"; detalhe?: string };
 type FndeLogEntry = { ibge_id: number; nome: string; uf: string; status: "found" | "not_found" | "error"; detalhe?: string };
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -45,14 +44,16 @@ function AdminMunicipios() {
   const [status, setStatus] = useState("all");
   const [q, setQ] = useState("");
   const [qInput, setQInput] = useState("");
+  const [revisao, setRevisao] = useState(false);
   const [page, setPage] = useState(0);
 
   const filters = useMemo(() => ({
     uf: uf === "all" ? undefined : uf,
     status: status === "all" ? undefined : status,
     q: q || undefined,
+    revisao: revisao || undefined,
     page, pageSize: PAGE_SIZE,
-  }), [uf, status, q, page]);
+  }), [uf, status, q, revisao, page]);
 
   const list = useQuery({
     queryKey: ["admin-municipios", filters],
@@ -61,101 +62,26 @@ function AdminMunicipios() {
 
   const totalPages = Math.ceil((list.data?.total ?? 0) / PAGE_SIZE);
 
-  // ===== Prospecção em massa (fila com pausa de 30s entre municípios) =====
-  const [queueRunning, setQueueRunning] = useState(false);
-  const [queueTotal, setQueueTotal] = useState(0);
-  const [queueDone, setQueueDone] = useState(0);
-  const [queueCurrent, setQueueCurrent] = useState<QueueMunicipio | null>(null);
-  const [queueWaiting, setQueueWaiting] = useState(false);
-  const [queueLog, setQueueLog] = useState<QueueLogEntry[]>([]);
-  const [queueLoadingIds, setQueueLoadingIds] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
-
-  async function processarUm(m: QueueMunicipio, signal: AbortSignal): Promise<QueueLogEntry> {
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData.session?.access_token;
-      if (!accessToken) throw new Error("Sessão não encontrada. Faça login novamente.");
-      const res = await fetch("/api/prospect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ municipio: m.nome, uf: m.uf, ibgeId: m.ibge_id }),
-        signal,
-      });
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      let finalStatus: QueueLogEntry["status"] = "not_found";
-      let contatos = 0;
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines) {
-          const s = line.trim();
-          if (!s) continue;
-          try {
-            const evt = JSON.parse(s);
-            if (evt.kind === "final") {
-              finalStatus = evt.result?.status ?? "not_found";
-              contatos = (evt.result?.emails?.length ?? 0) + (evt.result?.telefones?.length ?? 0);
-            }
-          } catch { /* noop */ }
-        }
-      }
-      return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: finalStatus, detalhe: `${contatos} contato(s)` };
-    } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") throw e;
-      return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: "error", detalhe: e instanceof Error ? e.message : "Falha" };
-    }
-  }
+  // ===== Prospecção em massa, modo "completo" (fila com pausa de 30s entre municípios) =====
+  // Fila em fases separadas (domínio/secretário/contato) fica na aba /admin/prospeccao.
+  const queue = useProspectQueue(INTERVALO_MS);
 
   async function iniciarProspeccaoEmMassa() {
-    setQueueLoadingIds(true);
+    queue.setLoadingIds(true);
     try {
       const { items } = await listIdsFn({
         data: { uf: filters.uf, status: filters.status, q: filters.q },
       });
-      if (items.length === 0) return;
-      const controller = new AbortController();
-      abortRef.current = controller;
-      setQueueTotal(items.length);
-      setQueueDone(0);
-      setQueueLog([]);
-      setQueueRunning(true);
-      try {
-        for (let i = 0; i < items.length; i++) {
-          if (controller.signal.aborted) break;
-          const m = items[i];
-          setQueueCurrent(m);
-          const entry = await processarUm(m, controller.signal);
-          setQueueLog((prev) => [entry, ...prev].slice(0, 300));
-          setQueueDone((d) => d + 1);
-          if (i < items.length - 1) {
-            setQueueWaiting(true);
-            await sleep(INTERVALO_MS, controller.signal);
-            setQueueWaiting(false);
-          }
-        }
-      } catch (e) {
-        if (!(e instanceof DOMException && e.name === "AbortError")) throw e;
-      } finally {
-        setQueueRunning(false);
-        setQueueWaiting(false);
-        setQueueCurrent(null);
-        abortRef.current = null;
+      await queue.iniciar(items, "completo", "firecrawl", () => {
         qc.invalidateQueries({ queryKey: ["admin-municipios"] });
-      }
+      });
     } finally {
-      setQueueLoadingIds(false);
+      queue.setLoadingIds(false);
     }
   }
 
   function cancelarProspeccaoEmMassa() {
-    abortRef.current?.abort();
+    queue.cancelar();
   }
 
   // ===== Busca de FUNDEB em massa (fila com pausa curta — limite de 1 req/s do SICONFI) =====
@@ -251,16 +177,20 @@ function AdminMunicipios() {
             <SelectItem value="validado">Validado</SelectItem>
           </SelectContent>
         </Select>
+        <label className="flex items-center gap-1.5 text-sm">
+          <Checkbox checked={revisao} onCheckedChange={(v) => { setRevisao(!!v); setPage(0); }} />
+          <span className="flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> Precisa revisão</span>
+        </label>
         <div className="ml-auto text-sm text-muted-foreground">
           {list.data ? `${list.data.total.toLocaleString("pt-BR")} resultado(s)` : "..."}
         </div>
-        {queueRunning ? (
+        {queue.running ? (
           <Button size="sm" variant="destructive" onClick={cancelarProspeccaoEmMassa}>
             <StopCircle className="mr-1.5 h-4 w-4" /> Cancelar
           </Button>
         ) : (
-          <Button size="sm" variant="outline" onClick={iniciarProspeccaoEmMassa} disabled={queueLoadingIds || fndeRunning}>
-            {queueLoadingIds ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-1.5 h-4 w-4" />}
+          <Button size="sm" variant="outline" onClick={iniciarProspeccaoEmMassa} disabled={queue.loadingIds || fndeRunning}>
+            {queue.loadingIds ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-1.5 h-4 w-4" />}
             Prospectar todos os filtrados
           </Button>
         )}
@@ -269,34 +199,34 @@ function AdminMunicipios() {
             <StopCircle className="mr-1.5 h-4 w-4" /> Cancelar
           </Button>
         ) : (
-          <Button size="sm" variant="outline" onClick={iniciarBuscaFndeEmMassa} disabled={fndeLoadingIds || queueRunning}>
+          <Button size="sm" variant="outline" onClick={iniciarBuscaFndeEmMassa} disabled={fndeLoadingIds || queue.running}>
             {fndeLoadingIds ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-1.5 h-4 w-4" />}
             Buscar FUNDEB de todos os filtrados
           </Button>
         )}
       </div>
 
-      {(queueRunning || queueLog.length > 0) && (
+      {(queue.running || queue.log.length > 0) && (
         <div className="rounded-lg border border-border bg-white p-4 space-y-3">
           <div className="flex items-center justify-between text-sm">
             <span className="font-semibold">
-              Prospecção em massa {queueRunning ? "— em andamento" : "— finalizada"}
+              Prospecção em massa {queue.running ? "— em andamento" : "— finalizada"}
             </span>
-            <span className="text-muted-foreground">{queueDone}/{queueTotal} processado(s)</span>
+            <span className="text-muted-foreground">{queue.done}/{queue.total} processado(s)</span>
           </div>
-          <Progress value={queueTotal > 0 ? (queueDone / queueTotal) * 100 : 0} />
-          {queueRunning && (
+          <Progress value={queue.total > 0 ? (queue.done / queue.total) * 100 : 0} />
+          {queue.running && (
             <p className="text-xs text-muted-foreground">
-              {queueWaiting
+              {queue.waiting
                 ? `Aguardando 30s antes do próximo município...`
-                : queueCurrent
-                  ? `Processando: ${queueCurrent.nome}/${queueCurrent.uf}...`
+                : queue.current
+                  ? `Processando: ${queue.current.nome}/${queue.current.uf}...`
                   : "Iniciando..."}
             </p>
           )}
-          {queueLog.length > 0 && (
+          {queue.log.length > 0 && (
             <div className="max-h-64 overflow-y-auto space-y-1">
-              {queueLog.map((e, i) => (
+              {queue.log.map((e, i) => (
                 <div key={`${e.ibge_id}-${i}`} className="flex items-center justify-between rounded border border-border px-2 py-1 text-xs">
                   <span>{e.nome}/{e.uf}</span>
                   <span className="flex items-center gap-2">
@@ -356,11 +286,12 @@ function AdminMunicipios() {
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Score</TableHead>
               <TableHead></TableHead>
+              <TableHead></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {list.isLoading && (
-              <TableRow><TableCell colSpan={8} className="text-center py-8"><Loader2 className="inline h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
+              <TableRow><TableCell colSpan={9} className="text-center py-8"><Loader2 className="inline h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
             )}
             {list.data?.items.map((m) => (
               <TableRow key={m.ibge_id}>
@@ -375,6 +306,13 @@ function AdminMunicipios() {
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right tabular-nums font-semibold">{m.score}</TableCell>
+                <TableCell>
+                  {m.revisao_necessaria && (
+                    <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
+                      <AlertTriangle className="mr-1 h-3 w-3" /> Revisar
+                    </Badge>
+                  )}
+                </TableCell>
                 <TableCell>
                   <Link to="/admin/municipios/$ibgeId" params={{ ibgeId: String(m.ibge_id) }}
                     className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 text-xs hover:bg-accent">

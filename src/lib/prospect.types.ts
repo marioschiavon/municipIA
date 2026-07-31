@@ -29,6 +29,12 @@ export type ProspectResult = {
   dominioOficialConfirmado?: string | null;
   /** URL específica da página de Educação usada/confirmada nesta run. */
   paginaEducacaoUrl?: string | null;
+  /** Confiança da extração desta run (quando aplicável) — usada para decidir `revisar`. */
+  confianca?: "alta" | "media" | "baixa" | null;
+  /** true quando o resultado é fraco/incerto e deve entrar na fila de revisão manual do admin. */
+  revisar?: boolean;
+  /** Motivo curto do `revisar`, ex.: "confiança baixa", "apenas e-mail genérico (ouvidoria)". */
+  motivoRevisao?: string | null;
 };
 
 

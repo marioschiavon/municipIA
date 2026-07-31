@@ -6,6 +6,7 @@ const Input = z.object({
   uf: z.string().length(2),
   ibgeId: z.number().int().positive().optional(),
   provider: z.enum(["firecrawl", "apify"]).optional(),
+  fase: z.enum(["completo", "dominio", "secretario", "contato"]).default("completo"),
 });
 
 export const Route = createFileRoute("/api/prospect")({
@@ -34,7 +35,7 @@ export const Route = createFileRoute("/api/prospect")({
           });
         }
 
-        const { municipio, uf, ibgeId, provider } = parsed.data;
+        const { municipio, uf, ibgeId, provider, fase } = parsed.data;
 
         // Se já sabemos o domínio oficial confirmado deste município (de uma run
         // anterior ou de edição manual do admin), o pipeline usa ele com
@@ -57,7 +58,17 @@ export const Route = createFileRoute("/api/prospect")({
           paginaEducacaoConhecida = confirmadoRecente ? (edu?.pagina_educacao_url ?? null) : null;
         }
 
-        const { prospectar } = await import("@/lib/prospect.server");
+        // Fases isoladas de secretário/contato exigem domínio já confirmado
+        // (Fase 1) — sem isso não têm onde vasculhar sem recorrer ao Google/Apify,
+        // que é exatamente o custo que a separação em fases quer evitar.
+        if ((fase === "secretario" || fase === "contato") && !dominioConfirmado) {
+          return new Response(
+            JSON.stringify({ kind: "progress", level: "error", etapa: "final", message: "Domínio oficial ainda não confirmado — rode a Fase 1 (domínio) primeiro", ts: Date.now() }) + "\n",
+            { status: 400, headers: { "Content-Type": "application/x-ndjson; charset=utf-8" } },
+          );
+        }
+
+        const { prospectar, prospectarDominio, prospectarSecretario, prospectarContato } = await import("@/lib/prospect.server");
         const encoder = new TextEncoder();
 
         const stream = new ReadableStream<Uint8Array>({
@@ -66,12 +77,25 @@ export const Route = createFileRoute("/api/prospect")({
               controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
             };
             try {
-              const result = await prospectar(municipio, uf, (evt) => send(evt), ibgeId, provider ?? "firecrawl", dominioConfirmado, paginaEducacaoConhecida);
+              let result;
+              if (fase === "dominio") {
+                result = await prospectarDominio(municipio, uf, (evt) => send(evt), provider ?? "firecrawl");
+                send({ kind: "final", result, ts: Date.now() });
+              } else if (fase === "secretario") {
+                result = await prospectarSecretario(municipio, uf, dominioConfirmado!, (evt) => send(evt));
+                send({ kind: "final", result, ts: Date.now() });
+              } else if (fase === "contato") {
+                result = await prospectarContato(municipio, uf, dominioConfirmado!, (evt) => send(evt), paginaEducacaoConhecida);
+                send({ kind: "final", result, ts: Date.now() });
+              } else {
+                // prospectar() já emite seu próprio evento "kind: final" internamente (sendFinal).
+                result = await prospectar(municipio, uf, (evt) => send(evt), ibgeId, provider ?? "firecrawl", dominioConfirmado, paginaEducacaoConhecida);
+              }
               // Persistir se temos ibgeId
               if (ibgeId && result) {
                 try {
                   const { persistProspectResult } = await import("@/lib/catalog-update.server");
-                  await persistProspectResult(ibgeId, result);
+                  await persistProspectResult(ibgeId, result, fase);
                   send({
                     kind: "progress",
                     level: "success",

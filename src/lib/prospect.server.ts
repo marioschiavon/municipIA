@@ -341,6 +341,21 @@ async function apifySearch(
   return cands;
 }
 
+type SearchFn = (
+  query: string,
+  etapa: EtapaTag,
+  opts?: { limit?: number; tbs?: string; withScrape?: boolean; timeoutMs?: number; uf?: string },
+) => Promise<SearchCandidate[]>;
+
+/** Fábrica do dispatcher de busca (Firecrawl ou Apify) — extraída de `prospectar()`
+ * para ser reaproveitada também pelas fases isoladas (`prospectarDominio` etc.). */
+function makeSearchDispatcher(provider: "firecrawl" | "apify", fc: Firecrawl, emit: Emit): SearchFn {
+  return (query, etapa, opts = {}) =>
+    provider === "apify"
+      ? apifySearch(query, emit, etapa, { limit: opts.limit, timeoutMs: opts.timeoutMs ?? 20_000, uf: opts.uf })
+      : gSearch(fc, query, emit, etapa, opts);
+}
+
 /** scrapeMarkdown com timeout duro — devolve null se estourar. */
 async function gScrape(
   fc: Firecrawl,
@@ -891,6 +906,246 @@ function fonteLabel(etapa: Hierarquia) {
 }
 
 
+const empty = (contexto: string | null = null): ProspectResult => ({
+  status: "not_found",
+  hierarquia: null,
+  secretario: null,
+  cargo: null,
+  emails: [],
+  telefones: [],
+  fonte: null,
+  fonteUrl: null,
+  contexto,
+});
+
+// ============================================================
+// FASE 1 (isolada) — só descobre e confirma o domínio oficial. Sem IA.
+// ============================================================
+export async function prospectarDominio(
+  municipio: string,
+  uf: string,
+  onEvent?: (evt: ProgressEvent) => void,
+  provider: "firecrawl" | "apify" = "firecrawl",
+): Promise<ProspectResult> {
+  const t0 = Date.now();
+  const emit: Emit = (level, etapa, message, data) => {
+    onEvent?.({ kind: "progress", level, etapa, message, data, ts: Date.now(), elapsedMs: Date.now() - t0 });
+  };
+  const slug = slugify(municipio);
+  const ufLow = uf.toLowerCase();
+  const dominioEspecial = DOMINIO_OFICIAL_ESPECIAL[slug];
+  const fc = getFirecrawl();
+  const search = makeSearchDispatcher(provider, fc, emit);
+
+  emit("info", "init", `Fase domínio — descobrindo site oficial de ${municipio}/${uf}`);
+
+  // Query A = padrão direto (o mesmo domínio-padrão usado no Estágio 1 do fluxo completo,
+  // ou o override conhecido) — quando bate, é confirmação FORTE. Query B = busca genérica,
+  // usada só quando A não acha nada — confirmação mais fraca (fica marcada para revisão).
+  const queryA = `site:${dominioEspecial ?? `${slug}.${ufLow}.gov.br`} prefeitura`;
+  const queryB = `"${municipio}" prefeitura ${uf} site oficial`;
+  const candsA = await search(queryA, "init", { limit: 5, timeoutMs: 8000, uf });
+  const candsB = candsA.length === 0 ? await search(queryB, "init", { limit: 5, timeoutMs: 8000, uf }) : [];
+
+  const fortesHosts = new Set(
+    candsA
+      .filter((c) => isConfirmableOfficialHost(shortHost(c.url), slug, ufLow, dominioEspecial))
+      .map((c) => stripWww(shortHost(c.url))),
+  );
+  const cands = preferGov(filterForeignMunicipio(dedupeByUrl([...candsA, ...candsB]), slug, emit, "init"), undefined, ufLow);
+
+  for (const c of cands) {
+    const host = shortHost(c.url);
+    if (!isConfirmableOfficialHost(host, slug, ufLow, dominioEspecial)) continue;
+    const dominio = isDominioOficialEspecial(host, dominioEspecial) ? dominioEspecial! : stripWww(host);
+    const forte = isDominioOficialEspecial(host, dominioEspecial) || fortesHosts.has(stripWww(host));
+    emit("success", "init", `Domínio confirmado: ${dominio}${forte ? "" : " (confirmação fraca — só via busca genérica)"}`);
+    return {
+      ...empty(),
+      status: "found",
+      fonte: forte ? "Busca direta no domínio padrão" : "Busca genérica (prefeitura + site oficial)",
+      fonteUrl: c.url,
+      dominioOficialConfirmado: dominio,
+      confianca: forte ? "alta" : "media",
+      revisar: !forte,
+      motivoRevisao: forte ? null : "dominio: confirmação incerta (achado só por busca genérica, não pelo padrão site:{slug}.{uf}.gov.br)",
+    };
+  }
+  emit("warn", "init", "Nenhum domínio oficial confirmável encontrado");
+  return empty("Nenhum domínio oficial confirmável encontrado nesta fase.");
+}
+
+// ============================================================
+// FASE 2 (isolada) — só descobre o nome/cargo do secretário, dentro do
+// domínio JÁ confirmado (sitemap, sem Google/Apify).
+// ============================================================
+export async function prospectarSecretario(
+  municipio: string,
+  uf: string,
+  dominioOficial: string,
+  onEvent?: (evt: ProgressEvent) => void,
+): Promise<ProspectResult> {
+  const t0 = Date.now();
+  const emit: Emit = (level, etapa, message, data) => {
+    onEvent?.({ kind: "progress", level, etapa, message, data, ts: Date.now(), elapsedMs: Date.now() - t0 });
+  };
+  const fc = getFirecrawl();
+  emit("info", "nome", `Fase secretário — vasculhando ${dominioOficial} via sitemap`);
+  const { discoverEducationPages } = await import("./sitemap.server");
+  const { candidates, via } = await discoverEducationPages(dominioOficial);
+  emit("info", "nome", `${candidates.length} candidato(s) via ${via}`);
+
+  let melhor: { out: NomeOnly; url: string } | null = null;
+  for (const url of candidates) {
+    const md = await gScrape(fc, url, emit, "nome", { hardTimeoutMs: 8000 });
+    if (!md) continue;
+    const out = await extractNomeWithAI(md, url, municipio, uf, emit);
+    if (!out?.secretario) continue;
+    if (out.confianca === "alta") {
+      return {
+        ...empty(out.contexto),
+        status: "found",
+        hierarquia: "educacao",
+        secretario: out.secretario,
+        cargo: out.cargo,
+        fonte: `Sitemap do domínio confirmado (${via})`,
+        fonteUrl: url,
+        dataReferencia: out.dataReferencia,
+        equipe: out.equipe,
+        confianca: out.confianca,
+        revisar: false,
+      };
+    }
+    if (!melhor) melhor = { out, url };
+  }
+  if (melhor) {
+    emit("warn", "nome", `Nome com confiança ${melhor.out.confianca} — marcado para revisão`);
+    return {
+      ...empty(melhor.out.contexto),
+      status: "partial",
+      hierarquia: "educacao",
+      secretario: melhor.out.secretario,
+      cargo: melhor.out.cargo,
+      fonte: `Sitemap do domínio confirmado (${via})`,
+      fonteUrl: melhor.url,
+      dataReferencia: melhor.out.dataReferencia,
+      equipe: melhor.out.equipe,
+      confianca: melhor.out.confianca,
+      revisar: true,
+      motivoRevisao: `secretario: confiança ${melhor.out.confianca}`,
+    };
+  }
+  emit("warn", "nome", "Nenhum nome de secretário encontrado no domínio confirmado");
+  return empty(`Domínio confirmado (${dominioOficial}) sem página com nome do secretário localizável.`);
+}
+
+// ============================================================
+// FASE 3 (isolada) — só descobre e-mails/telefones, dentro do domínio JÁ
+// confirmado. Regex primeiro (ranking já prioriza local-parts tipo
+// seduc/sme/smed/educacao via EDUCATION_LOCAL em rankEmails/filterEmailsForFinal);
+// IA só como fallback quando o regex não acha nada de bom.
+// ============================================================
+export async function prospectarContato(
+  municipio: string,
+  uf: string,
+  dominioOficial: string,
+  onEvent?: (evt: ProgressEvent) => void,
+  paginaEducacaoUrl?: string | null,
+): Promise<ProspectResult> {
+  const t0 = Date.now();
+  const emit: Emit = (level, etapa, message, data) => {
+    onEvent?.({ kind: "progress", level, etapa, message, data, ts: Date.now(), elapsedMs: Date.now() - t0 });
+  };
+  const fc = getFirecrawl();
+  emit("info", "educacao", `Fase contato — buscando e-mails/telefones em ${dominioOficial}`);
+
+  let candidateUrls: string[];
+  let via: string;
+  if (paginaEducacaoUrl) {
+    candidateUrls = [paginaEducacaoUrl];
+    via = "página conhecida";
+  } else {
+    const { discoverEducationPages } = await import("./sitemap.server");
+    const disc = await discoverEducationPages(dominioOficial);
+    candidateUrls = disc.candidates;
+    via = disc.via;
+  }
+  emit("info", "educacao", `${candidateUrls.length} candidato(s) via ${via}`);
+
+  let melhor: { emails: string[]; telefones: string[]; url: string } | null = null;
+
+  for (const url of candidateUrls) {
+    const md = await gScrape(fc, url, emit, "educacao", { hardTimeoutMs: 8000 });
+    if (!md) continue;
+    const hints = extractContactsRegex(md);
+    const emails = filterEmailsForFinal(hints.emails, municipio, uf, dominioOficial).filter((e) => !isSchoolEmail(e));
+    const telefones = hints.telefones;
+    if (emails.length === 0 && telefones.length === 0) continue;
+
+    const hasGoodEmail = emails.some((e) => !GENERIC_LOCAL.test(e));
+    if (hasGoodEmail) {
+      emit("success", "educacao", `Regex achou e-mail direto em ${shortHost(url)}`);
+      return {
+        ...empty(),
+        status: "found",
+        hierarquia: "educacao",
+        emails,
+        telefones,
+        fonte: `Regex (${via})`,
+        fonteUrl: url,
+        confianca: "alta",
+        revisar: false,
+      };
+    }
+    if (!melhor) melhor = { emails, telefones, url };
+  }
+
+  // Regex não achou e-mail direto (só genérico ou nada) — tenta IA na melhor candidata.
+  const urlFallback = melhor?.url ?? candidateUrls[0];
+  if (urlFallback) {
+    const md = await gScrape(fc, urlFallback, emit, "educacao", { hardTimeoutMs: 8000 });
+    if (md) {
+      const ext = await extractWithAI(md, urlFallback, "educacao", municipio, uf, emit, { topHost: dominioOficial });
+      if (ext && (ext.emails.length > 0 || ext.telefones.length > 0)) {
+        const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
+        return {
+          ...empty(ext.contexto),
+          status: hasGoodEmail ? "found" : "partial",
+          hierarquia: "educacao",
+          emails: ext.emails,
+          telefones: ext.telefones,
+          fonte: `IA fallback (${via})`,
+          fonteUrl: urlFallback,
+          confianca: ext.confianca,
+          revisar: !hasGoodEmail || ext.confianca !== "alta",
+          motivoRevisao: !hasGoodEmail
+            ? "contato: apenas e-mail genérico (ouvidoria/faleconosco/etc.)"
+            : `contato: confiança ${ext.confianca}`,
+        };
+      }
+    }
+  }
+
+  if (melhor) {
+    emit("warn", "educacao", "Só achei e-mail/telefone genérico — marcado para revisão");
+    return {
+      ...empty(),
+      status: "partial",
+      hierarquia: "educacao",
+      emails: melhor.emails,
+      telefones: melhor.telefones,
+      fonte: `Regex (${via})`,
+      fonteUrl: melhor.url,
+      confianca: "media",
+      revisar: true,
+      motivoRevisao: "contato: apenas e-mail genérico (ouvidoria/faleconosco/etc.)",
+    };
+  }
+
+  emit("warn", "educacao", "Nenhum contato encontrado no domínio confirmado");
+  return empty(`Domínio confirmado (${dominioOficial}) sem contato localizável via regex/IA.`);
+}
+
 export async function prospectar(
   municipio: string,
   uf: string,
@@ -991,14 +1246,7 @@ export async function prospectar(
   // Dispatcher de busca — em modo teste ("apify") troca o Firecrawl pelo Apify
   // Google SERP Scraper em TODAS as buscas, reaproveitando o resto da cascata
   // (ranking, filtro de município estrangeiro, extração por IA) sem alterações.
-  const search = (
-    query: string,
-    etapa: EtapaTag,
-    opts: { limit?: number; tbs?: string; withScrape?: boolean; timeoutMs?: number; uf?: string } = {},
-  ): Promise<SearchCandidate[]> =>
-    provider === "apify"
-      ? apifySearch(query, emit, etapa, { limit: opts.limit, timeoutMs: opts.timeoutMs ?? 20_000, uf: opts.uf })
-      : gSearch(fc, query, emit, etapa, opts);
+  const search = makeSearchDispatcher(provider, fc, emit);
   const anoAtual = new Date().getFullYear();
   const slug = slugify(municipio);
   const ufLow = uf.toLowerCase();

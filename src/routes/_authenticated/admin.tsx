@@ -5,7 +5,7 @@ import { getMyRole } from "@/lib/admin.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { APP_VERSION } from "@/lib/version";
-import { Database, Home, Sliders, LogOut, Loader2, ShieldAlert, Upload } from "lucide-react";
+import { Database, Home, Sliders, LogOut, Loader2, ShieldAlert, Upload, ListChecks } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   component: AdminLayout,
@@ -54,6 +54,7 @@ function AdminLayout() {
             <nav className="ml-6 flex items-center gap-1 text-sm">
               <NavLink to="/admin" icon={<Home className="h-4 w-4" />}>Dashboard</NavLink>
               <NavLink to="/admin/municipios" icon={<Database className="h-4 w-4" />}>Municípios</NavLink>
+              <NavLink to="/admin/prospeccao" icon={<ListChecks className="h-4 w-4" />}>Prospecção em lotes</NavLink>
               <NavLink to="/admin/import" icon={<Upload className="h-4 w-4" />}>Importar</NavLink>
               <NavLink to="/admin/score" icon={<Sliders className="h-4 w-4" />}>Pesos do score</NavLink>
             </nav>

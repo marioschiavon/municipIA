@@ -12,6 +12,28 @@ async function assertAdmin(context: any) {
   if (!data) throw new Error("Forbidden: requer papel admin");
 }
 
+// ============ Elegibilidade por fase (prospecção em lotes) ============
+// Fase "dominio": ainda não tem domínio oficial confirmado.
+// Fase "secretario"/"contato": já tem domínio confirmado (senão não tem onde
+// vasculhar sem recorrer ao Google/Apify) e ainda não achou o próprio campo.
+// (Sem checagem de "dado desatualizado há N dias" nesta v1 — reprocessar
+// dado antigo pode ser adicionado depois; por ora elegibilidade = "nunca achado".)
+type ProspectFaseFiltro = "dominio" | "secretario" | "contato";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyFaseFilter(q: any, fase?: ProspectFaseFiltro) {
+  if (fase === "dominio") return q.is("municipios_educacao.dominio_oficial", null);
+  if (fase === "secretario") {
+    return q.not("municipios_educacao.dominio_oficial", "is", null).is("municipios_educacao.secretario", null);
+  }
+  if (fase === "contato") {
+    return q
+      .not("municipios_educacao.dominio_oficial", "is", null)
+      .eq("municipios_educacao.emails", "{}")
+      .eq("municipios_educacao.telefones", "{}");
+  }
+  return q;
+}
+
 // ============ ROLE CHECK ============
 export const getMyRole = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -49,6 +71,7 @@ const ListInput = z.object({
   uf: z.string().length(2).optional(),
   status: z.string().optional(),
   q: z.string().optional(),
+  revisao: z.boolean().optional(),
   page: z.number().int().min(0).default(0),
   pageSize: z.number().int().min(1).max(200).default(50),
 });
@@ -60,10 +83,11 @@ export const adminListMunicipios = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     let q = supabaseAdmin
       .from("municipios")
-      .select("ibge_id, nome, uf, populacao, matriculas_total, fnde_anual, municipios_educacao!inner(status, score, faixa, emails, secretario, atualizado_em)", { count: "exact" });
+      .select("ibge_id, nome, uf, populacao, matriculas_total, fnde_anual, municipios_educacao!inner(status, score, faixa, emails, secretario, atualizado_em, revisao_necessaria)", { count: "exact" });
     if (data.uf) q = q.eq("uf", data.uf);
     if (data.q) q = q.ilike("nome", `%${data.q}%`);
     if (data.status) q = q.eq("municipios_educacao.status", data.status);
+    if (data.revisao) q = q.eq("municipios_educacao.revisao_necessaria", true);
     q = q.order("nome", { ascending: true });
     const from = data.page * data.pageSize;
     q = q.range(from, from + data.pageSize - 1);
@@ -81,6 +105,7 @@ export const adminListMunicipios = createServerFn({ method: "POST" })
         emails: r.municipios_educacao?.emails ?? [],
         secretario: r.municipios_educacao?.secretario ?? null,
         atualizado_em: r.municipios_educacao?.atualizado_em ?? null,
+        revisao_necessaria: r.municipios_educacao?.revisao_necessaria ?? false,
       })),
     };
   });
@@ -90,6 +115,7 @@ const ListAllIdsInput = z.object({
   uf: z.string().length(2).optional(),
   status: z.string().optional(),
   q: z.string().optional(),
+  fase: z.enum(["dominio", "secretario", "contato"]).optional(),
 });
 export const adminListMunicipioIds = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -103,12 +129,13 @@ export const adminListMunicipioIds = createServerFn({ method: "POST" })
     for (;;) {
       let q = supabaseAdmin
         .from("municipios")
-        .select("ibge_id, nome, uf, municipios_educacao!inner(status)")
+        .select("ibge_id, nome, uf, municipios_educacao!inner(status, dominio_oficial, secretario, emails, telefones)")
         .order("nome", { ascending: true })
         .range(from, from + CHUNK - 1);
       if (data.uf) q = q.eq("uf", data.uf);
       if (data.q) q = q.ilike("nome", `%${data.q}%`);
       if (data.status) q = q.eq("municipios_educacao.status", data.status);
+      q = applyFaseFilter(q, data.fase);
       const { data: rows, error } = await q;
       if (error) throw new Error(error.message);
       for (const r of (rows ?? []) as any[]) items.push({ ibge_id: r.ibge_id, nome: r.nome, uf: r.uf });
@@ -116,6 +143,31 @@ export const adminListMunicipioIds = createServerFn({ method: "POST" })
       from += CHUNK;
     }
     return { items };
+  });
+
+// ============ COUNT ELEGÍVEIS (badge "N elegíveis" na tela de lote) ============
+const CountElegiveisInput = z.object({
+  fase: z.enum(["dominio", "secretario", "contato"]),
+  uf: z.string().length(2).optional(),
+  status: z.string().optional(),
+  q: z.string().optional(),
+});
+export const adminCountElegiveis = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => CountElegiveisInput.parse(d))
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    let q = supabaseAdmin
+      .from("municipios")
+      .select("ibge_id, municipios_educacao!inner(status, dominio_oficial, secretario, emails, telefones)", { count: "exact", head: true });
+    if (data.uf) q = q.eq("uf", data.uf);
+    if (data.q) q = q.ilike("nome", `%${data.q}%`);
+    if (data.status) q = q.eq("municipios_educacao.status", data.status);
+    q = applyFaseFilter(q, data.fase);
+    const { count, error } = await q;
+    if (error) throw new Error(error.message);
+    return { count: count ?? 0 };
   });
 
 // ============ GET (completo, com matrículas por etapa) ============
@@ -165,6 +217,10 @@ const SaveInput = z.object({
     etapa: z.enum(["creche","pre_escola","fundamental_ai","fundamental_af","medio","eja","especial","profissionalizante"]),
     matriculas: z.number().int().min(0),
   })).default([]),
+  // Fases da fila de revisão a considerar resolvidas por este save (o admin
+  // corrigiu ou confirmou manualmente) — remove as entradas correspondentes
+  // de revisao_motivos em vez de esperar a próxima run automática.
+  limparRevisaoFases: z.array(z.enum(["dominio", "secretario", "contato"])).optional(),
 });
 
 export const adminSaveMunicipio = createServerFn({ method: "POST" })
@@ -220,6 +276,19 @@ export const adminSaveMunicipio = createServerFn({ method: "POST" })
       atualizado_em: now,
     });
 
+    let revisaoPatch: { revisao_motivos: string[]; revisao_necessaria: boolean } | null = null;
+    if (data.limparRevisaoFases && data.limparRevisaoFases.length > 0) {
+      const { data: existente } = await supabaseAdmin
+        .from("municipios_educacao")
+        .select("revisao_motivos")
+        .eq("ibge_id", data.ibge_id)
+        .maybeSingle();
+      const atuais: string[] = existente?.revisao_motivos ?? [];
+      const prefixes = data.limparRevisaoFases.map((f) => `${f}:`);
+      const filtrados = atuais.filter((m) => !prefixes.some((p) => m.startsWith(p)));
+      revisaoPatch = { revisao_motivos: filtrados, revisao_necessaria: filtrados.length > 0 };
+    }
+
     const { normalizeHost } = await import("./scraper.server");
     const { error: eErr } = await supabaseAdmin.from("municipios_educacao").upsert({
       ibge_id: data.ibge_id,
@@ -236,6 +305,7 @@ export const adminSaveMunicipio = createServerFn({ method: "POST" })
       equipe: data.educacao.equipe,
       atualizado_em: now,
       score, faixa, breakdown,
+      ...(revisaoPatch ?? {}),
     }, { onConflict: "ibge_id" });
     if (eErr) throw new Error(`educacao: ${eErr.message}`);
 
@@ -282,6 +352,88 @@ export const adminFetchFndeAtual = createServerFn({ method: "POST" })
     if (eErr) throw new Error(`educacao: ${eErr.message}`);
 
     return { ok: true as const, ano: resultado.ano, periodo: resultado.periodo, valor: resultado.valor, score, faixa };
+  });
+
+// ============ RESOLVER REVISÃO (aba de prospecção em fases) ============
+// Usado pela auditoria inline: fecha o item da fila de revisão de UMA fase,
+// opcionalmente gravando uma correção manual do admin. Sem "patch", só limpa
+// a sinalização (admin conferiu e aceitou o dado como está).
+const ResolveRevisaoInput = z.object({
+  ibge_id: z.number().int(),
+  fase: z.enum(["dominio", "secretario", "contato"]),
+  patch: z.object({
+    dominio_oficial: z.string().nullable().optional(),
+    secretario: z.string().nullable().optional(),
+    cargo: z.string().nullable().optional(),
+    emails: z.array(z.string()).optional(),
+    telefones: z.array(z.string()).optional(),
+  }).optional(),
+});
+export const adminResolveRevisao = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => ResolveRevisaoInput.parse(d))
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    const { data: existente } = await supabaseAdmin
+      .from("municipios_educacao")
+      .select("secretario, cargo, emails, telefones, equipe, horario, status, revisao_motivos")
+      .eq("ibge_id", data.ibge_id)
+      .maybeSingle() as any;
+
+    const prefix = `${data.fase}:`;
+    const revisao_motivos = (existente?.revisao_motivos ?? []).filter((m: string) => !m.startsWith(prefix));
+    const patch: Record<string, unknown> = {
+      revisao_motivos,
+      revisao_necessaria: revisao_motivos.length > 0,
+    };
+
+    if (data.patch) {
+      const now = new Date().toISOString();
+      let secretario = existente?.secretario ?? null;
+      let cargo = existente?.cargo ?? null;
+      let emails: string[] = existente?.emails ?? [];
+      let telefones: string[] = existente?.telefones ?? [];
+
+      if (data.fase === "dominio") {
+        const { normalizeHost } = await import("./scraper.server");
+        patch.dominio_oficial = normalizeHost(data.patch.dominio_oficial ?? null);
+        patch.dominio_confirmado_em = now;
+      } else if (data.fase === "secretario") {
+        secretario = data.patch.secretario ?? null;
+        cargo = data.patch.cargo ?? null;
+        patch.secretario = secretario;
+        patch.cargo = cargo;
+        patch.secretario_confirmado_em = now;
+      } else {
+        emails = data.patch.emails ?? [];
+        telefones = data.patch.telefones ?? [];
+        patch.emails = emails;
+        patch.telefones = telefones;
+        patch.contato_confirmado_em = now;
+      }
+
+      const { calcularScore, contarCampos } = await import("./catalog-score");
+      const { data: mun } = await supabaseAdmin.from("municipios").select("populacao, matriculas_total, fnde_anual").eq("ibge_id", data.ibge_id).maybeSingle();
+      const campos = contarCampos({ secretario, cargo, emails, telefones, horario: existente?.horario ?? null, equipe: existente?.equipe ?? [] });
+      const { score, faixa, breakdown } = calcularScore({
+        populacao: mun?.populacao ?? 0,
+        matriculas_total: mun?.matriculas_total ?? 0,
+        fnde_anual: Number(mun?.fnde_anual ?? 0),
+        campos_preenchidos: campos,
+        atualizado_em: now,
+      });
+      patch.score = score;
+      patch.faixa = faixa;
+      patch.breakdown = breakdown;
+      patch.atualizado_em = now;
+      if (!existente?.status || existente.status === "sem_dados") patch.status = "pendente";
+    }
+
+    const { error } = await supabaseAdmin.from("municipios_educacao").update(patch as any).eq("ibge_id", data.ibge_id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
   });
 
 // ============ SCORE CONFIG ============
