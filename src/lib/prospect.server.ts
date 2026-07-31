@@ -5,7 +5,7 @@
 import Firecrawl from "@mendable/firecrawl-js";
 import { generateObject } from "ai";
 import { z } from "zod";
-import { createLovableAiGatewayProvider } from "./ai-gateway.server";
+import { getExtractionModel } from "./ai-gateway.server";
 import { fetchHtml, htmlToMarkdown, extractContactsRegex } from "./scraper.server";
 
 import { googleSerp, ragBrowse, type ApifyPage } from "./apify.server";
@@ -102,9 +102,7 @@ function getFirecrawl() {
 }
 
 function getProvider() {
-  const key = process.env.LOVABLE_API_KEY;
-  if (!key) throw new Error("LOVABLE_API_KEY ausente");
-  return createLovableAiGatewayProvider(key);
+  return getExtractionModel();
 }
 
 function shortHost(url: string): string {
@@ -643,7 +641,7 @@ async function extractNomeWithAI(
   opts: { diarioBlock?: string } = {},
 ): Promise<NomeOnly | null> {
   const { diarioBlock = "" } = opts;
-  const provider = getProvider();
+  const ai = getProvider();
   const anoAtual = new Date().getFullYear();
   const prompt = `Você identifica o(a) SECRETÁRIO(A) MUNICIPAL DE EDUCAÇÃO ATUAL de ${municipio}/${uf}.
 Hoje é ${new Date().toISOString().slice(0, 10)} (ano corrente: ${anoAtual}).
@@ -676,7 +674,7 @@ Responda APENAS com JSON válido seguindo o schema.`;
   emit("info", "nome", "IA extraindo NOME atual (sem contatos)...");
   try {
     const { object } = await generateObject({
-      model: provider("google/gemini-3-flash-preview"),
+      model: ai.model,
       schema: NomeSchema,
       prompt,
     });
@@ -716,7 +714,7 @@ async function extractWithAI(
   } = {},
 ): Promise<Extracted | null> {
   const { nomeAlvo = null, diarioBlock = "", modo = "site", topHost } = opts;
-  const provider = getProvider();
+  const ai = getProvider();
 
   const focoEtapa = nomeAlvo
     ? `E-MAIL e TELEFONE vinculados a "${nomeAlvo}" / Secretaria de Educação que ele(a) chefia.`
@@ -772,7 +770,7 @@ Responda APENAS com JSON válido seguindo o schema.`;
   emit("info", etapa, `IA ${modo === "snippets" ? "(snippets)" : "(página)"} extraindo contatos${nomeAlvo ? ` de "${nomeAlvo}"` : ""}...`, { pistas: hints });
   try {
     const { object } = await generateObject({
-      model: provider("google/gemini-3-flash-preview"),
+      model: ai.model,
       schema: ExtractSchema,
       prompt,
     });
@@ -841,7 +839,7 @@ async function extractEquipeHorario(
   etapa: EtapaTag,
   secretarioConhecido: string | null,
 ): Promise<{ equipe: EquipeMembro[]; horarioAtendimento: string | null } | null> {
-  const provider = getProvider();
+  const ai = getProvider();
   const prompt = `O(a) titular da Secretaria Municipal de Educação de ${municipio}/${uf} já foi identificado(a)${secretarioConhecido ? ` (${secretarioConhecido})` : ""}. Releia o texto abaixo À PROCURA APENAS de:
 
 1) EQUIPE: outras pessoas citadas com NOME + CARGO ligadas à Secretaria (Secretário(a) Adjunto(a), Chefe de Gabinete, Diretor(a) de Departamento, Coordenador(a) de área/etapa — Educação Infantil, Fundamental, Especial, EJA, Alimentação Escolar, Transporte, Formação, Tecnologia —, Assessor(a), Chefe de Divisão, Assistente, Ouvidor(a)).
@@ -860,7 +858,7 @@ ${conteudo}
 Responda APENAS com JSON válido seguindo o schema.`;
   try {
     const { object } = await generateObject({
-      model: provider("google/gemini-3-flash-preview"),
+      model: ai.model,
       schema: EnrichSchema,
       prompt,
     });
