@@ -14,6 +14,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as MunicipioIbgeIdRouteImport } from './routes/municipio.$ibgeId'
+import { Route as DebugOpenaiRouteImport } from './routes/debug.openai'
 import { Route as DebugApifyRouteImport } from './routes/debug.apify'
 import { Route as ApiProspectRouteImport } from './routes/api/prospect'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
@@ -49,6 +50,11 @@ const MunicipioIbgeIdRoute = MunicipioIbgeIdRouteImport.update({
   id: '/municipio/$ibgeId',
   path: '/municipio/$ibgeId',
   getParentRoute: () => rootRouteImport,
+} as any)
+const DebugOpenaiRoute = DebugOpenaiRouteImport.update({
+  id: '/openai',
+  path: '/openai',
+  getParentRoute: () => DebugRoute,
 } as any)
 const DebugApifyRoute = DebugApifyRouteImport.update({
   id: '/apify',
@@ -116,6 +122,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AuthenticatedAdminRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
+  '/debug/openai': typeof DebugOpenaiRoute
   '/municipio/$ibgeId': typeof MunicipioIbgeIdRoute
   '/admin/import': typeof AuthenticatedAdminImportRoute
   '/admin/score': typeof AuthenticatedAdminScoreRoute
@@ -132,6 +139,7 @@ export interface FileRoutesByTo {
   '/debug': typeof DebugRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
+  '/debug/openai': typeof DebugOpenaiRoute
   '/municipio/$ibgeId': typeof MunicipioIbgeIdRoute
   '/admin/import': typeof AuthenticatedAdminImportRoute
   '/admin/score': typeof AuthenticatedAdminScoreRoute
@@ -151,6 +159,7 @@ export interface FileRoutesById {
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
+  '/debug/openai': typeof DebugOpenaiRoute
   '/municipio/$ibgeId': typeof MunicipioIbgeIdRoute
   '/_authenticated/admin/import': typeof AuthenticatedAdminImportRoute
   '/_authenticated/admin/score': typeof AuthenticatedAdminScoreRoute
@@ -170,6 +179,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/api/prospect'
     | '/debug/apify'
+    | '/debug/openai'
     | '/municipio/$ibgeId'
     | '/admin/import'
     | '/admin/score'
@@ -186,6 +196,7 @@ export interface FileRouteTypes {
     | '/debug'
     | '/api/prospect'
     | '/debug/apify'
+    | '/debug/openai'
     | '/municipio/$ibgeId'
     | '/admin/import'
     | '/admin/score'
@@ -204,6 +215,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin'
     | '/api/prospect'
     | '/debug/apify'
+    | '/debug/openai'
     | '/municipio/$ibgeId'
     | '/_authenticated/admin/import'
     | '/_authenticated/admin/score'
@@ -263,6 +275,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/municipio/$ibgeId'
       preLoaderRoute: typeof MunicipioIbgeIdRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/debug/openai': {
+      id: '/debug/openai'
+      path: '/openai'
+      fullPath: '/debug/openai'
+      preLoaderRoute: typeof DebugOpenaiRouteImport
+      parentRoute: typeof DebugRoute
     }
     '/debug/apify': {
       id: '/debug/apify'
@@ -378,10 +397,12 @@ const AuthenticatedRouteRouteWithChildren =
 
 interface DebugRouteChildren {
   DebugApifyRoute: typeof DebugApifyRoute
+  DebugOpenaiRoute: typeof DebugOpenaiRoute
 }
 
 const DebugRouteChildren: DebugRouteChildren = {
   DebugApifyRoute: DebugApifyRoute,
+  DebugOpenaiRoute: DebugOpenaiRoute,
 }
 
 const DebugRouteWithChildren = DebugRoute._addFileChildren(DebugRouteChildren)

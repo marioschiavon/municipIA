@@ -56,9 +56,12 @@ function DebugPage() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <Link to="/debug/apify">
-              <Button size="sm" variant="outline">POC Apify</Button>
-            </Link>
+          <Link to="/debug/apify">
+            <Button size="sm" variant="outline">POC Apify</Button>
+          </Link>
+          <Link to="/debug/openai">
+            <Button size="sm" variant="outline">POC OpenAI</Button>
+          </Link>
             <Button size="sm" variant="outline" onClick={reload}>
               <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Recarregar IBGE
             </Button>
