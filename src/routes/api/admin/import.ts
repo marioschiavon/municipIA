@@ -294,6 +294,20 @@ async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmi
   const firstValues = firstDataLine.split(delimiter);
   const ano = anoKey ? numberAt(firstValues, anoIdx, new Date().getFullYear()) : new Date().getFullYear();
 
+  // ---- Estado prévio no banco (checkpoint): quantas escolas já existem ----
+  const { count: preCount } = await supabaseAdmin
+    .from("inep_escolas")
+    .select("co_entidade", { count: "exact", head: true })
+    .eq("ano", ano);
+  const jaImportadas = preCount ?? 0;
+  await send({
+    type: "progress",
+    message: jaImportadas
+      ? `Checkpoint: já existem ${jaImportadas.toLocaleString("pt-BR")} escolas gravadas para o ano ${ano}. Linhas repetidas serão atualizadas (idempotente) e a contagem por município será aplicada em lotes progressivos.`
+      : `Checkpoint: nenhuma escola gravada ainda para o ano ${ano}. Import começando do zero.`,
+    data: { ano, jaImportadas },
+  });
+
   const municipais = new Map<number, number>();
   let totalLinhas = 0;
   let ignored = 0;
@@ -303,12 +317,45 @@ async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmi
   let batch: { co_entidade: number; ibge_id: number; tp_dependencia: number; tp_situacao: number; ano: number }[] = [];
   const BATCH = 1000;
   let processedLogMark = 0;
+  let gravadas = 0;
+  let lastMuniFlush = 0;
+  let updatedTotal = 0;
+  let notFound = 0;
+  const sampleNotFound: number[] = [];
+  const t0 = Date.now();
 
   async function flush() {
     if (batch.length === 0) return;
+    const size = batch.length;
     const { error } = await supabaseAdmin.from("inep_escolas").upsert(batch, { onConflict: "co_entidade" });
     if (error) throw new Error(`inep_escolas: ${error.message}`);
+    gravadas += size;
     batch = [];
+  }
+
+  // Aplica a contagem de escolas municipais no catálogo. Chamado em lotes
+  // progressivos durante a leitura, para que uma queda de conexão não perca
+  // todo o trabalho já feito.
+  async function aplicarContagens(entries: [number, number][]) {
+    const CONC = 20;
+    let idx = 0;
+    let updated = 0;
+    async function worker() {
+      while (idx < entries.length) {
+        const i = idx++;
+        const [ibge, count] = entries[i];
+        const { data, error } = await supabaseAdmin.from("municipios").update({ escolas: count }).eq("ibge_id", ibge).select("ibge_id").maybeSingle();
+        if (error) throw new Error(`municipios ${ibge}: ${error.message}`);
+        if (data) updated++;
+        else {
+          notFound++;
+          if (sampleNotFound.length < 5) sampleNotFound.push(ibge);
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: CONC }, worker));
+    updatedTotal = updated;
+    return updated;
   }
 
   for await (const line of allLines(src, firstDataLine)) {
@@ -338,46 +385,79 @@ async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmi
     if (dep === 3 && sit === 1) municipais.set(ibge, (municipais.get(ibge) ?? 0) + 1);
 
     if (batch.length >= BATCH) await flush();
+
+    // ---- Log verbose a cada 20 mil linhas ----
     if (totalLinhas - processedLogMark >= 20000) {
       processedLogMark = totalLinhas;
-      await send({ type: "progress", message: `Processadas ${totalLinhas.toLocaleString("pt-BR")} escolas até agora...` });
+      const elapsed = (Date.now() - t0) / 1000;
+      const taxa = Math.round(totalLinhas / Math.max(elapsed, 1));
+      await send({
+        type: "progress",
+        message: `↳ ${totalLinhas.toLocaleString("pt-BR")} linhas lidas · ${gravadas.toLocaleString("pt-BR")} gravadas no banco · ${ignored.toLocaleString("pt-BR")} ignoradas · ${municipais.size.toLocaleString("pt-BR")} municípios com rede municipal ativa · ${Math.round(elapsed)}s (${taxa.toLocaleString("pt-BR")} linhas/s)`,
+        data: {
+          lidas: totalLinhas,
+          gravadas,
+          ignoradas: ignored,
+          municipios: municipais.size,
+          dep3: countDep3,
+          sit1: countSit1,
+          segundos: Math.round(elapsed),
+          linhasPorSegundo: taxa,
+        },
+      });
+    }
+
+    // ---- Flush progressivo das contagens por município (a cada 100 mil linhas) ----
+    if (totalLinhas - lastMuniFlush >= 100000 && municipais.size > 0) {
+      lastMuniFlush = totalLinhas;
+      const parciais = Array.from(municipais.entries());
+      const upd = await aplicarContagens(parciais);
+      await send({
+        type: "progress",
+        message: `💾 Checkpoint parcial: contagem de escolas aplicada em ${upd.toLocaleString("pt-BR")} municípios (parcial, será refinada até o fim do arquivo).`,
+        data: { parcial: true, municipiosAtualizados: upd, linhas: totalLinhas },
+      });
     }
   }
   await flush();
 
+  const elapsedTotal = Math.round((Date.now() - t0) / 1000);
   await send({
     type: "progress",
-    message: `${totalLinhas.toLocaleString("pt-BR")} escolas lidas · dep=3: ${countDep3.toLocaleString("pt-BR")} · sit=1: ${countSit1.toLocaleString("pt-BR")} · municipais ativas: ${Array.from(municipais.values()).reduce((a, b) => a + b, 0).toLocaleString("pt-BR")} em ${municipais.size.toLocaleString("pt-BR")} municípios.`,
-    data: { ignored, sampleIgnored },
+    message: `${totalLinhas.toLocaleString("pt-BR")} escolas lidas · ${gravadas.toLocaleString("pt-BR")} gravadas · dep=3: ${countDep3.toLocaleString("pt-BR")} · sit=1: ${countSit1.toLocaleString("pt-BR")} · municipais ativas: ${Array.from(municipais.values()).reduce((a, b) => a + b, 0).toLocaleString("pt-BR")} em ${municipais.size.toLocaleString("pt-BR")} municípios · ${elapsedTotal}s.`,
+    data: { ignored, sampleIgnored, gravadas, segundos: elapsedTotal },
   });
 
-  const CONC = 20;
   const entries = Array.from(municipais.entries());
-  let idx = 0;
-  let updated = 0;
-  let notFound = 0;
-  const sampleNotFound: number[] = [];
-  async function worker() {
-    while (idx < entries.length) {
-      const i = idx++;
-      const [ibge, count] = entries[i];
-      const { data, error } = await supabaseAdmin.from("municipios").update({ escolas: count }).eq("ibge_id", ibge).select("ibge_id").maybeSingle();
-      if (error) throw new Error(`municipios ${ibge}: ${error.message}`);
-      if (data) updated++;
-      else {
-        notFound++;
-        if (sampleNotFound.length < 5) sampleNotFound.push(ibge);
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: CONC }, worker));
+  const updated = await aplicarContagens(entries);
   const amostra = entries.slice(0, 3).map(([ibge, c]) => `${ibge}=${c}`).join(", ");
   await send({
     type: "progress",
     message: `Contagem de escolas municipais atualizada em ${updated.toLocaleString("pt-BR")} municípios (amostra: ${amostra}). Ignoradas: ${ignored.toLocaleString("pt-BR")}. Não encontrados no catálogo: ${notFound.toLocaleString("pt-BR")}.`,
-    data: { sampleNotFound },
+    data: { sampleNotFound, updatedTotal },
   });
+
+  // ---- Sanidade: o Censo tem ~215 mil escolas em ~5.570 municípios ----
+  const { count: posCount } = await supabaseAdmin
+    .from("inep_escolas")
+    .select("co_entidade", { count: "exact", head: true })
+    .eq("ano", ano);
+  const totalBanco = posCount ?? 0;
+  if (totalBanco < 150000 || municipais.size < 5000) {
+    await send({
+      type: "progress",
+      message: `⚠️ ATENÇÃO: o banco terminou com apenas ${totalBanco.toLocaleString("pt-BR")} escolas em ${municipais.size.toLocaleString("pt-BR")} municípios — abaixo do esperado (~215.000 escolas / ~5.570 municípios). O arquivo provavelmente foi cortado no meio. Reenvie o mesmo arquivo: o import é idempotente e vai completar o que falta.`,
+      data: { totalBanco, municipios: municipais.size, incompleto: true },
+    });
+  } else {
+    await send({
+      type: "progress",
+      message: `✅ Sanidade OK: ${totalBanco.toLocaleString("pt-BR")} escolas no banco para o ano ${ano} (${(totalBanco - jaImportadas).toLocaleString("pt-BR")} novas nesta importação).`,
+      data: { totalBanco, novas: totalBanco - jaImportadas },
+    });
+  }
 }
+
 
 async function processInepMatriculas(body: ReadableStream<Uint8Array>, supabaseAdmin: any, send: any) {
   const src = createLineSource(body);
