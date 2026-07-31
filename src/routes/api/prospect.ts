@@ -25,6 +25,15 @@ export const Route = createFileRoute("/api/prospect")({
             headers: { "Content-Type": "application/json" },
           });
         }
+        const { requireAdminBearer } = await import("@/lib/api-auth.server");
+        const auth = await requireAdminBearer(request);
+        if (!auth.ok) {
+          return new Response(JSON.stringify({ kind: "progress", level: "error", etapa: "final", message: auth.message, ts: Date.now() }) + "\n", {
+            status: 401,
+            headers: { "Content-Type": "application/x-ndjson; charset=utf-8" },
+          });
+        }
+
         const { municipio, uf, ibgeId, provider } = parsed.data;
 
         // Se já sabemos o domínio oficial confirmado deste município (de uma run

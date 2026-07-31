@@ -1,14 +1,16 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { adminGetMunicipio, adminSaveMunicipio, adminFetchFndeAtual } from "@/lib/admin.functions";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Loader2, Plus, Trash2, Save, Search } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, Trash2, Save, Search, RefreshCw } from "lucide-react";
+import type { ProgressEvent } from "@/lib/prospect.types";
 
 const ETAPAS: Array<{ id: string; label: string; hint: string }> = [
   { id: "creche", label: "Creche", hint: "0 a 3 anos" },
@@ -82,6 +84,67 @@ function AdminEditMunicipio() {
     },
   });
 
+  // ===== Prospecção ao vivo (Firecrawl ou Apify) — só admin, sempre salva =====
+  const [prospRunning, setProspRunning] = useState(false);
+  const [prospTestMode, setProspTestMode] = useState(false);
+  const [prospEvents, setProspEvents] = useState<ProgressEvent[]>([]);
+  const prospAbortRef = useRef<AbortController | null>(null);
+
+  async function rodarProspeccao(provider: "firecrawl" | "apify" = "firecrawl") {
+    if (!data.data?.municipio) return;
+    const { nome, uf } = data.data.municipio;
+    setProspEvents([]);
+    setProspRunning(true);
+    setProspTestMode(provider === "apify");
+    const controller = new AbortController();
+    prospAbortRef.current = controller;
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("Sessão não encontrada. Faça login novamente.");
+      const res = await fetch("/api/prospect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        // Ao contrário do antigo botão público, os dois modos aqui SEMPRE mandam
+        // ibgeId — o teste com Apify também persiste, pra dar pra comparar o
+        // resultado salvo de verdade.
+        body: JSON.stringify({ municipio: nome, uf, ibgeId: id, provider }),
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          const s = line.trim();
+          if (!s) continue;
+          try {
+            const evt = JSON.parse(s) as ProgressEvent;
+            setProspEvents((prev) => [...prev, evt]);
+          } catch { /* noop */ }
+        }
+      }
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === "AbortError")) {
+        setProspEvents((prev) => [...prev, {
+          kind: "progress", level: "error", etapa: "final",
+          message: e instanceof Error ? e.message : "Falha",
+          ts: Date.now(),
+        }]);
+      }
+    } finally {
+      setProspRunning(false);
+      prospAbortRef.current = null;
+      qc.invalidateQueries({ queryKey: ["admin-muni", id] });
+    }
+  }
+
   const saveMut = useMutation({
     mutationFn: async () => saveFn({
       data: {
@@ -123,6 +186,49 @@ function AdminEditMunicipio() {
         <h2 className="mt-2 text-2xl font-bold tracking-tight">{m.nome} <span className="text-muted-foreground font-normal">/ {m.uf}</span></h2>
         <p className="text-xs text-muted-foreground">IBGE {m.ibge_id}</p>
       </div>
+
+      {/* Prospecção ao vivo */}
+      <section className="rounded-lg border border-border bg-white p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Prospecção ao vivo</h3>
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => rodarProspeccao("firecrawl")} disabled={prospRunning}>
+              {prospRunning && !prospTestMode ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Buscando…</> : <><RefreshCw className="mr-1.5 h-4 w-4" /> Atualizar agora</>}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => rodarProspeccao("apify")} disabled={prospRunning} title="Roda a mesma busca só com Apify — salva no catálogo igual, pra comparar o resultado real">
+              {prospRunning && prospTestMode ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Testando…</> : "Testar com Apify"}
+            </Button>
+          </div>
+        </div>
+        {prospEvents.length === 0 && !prospRunning ? (
+          <p className="text-sm text-muted-foreground">Nenhuma prospecção rodada nesta sessão ainda.</p>
+        ) : (
+          <div className="max-h-72 space-y-1 overflow-y-auto">
+            {prospEvents.filter((e) => e.kind === "progress").map((e: any, i) => (
+              <div key={i} className={`rounded border-l-2 bg-slate-50 px-3 py-1.5 text-xs ${
+                e.level === "error" ? "border-red-400" :
+                e.level === "warn" ? "border-amber-400" :
+                e.level === "success" ? "border-emerald-400" : "border-slate-300"
+              }`}>
+                <div className="font-medium">{e.message}</div>
+                {e.etapa && <div className="text-[10px] text-muted-foreground">{e.etapa}</div>}
+              </div>
+            ))}
+            {(() => {
+              const final = prospEvents.find((e) => e.kind === "final") as any;
+              return final ? (
+                <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs">
+                  <div className="font-semibold text-emerald-900">Resultado final (já salvo)</div>
+                  <div className="mt-1 text-emerald-800">
+                    Status: {final.result.status} · Secretário: {final.result.secretario ?? "—"} ·{" "}
+                    {final.result.emails.length} e-mail(s) · {final.result.telefones.length} telefone(s)
+                  </div>
+                </div>
+              ) : null;
+            })()}
+          </div>
+        )}
+      </section>
 
       {/* Indicadores */}
       <section className="rounded-lg border border-border bg-white p-6">

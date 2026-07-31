@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useRef, useState, useMemo } from "react";
 import { adminListMunicipios, adminListMunicipioIds, adminFetchFndeAtual } from "@/lib/admin.functions";
+import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -72,9 +73,12 @@ function AdminMunicipios() {
 
   async function processarUm(m: QueueMunicipio, signal: AbortSignal): Promise<QueueLogEntry> {
     try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("Sessão não encontrada. Faça login novamente.");
       const res = await fetch("/api/prospect", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ municipio: m.nome, uf: m.uf, ibgeId: m.ibge_id }),
         signal,
       });

@@ -1,19 +1,15 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState, useRef } from "react";
+import { useState } from "react";
 import {
   ArrowLeft, RefreshCw, Loader2, User, Mail, Phone, Clock, Users, ExternalLink,
-  Building2, TrendingUp, GraduationCap, Wallet, MapPin, X,
+  Building2, TrendingUp, GraduationCap, Wallet, MapPin,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Sheet, SheetContent, SheetHeader, SheetTitle,
-} from "@/components/ui/sheet";
 import { getMunicipio } from "@/lib/catalog.functions";
 import { FAIXA_LABEL } from "@/lib/catalog-score";
-import type { ProgressEvent, ProspectResult } from "@/lib/prospect.types";
 
 export const Route = createFileRoute("/municipio/$ibgeId")({
   head: ({ params }) => ({
@@ -32,7 +28,6 @@ export const Route = createFileRoute("/municipio/$ibgeId")({
 function MunicipioPage() {
   const { ibgeId } = useParams({ from: "/municipio/$ibgeId" });
   const id = parseInt(ibgeId, 10);
-  const qc = useQueryClient();
   const getFn = useServerFn(getMunicipio);
 
   const q = useQuery({
@@ -40,67 +35,17 @@ function MunicipioPage() {
     queryFn: () => getFn({ data: { ibge_id: id } }),
   });
 
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [events, setEvents] = useState<ProgressEvent[]>([]);
-  const [running, setRunning] = useState(false);
-  const [testMode, setTestMode] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
-  async function atualizar(provider: "firecrawl" | "apify" = "firecrawl") {
-    if (!q.data) return;
-    setSheetOpen(true);
-    setEvents([]);
-    setRunning(true);
-    setTestMode(provider === "apify");
-    const controller = new AbortController();
-    abortRef.current = controller;
-
+  // Leitura pura do catálogo — a prospecção de verdade (que tem custo real de
+  // busca/IA) só roda pelo admin. Esse botão só relê o banco, dando a sensação
+  // de "conferir se está atualizado" sem disparar nenhuma busca paga.
+  async function verificarDados() {
+    setVerifying(true);
     try {
-      const res = await fetch("/api/prospect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Modo teste (Apify) NUNCA envia ibgeId — não persiste no catálogo,
-        // é só pra comparar lado a lado com o resultado do Firecrawl.
-        body: JSON.stringify(
-          provider === "apify"
-            ? { municipio: q.data.nome, uf: q.data.uf, provider }
-            : { municipio: q.data.nome, uf: q.data.uf, ibgeId: id },
-        ),
-        signal: controller.signal,
-      });
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines) {
-          const s = line.trim();
-          if (!s) continue;
-          try {
-            const evt = JSON.parse(s) as ProgressEvent;
-            setEvents((prev) => [...prev, evt]);
-          } catch { /* noop */ }
-        }
-      }
-    } catch (e) {
-      if (!(e instanceof DOMException && e.name === "AbortError")) {
-        setEvents((prev) => [...prev, {
-          kind: "progress", level: "error", etapa: "final",
-          message: e instanceof Error ? e.message : "Falha",
-          ts: Date.now(),
-        }]);
-      }
+      await q.refetch();
     } finally {
-      setRunning(false);
-      abortRef.current = null;
-      qc.invalidateQueries({ queryKey: ["municipio", id] });
-      qc.invalidateQueries({ queryKey: ["municipios"] });
-      qc.invalidateQueries({ queryKey: ["stats"] });
+      setVerifying(false);
     }
   }
 
@@ -118,9 +63,6 @@ function MunicipioPage() {
 
   const m = q.data;
   const edu = m.educacao;
-  const finalResult: ProspectResult | null = events.length > 0
-    ? (events.find((e) => e.kind === "final") as any)?.result ?? null
-    : null;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -129,14 +71,9 @@ function MunicipioPage() {
           <Link to="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
             <ArrowLeft className="h-4 w-4" /> Catálogo
           </Link>
-          <div className="flex items-center gap-2">
-            <Button onClick={() => atualizar("firecrawl")} disabled={running}>
-              {running && !testMode ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Buscando…</> : <><RefreshCw className="mr-2 h-4 w-4" /> Atualizar agora</>}
-            </Button>
-            <Button variant="outline" onClick={() => atualizar("apify")} disabled={running} title="Roda a mesma busca só com Apify, sem salvar no catálogo — só pra comparar">
-              {running && testMode ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Testando…</> : "Testar com Apify (não salva)"}
-            </Button>
-          </div>
+          <Button variant="outline" onClick={verificarDados} disabled={verifying}>
+            {verifying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verificando…</> : <><RefreshCw className="mr-2 h-4 w-4" /> Verificar dados</>}
+          </Button>
         </div>
       </header>
 
@@ -164,7 +101,7 @@ function MunicipioPage() {
         <div className="grid gap-6 md:grid-cols-2">
           <Card icon={<Building2 className="h-5 w-5" />} title="Secretaria de Educação">
             {edu.status === "sem_dados" ? (
-              <p className="text-sm text-muted-foreground">Sem dados coletados. Clique em <b>Atualizar agora</b> para iniciar a prospecção.</p>
+              <p className="text-sm text-muted-foreground">Sem dados coletados ainda — nossa equipe está atualizando o catálogo.</p>
             ) : (
               <div className="space-y-3">
                 <Field icon={<User className="h-4 w-4" />} label="Secretário(a)" value={edu.secretario} />
@@ -222,43 +159,6 @@ function MunicipioPage() {
           </Card>
         </div>
       </main>
-
-      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>{testMode ? "Teste com Apify (não salva)" : "Prospecção em andamento"}</SheetTitle>
-          </SheetHeader>
-          <div className="mt-4 space-y-2">
-            {events.length === 0 && !running && (
-              <p className="text-sm text-muted-foreground">Nenhum evento.</p>
-            )}
-            {events.filter(e => e.kind === "progress").map((e: any, i) => (
-              <div key={i} className={`rounded border-l-2 bg-slate-50 px-3 py-1.5 text-xs ${
-                e.level === "error" ? "border-red-400" :
-                e.level === "warn" ? "border-amber-400" :
-                e.level === "success" ? "border-emerald-400" : "border-slate-300"
-              }`}>
-                <div className="font-medium">{e.message}</div>
-                {e.etapa && <div className="text-[10px] text-muted-foreground">{e.etapa}</div>}
-              </div>
-            ))}
-            {finalResult && (
-              <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs">
-                <div className="font-semibold text-emerald-900">Resultado final</div>
-                <div className="mt-1 text-emerald-800">
-                  Status: {finalResult.status} · Secretário: {finalResult.secretario ?? "—"} ·{" "}
-                  {finalResult.emails.length} e-mail(s) · {finalResult.telefones.length} telefone(s)
-                </div>
-              </div>
-            )}
-            {running && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Buscando…
-              </div>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
     </div>
   );
 }
