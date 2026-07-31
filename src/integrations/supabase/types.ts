@@ -102,6 +102,8 @@ export type Database = {
           horario: string | null
           ibge_id: number
           pagina_educacao_url: string | null
+          revisao_motivos: string[]
+          revisao_necessaria: boolean
           score: number
           secretario: string | null
           status: string
@@ -123,6 +125,8 @@ export type Database = {
           horario?: string | null
           ibge_id: number
           pagina_educacao_url?: string | null
+          revisao_motivos?: string[]
+          revisao_necessaria?: boolean
           score?: number
           secretario?: string | null
           status?: string
@@ -144,6 +148,8 @@ export type Database = {
           horario?: string | null
           ibge_id?: number
           pagina_educacao_url?: string | null
+          revisao_motivos?: string[]
+          revisao_necessaria?: boolean
           score?: number
           secretario?: string | null
           status?: string
