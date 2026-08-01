@@ -283,10 +283,22 @@ async function googleSearch(
     });
     return cands;
   } catch (e) {
-    emit("error", etapa, "Erro na busca do Firecrawl", String(e));
-    return [];
+    const msg = e instanceof Error ? e.message : String(e);
+    emit("error", etapa, "Erro na busca do Firecrawl", msg);
+    // Marca a falha do provedor pra não ser confundida com "zero resultados".
+    throw new ProviderSearchError(`Firecrawl: ${msg}`);
   }
 }
+
+/** Falha do provedor de busca (crédito/quota/401/402/rede) — distinta de "0 resultados". */
+class ProviderSearchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProviderSearchError";
+  }
+}
+
+const QUOTA_RE = /(insufficient credits|payment required|quota|rate limit|402|401|403|unauthorized|forbidden)/i;
 
 /** googleSearch com timeout duro — devolve [] se estourar. */
 async function gSearch(
@@ -348,12 +360,25 @@ type SearchFn = (
 ) => Promise<SearchCandidate[]>;
 
 /** Fábrica do dispatcher de busca (Firecrawl ou Apify) — extraída de `prospectar()`
- * para ser reaproveitada também pelas fases isoladas (`prospectarDominio` etc.). */
+ * para ser reaproveitada também pelas fases isoladas (`prospectarDominio` etc.).
+ * Quando o Firecrawl falha por crédito/quota/auth, cai automaticamente no Apify;
+ * qualquer outra falha do provedor é propagada (nunca vira "0 resultados" silencioso). */
 function makeSearchDispatcher(provider: "firecrawl" | "apify", fc: Firecrawl, emit: Emit): SearchFn {
-  return (query, etapa, opts = {}) =>
-    provider === "apify"
-      ? apifySearch(query, emit, etapa, { limit: opts.limit, timeoutMs: opts.timeoutMs ?? 20_000, uf: opts.uf })
-      : gSearch(fc, query, emit, etapa, opts);
+  const viaApify = (query: string, etapa: EtapaTag, opts: { limit?: number; timeoutMs?: number; uf?: string }) =>
+    apifySearch(query, emit, etapa, { limit: opts.limit, timeoutMs: opts.timeoutMs ?? 45_000, uf: opts.uf });
+  return async (query, etapa, opts = {}) => {
+    if (provider === "apify") return viaApify(query, etapa, opts);
+    try {
+      return await gSearch(fc, query, emit, etapa, opts);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (e instanceof ProviderSearchError && QUOTA_RE.test(msg)) {
+        emit("warn", etapa, `Firecrawl indisponível (${msg.slice(0, 140)}) — refazendo a busca pelo Apify`);
+        return viaApify(query, etapa, opts);
+      }
+      throw e;
+    }
+  };
 }
 
 /** scrapeMarkdown com timeout duro — devolve null se estourar. */
@@ -944,8 +969,10 @@ export async function prospectarDominio(
   // usada só quando A não acha nada — confirmação mais fraca (fica marcada para revisão).
   const queryA = `site:${dominioEspecial ?? `${slug}.${ufLow}.gov.br`} prefeitura`;
   const queryB = `"${municipio}" prefeitura ${uf} site oficial`;
-  const candsA = await search(queryA, "init", { limit: 5, timeoutMs: 8000, uf });
-  const candsB = candsA.length === 0 ? await search(queryB, "init", { limit: 5, timeoutMs: 8000, uf }) : [];
+  // 45s: o SERP do Apify leva de 10s a 40s por consulta — com o timeout antigo de 8s
+  // a resposta era cortada e a fase voltava vazia como se nada existisse.
+  const candsA = await search(queryA, "init", { limit: 5, timeoutMs: 45_000, uf });
+  const candsB = candsA.length === 0 ? await search(queryB, "init", { limit: 5, timeoutMs: 45_000, uf }) : [];
 
   const fortesHosts = new Set(
     candsA
@@ -979,6 +1006,34 @@ export async function prospectarDominio(
 // FASE 2 (isolada) — só descobre o nome/cargo do secretário, dentro do
 // domínio JÁ confirmado (sitemap, sem Google/Apify).
 // ============================================================
+
+/** Descobre páginas da Secretaria de Educação dentro do domínio confirmado:
+ * sitemap/robots/home primeiro (grátis) e, só se vier vazio, uma única consulta
+ * SERP restrita ao próprio domínio (`site:dominio ...`) — sem risco de contaminação
+ * por outro município, já que o host é o confirmado. */
+async function descobrirPaginasEducacao(
+  dominioOficial: string,
+  emit: Emit,
+  etapa: EtapaTag,
+): Promise<{ candidates: string[]; via: string }> {
+  const { discoverEducationPages } = await import("./sitemap.server");
+  const disc = await discoverEducationPages(dominioOficial);
+  if (disc.candidates.length > 0) return { candidates: disc.candidates, via: disc.via };
+
+  emit("warn", etapa, `Sem candidatos por sitemap/home em ${dominioOficial} — tentando SERP restrita ao domínio`);
+  const cands = await apifySearch(`site:${dominioOficial} secretaria municipal de educação`, emit, etapa, {
+    limit: 10,
+    timeoutMs: 45_000,
+  });
+  const host = dominioOficial.toLowerCase();
+  const urls = cands
+    .map((c) => c.url)
+    .filter((u) => stripWww(shortHost(u)).toLowerCase().endsWith(stripWww(host).toLowerCase()))
+    .slice(0, 8);
+  return { candidates: urls, via: urls.length > 0 ? "serp-no-dominio" : "none" };
+}
+
+
 export async function prospectarSecretario(
   municipio: string,
   uf: string,
@@ -991,13 +1046,12 @@ export async function prospectarSecretario(
   };
   const fc = getFirecrawl();
   emit("info", "nome", `Fase secretário — vasculhando ${dominioOficial} via sitemap`);
-  const { discoverEducationPages } = await import("./sitemap.server");
-  const { candidates, via } = await discoverEducationPages(dominioOficial);
+  const { candidates, via } = await descobrirPaginasEducacao(dominioOficial, emit, "nome");
   emit("info", "nome", `${candidates.length} candidato(s) via ${via}`);
 
   let melhor: { out: NomeOnly; url: string } | null = null;
   for (const url of candidates) {
-    const md = await gScrape(fc, url, emit, "nome", { hardTimeoutMs: 8000 });
+    const md = await gScrape(fc, url, emit, "nome", { hardTimeoutMs: 20_000 });
     if (!md) continue;
     const out = await extractNomeWithAI(md, url, municipio, uf, emit);
     if (!out?.secretario) continue;
@@ -1065,8 +1119,7 @@ export async function prospectarContato(
     candidateUrls = [paginaEducacaoUrl];
     via = "página conhecida";
   } else {
-    const { discoverEducationPages } = await import("./sitemap.server");
-    const disc = await discoverEducationPages(dominioOficial);
+    const disc = await descobrirPaginasEducacao(dominioOficial, emit, "educacao");
     candidateUrls = disc.candidates;
     via = disc.via;
   }
@@ -1075,7 +1128,7 @@ export async function prospectarContato(
   let melhor: { emails: string[]; telefones: string[]; url: string } | null = null;
 
   for (const url of candidateUrls) {
-    const md = await gScrape(fc, url, emit, "educacao", { hardTimeoutMs: 8000 });
+    const md = await gScrape(fc, url, emit, "educacao", { hardTimeoutMs: 20_000 });
     if (!md) continue;
     const hints = extractContactsRegex(md);
     const emails = filterEmailsForFinal(hints.emails, municipio, uf, dominioOficial).filter((e) => !isSchoolEmail(e));
@@ -1103,7 +1156,7 @@ export async function prospectarContato(
   // Regex não achou e-mail direto (só genérico ou nada) — tenta IA na melhor candidata.
   const urlFallback = melhor?.url ?? candidateUrls[0];
   if (urlFallback) {
-    const md = await gScrape(fc, urlFallback, emit, "educacao", { hardTimeoutMs: 8000 });
+    const md = await gScrape(fc, urlFallback, emit, "educacao", { hardTimeoutMs: 20_000 });
     if (md) {
       const ext = await extractWithAI(md, urlFallback, "educacao", municipio, uf, emit, { topHost: dominioOficial });
       if (ext && (ext.emails.length > 0 || ext.telefones.length > 0)) {

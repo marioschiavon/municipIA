@@ -49,6 +49,7 @@ async function processarUm(
     let buf = "";
     let finalStatus: QueueLogEntry["status"] = "not_found";
     let result: ProspectResult | undefined;
+    let erroProvedor: string | null = null;
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -63,9 +64,15 @@ async function processarUm(
           if (evt.kind === "final") {
             finalStatus = evt.result?.status ?? "not_found";
             result = evt.result;
+          } else if (evt.kind === "progress" && evt.level === "error") {
+            // Falha real (provedor sem crédito, auth, rede) — não é "não encontrei".
+            erroProvedor = [evt.message, typeof evt.data === "string" ? evt.data : null].filter(Boolean).join(" — ");
           }
         } catch { /* noop */ }
       }
+    }
+    if (erroProvedor) {
+      return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: "error", detalhe: erroProvedor.slice(0, 200), result };
     }
     const contatos = (result?.emails?.length ?? 0) + (result?.telefones?.length ?? 0);
     return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: finalStatus, detalhe: `${contatos} contato(s)`, result };
@@ -89,7 +96,7 @@ export function useProspectQueue(intervalMs: number) {
   async function iniciar(
     items: QueueMunicipio[],
     fase: ProspectFase,
-    provider: "firecrawl" | "apify" = "firecrawl",
+    provider: "firecrawl" | "apify" = "apify",
     onDone?: () => void,
   ) {
     if (items.length === 0) return;

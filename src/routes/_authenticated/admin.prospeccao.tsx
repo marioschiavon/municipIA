@@ -25,9 +25,10 @@ const FASE_LABEL: Record<FaseIsolada, string> = {
   contato: "Fase 3 — Contato",
 };
 // Fase 1/3 são baratas (sem IA ou regex-primeiro) — pausa curta. Fase 2 usa IA por
-// candidato — mesma pausa do modo completo, pra não estourar rate limit do provider.
+// candidato — pausa maior, pra não estourar rate limit do provider. A busca em si
+// (SERP do Apify) já leva 10–40s por município, então a pausa da Fase 1 é curta.
 const FASE_INTERVALO_MS: Record<FaseIsolada, number> = {
-  dominio: 5_000,
+  dominio: 2_000,
   secretario: 30_000,
   contato: 15_000,
 };
@@ -44,6 +45,7 @@ function AdminProspeccao() {
   const [fase, setFase] = useState<FaseIsolada>("dominio");
   const [uf, setUf] = useState("all");
   const [loteSize, setLoteSize] = useState(500);
+  const [provider, setProvider] = useState<"apify" | "firecrawl">("apify");
   const [resolvidos, setResolvidos] = useState<Set<number>>(new Set());
 
   const filtros = { uf: uf === "all" ? undefined : uf };
@@ -61,7 +63,7 @@ function AdminProspeccao() {
     try {
       const { items } = await listIdsFn({ data: { ...filtros, fase } });
       const lote = items.slice(0, Math.max(1, loteSize));
-      await queue.iniciar(lote, fase, "firecrawl", () => {
+      await queue.iniciar(lote, fase, provider, () => {
         qc.invalidateQueries({ queryKey: ["admin-prospeccao-count"] });
         qc.invalidateQueries({ queryKey: ["admin-municipios"] });
       });
@@ -102,6 +104,16 @@ function AdminProspeccao() {
             {UFS.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}
           </SelectContent>
         </Select>
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">Provedor de busca</label>
+          <Select value={provider} onValueChange={(v) => setProvider(v as "apify" | "firecrawl")} disabled={queue.running}>
+            <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="apify">Apify</SelectItem>
+              <SelectItem value="firecrawl">Firecrawl</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div className="space-y-1">
           <label className="text-xs text-muted-foreground">Tamanho do lote</label>
           <Input type="number" min={1} className="w-24" value={loteSize} onChange={(e) => setLoteSize(+e.target.value || 1)} disabled={queue.running} />
