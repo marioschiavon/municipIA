@@ -1,36 +1,36 @@
-## Resposta à sua ideia (subir o arquivo inteiro para o banco)
+## Diagnóstico (verificado)
 
-A ideia é boa em espírito — separar "receber o arquivo" de "processar o arquivo" é exatamente o que resolve interrupções. Mas subir o **arquivo bruto** (190 MB / ~400 colunas) para uma tabela de staging e depois apagar tem dois problemas práticos:
+- Chamada direta à API de busca do Firecrawl retorna: `Insufficient credits to perform this request`.
+- Em `src/lib/prospect.server.ts`, `googleSearch()` captura a exceção e retorna lista vazia; `prospectarDominio()` então não acha candidato e devolve `not_found`. O mesmo vale para as outras fases, que dependem do domínio confirmado.
+- A mesma consulta pelo Apify (`apify~google-search-scraper`) respondeu HTTP 200 com resultados orgânicos normais.
+- O *scraping* de páginas não é afetado: `scrapeMarkdown()` já usa fetch nativo primeiro e só cai no Firecrawl como último recurso.
+- Estado atual do banco: 5.571 municípios, 151 com domínio, 22 com secretário, 18 com e-mail.
 
-- O gargalo continua sendo a mesma requisição HTTP: gravar 215 mil linhas cruas via API leva **mais** tempo do que gravar só as 5 colunas úteis. Trocaríamos uma etapa lenta por uma ainda mais lenta.
-- Guardar texto bruto (com todas as colunas do Censo) infla o banco em centenas de MB para depois descartar.
+## O que mudar
 
-**O que realmente resolve é o mesmo princípio, sem o peso:** a `inep_escolas` já *é* a tabela de staging (só com as colunas que importam). O que falta é **checkpoint e retomada** — saber onde parou e continuar dali. Proponho isso.
+1. **Apify como provedor de busca padrão**
+   - `useProspectQueue` / `admin.prospeccao.tsx` / lista de municípios passam `"apify"` em vez de `"firecrawl"`.
+   - `/api/prospect` mantém o parâmetro `provider`, apenas troca o default.
 
-## Plano
+2. **Fallback automático de busca**
+   - Em `makeSearchDispatcher`: se o Firecrawl retornar 0 resultados por erro de crédito/quota/401/402, refaz a mesma query pelo Apify automaticamente e emite aviso no log.
 
-**1. Log verbose de linhas já importadas (`src/routes/api/admin/import.ts`)**
-- Ao iniciar, consultar quantas linhas já existem para o ano e mostrar: "Já existem N escolas importadas (último CO_ENTIDADE X) — pulando linhas já gravadas".
-- Durante a leitura, a cada lote emitir evento verbose: linhas lidas, linhas puladas por já existirem, linhas gravadas neste lote, municípios distintos acumulados, tempo decorrido e taxa (linhas/s).
-- Ao final, resumo de sanidade: lidas vs. gravadas vs. municípios, com **alerta explícito** se o total ficar abaixo do esperado (< 150 mil escolas) — o import nunca mais "termina" silenciosamente pela metade.
+3. **Erro deixar de ser silencioso**
+   - `googleSearch()` passa a distinguir "sem resultados" de "provedor falhou", propagando o motivo.
+   - `prospectarDominio()` (e as demais fases) retornam `status: "error"` com a mensagem real do provedor em vez de `not_found`, para que a linha no painel mostre o motivo verdadeiro.
 
-**2. Retomada real (checkpoint)**
-- Modo "continuar de onde parou": pular rapidamente as linhas cujo `CO_ENTIDADE` já está no banco, sem reprocessar/reescrever.
-- Aplicar a contagem `municipios.escolas` **em lotes progressivos** durante a leitura (hoje só no fim, por isso apenas 22 municípios foram atualizados quando caiu).
-- Trocar os ~5.500 `UPDATE` individuais por upsert em lote por `ibge_id`.
+4. **Ritmo do lote**
+   - O Apify SERP leva ~10–40 s por consulta (vs. ~2 s do Firecrawl). Ajustar o intervalo da Fase 1 de 5 s para ~2 s, já que a própria chamada é lenta, e elevar o timeout de busca da fase de domínio de 8 s para 45 s — caso contrário o timeout duro corta a resposta do Apify e o resultado volta vazio de novo.
 
-**3. Robustez do stream**
-- Heartbeat periódico no NDJSON para evitar que proxies fechem a conexão em trechos lentos.
-- Opção de subir o CSV **dividido por UF/pedaços** — como o import passa a ser idempotente por `CO_ENTIDADE`, subir em partes é seguro e some com o risco de timeout.
+5. **Seletor de provedor na aba de prospecção**
+   - Um pequeno seletor "Provedor de busca: Apify / Firecrawl" no cabeçalho da tela, para voltar ao Firecrawl sem alterar código quando os créditos forem renovados.
 
-**4. Fluxo recomendado agora**
-1. Reenviar `Tabela_Escola_2025` (o banco só tem UFs 11→23; falta 3/4 do país).
-2. Se cair de novo, reenviar o mesmo arquivo — ele continuará de onde parou.
-3. Reenviar `Tabela_Matricula_2025`.
-4. Rodar "Recalcular scores".
+6. Bump de versão em `src/lib/version.ts` (Alpha v0.x+1).
 
-**5. `src/lib/version.ts`** → `Alpha v0.43`.
+## Validação
 
-## Fora de escopo
-- Nenhuma mudança de schema (nenhuma tabela de arquivo bruto será criada).
-- Nenhuma alteração no cálculo de score nem no importador FNDE/FUNDEB.
+Rodar um lote pequeno (ex.: 5 municípios de PR/SP) na Fase 1 e confirmar no log domínios confirmados e `dominio_oficial` gravado, depois rodar a Fase 2 sobre esses mesmos municípios.
+
+## Observação
+
+Se preferir manter o Firecrawl como principal, a alternativa é recarregar créditos na conta Firecrawl — nesse caso só implemento os itens 3 e 5 (log honesto e seletor).

@@ -79,7 +79,7 @@ export const Route = createFileRoute("/api/prospect")({
             try {
               let result;
               if (fase === "dominio") {
-                result = await prospectarDominio(municipio, uf, (evt) => send(evt), provider ?? "firecrawl");
+                result = await prospectarDominio(municipio, uf, (evt) => send(evt), provider ?? "apify");
                 send({ kind: "final", result, ts: Date.now() });
               } else if (fase === "secretario") {
                 result = await prospectarSecretario(municipio, uf, dominioConfirmado!, (evt) => send(evt));
@@ -89,7 +89,7 @@ export const Route = createFileRoute("/api/prospect")({
                 send({ kind: "final", result, ts: Date.now() });
               } else {
                 // prospectar() já emite seu próprio evento "kind: final" internamente (sendFinal).
-                result = await prospectar(municipio, uf, (evt) => send(evt), ibgeId, provider ?? "firecrawl", dominioConfirmado, paginaEducacaoConhecida);
+                result = await prospectar(municipio, uf, (evt) => send(evt), ibgeId, provider ?? "apify", dominioConfirmado, paginaEducacaoConhecida);
               }
               // Persistir se temos ibgeId
               if (ibgeId && result) {
