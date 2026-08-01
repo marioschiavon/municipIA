@@ -50,6 +50,7 @@ async function processarUm(
     let finalStatus: QueueLogEntry["status"] = "not_found";
     let result: ProspectResult | undefined;
     let erroProvedor: string | null = null;
+    let ultimoAviso: string | null = null;
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
