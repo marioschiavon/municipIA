@@ -277,7 +277,7 @@ function AdminMunicipios() {
                   <span className="flex items-center gap-2">
                     {e.detalhe && <span className="text-muted-foreground">{e.detalhe}</span>}
                     <Badge variant={e.status === "found" ? "default" : e.status === "error" ? "destructive" : "outline"}>
-                      {e.status}
+                      {STATUS_LABEL[e.status]}
                     </Badge>
                   </span>
                 </div>
