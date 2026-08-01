@@ -381,7 +381,9 @@ function makeSearchDispatcher(provider: "firecrawl" | "apify", fc: Firecrawl, em
   };
 }
 
-/** scrapeMarkdown com timeout duro — devolve null se estourar. */
+/** scrapeMarkdown com timeout duro — devolve null se estourar.
+ * Quando fetch nativo e Firecrawl falham (site bloqueando bot ou Firecrawl sem
+ * crédito), tenta uma última vez pelo Apify (navegador real). */
 async function gScrape(
   fc: Firecrawl,
   url: string,
@@ -391,8 +393,24 @@ async function gScrape(
 ): Promise<string | null> {
   const hard = opts.hardTimeoutMs ?? 8000;
   const inner: { timeoutMs?: number } = { timeoutMs: opts.timeoutMs ?? hard };
-  return withTimeout(scrapeMarkdown(fc, url, emit, etapa, inner), hard, `scrapeMarkdown(${shortHost(url)})`, emit, etapa);
+  const md = await withTimeout(scrapeMarkdown(fc, url, emit, etapa, inner), hard, `scrapeMarkdown(${shortHost(url)})`, emit, etapa);
+  if (md) return md;
+  try {
+    emit("info", etapa, `Tentando ${shortHost(url)} pelo Apify (navegador real)...`);
+    const { ragBrowse } = await import("./apify.server");
+    const r = await ragBrowse(url, { maxResults: 1, startUrls: [url], timeoutMs: 90_000 });
+    const page = r.ok ? r.pages.find((p) => p.markdown && p.markdown.length > 200) : undefined;
+    if (page) {
+      emit("success", etapa, `Apify baixou ${shortHost(url)} (${page.markdown.length} chars)`);
+      return page.markdown;
+    }
+    emit("warn", etapa, `Apify também não conseguiu conteúdo de ${shortHost(url)}`);
+  } catch (e) {
+    emit("warn", etapa, `Falha no fallback Apify em ${shortHost(url)}`, String(e));
+  }
+  return null;
 }
+
 
 function snippetsBlock(cands: SearchCandidate[]): string {
   if (cands.length === 0) return "";
