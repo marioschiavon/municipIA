@@ -68,15 +68,28 @@ async function processarUm(
           } else if (evt.kind === "progress" && evt.level === "error") {
             // Falha real (provedor sem crédito, auth, rede) — não é "não encontrei".
             erroProvedor = [evt.message, typeof evt.data === "string" ? evt.data : null].filter(Boolean).join(" — ");
+          } else if (evt.kind === "progress" && evt.level === "warn") {
+            // Último aviso serve de motivo quando a fase termina sem encontrar nada.
+            ultimoAviso = String(evt.message ?? "").slice(0, 200) || ultimoAviso;
           }
         } catch { /* noop */ }
       }
     }
     if (erroProvedor) {
-      return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: "error", detalhe: erroProvedor.slice(0, 200), result };
+      return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: "error", detalhe: erroProvedor.slice(0, 200), result, motivo: erroProvedor.slice(0, 300) };
     }
     const contatos = (result?.emails?.length ?? 0) + (result?.telefones?.length ?? 0);
-    return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: finalStatus, detalhe: `${contatos} contato(s)`, result };
+    const motivo =
+      finalStatus === "found"
+        ? null
+        : [result?.contexto ?? null, ultimoAviso].filter(Boolean).join(" · ").slice(0, 300) || null;
+    const detalhe =
+      fase === "dominio"
+        ? (result?.dominioOficialConfirmado ?? (finalStatus === "found" ? "domínio confirmado" : ""))
+        : fase === "secretario"
+          ? (result?.secretario ?? "")
+          : `${contatos} contato(s)`;
+    return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: finalStatus, detalhe: detalhe || undefined, result, motivo };
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") throw e;
     return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: "error", detalhe: e instanceof Error ? e.message : "Falha" };
