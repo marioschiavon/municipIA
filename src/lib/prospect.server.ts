@@ -1114,8 +1114,14 @@ export async function prospectarSecretario(
       motivoRevisao: `secretario: confiança ${melhor.out.confianca}`,
     };
   }
-  emit("warn", "nome", "Nenhum nome de secretário encontrado no domínio confirmado");
-  return empty(`Domínio confirmado (${dominioOficial}) sem página com nome do secretário localizável.`);
+  const motivoNome =
+    candidates.length === 0
+      ? `Nenhuma página de Educação encontrada em ${dominioOficial} (sitemap/home e busca no domínio vieram vazios).`
+      : lidas === 0
+        ? `${candidates.length} página(s) candidata(s) em ${dominioOficial}, mas nenhuma pôde ser lida (scrape bloqueado ou timeout).`
+        : `${lidas} página(s) lida(s) em ${dominioOficial}, mas a IA não identificou nome de secretário(a).`;
+  emit("warn", "nome", `Nenhum nome de secretário encontrado — ${motivoNome}`);
+  return empty(motivoNome);
 }
 
 // ============================================================
