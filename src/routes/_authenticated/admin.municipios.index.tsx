@@ -227,14 +227,19 @@ function AdminMunicipios() {
           {queue.log.length > 0 && (
             <div className="max-h-64 overflow-y-auto space-y-1">
               {queue.log.map((e, i) => (
-                <div key={`${e.ibge_id}-${i}`} className="flex items-center justify-between rounded border border-border px-2 py-1 text-xs">
-                  <span>{e.nome}/{e.uf}</span>
-                  <span className="flex items-center gap-2">
-                    {e.detalhe && <span className="text-muted-foreground">{e.detalhe}</span>}
-                    <Badge variant={e.status === "found" ? "default" : e.status === "partial" ? "secondary" : e.status === "error" ? "destructive" : "outline"}>
-                      {e.status}
-                    </Badge>
-                  </span>
+                <div key={`${e.ibge_id}-${i}`} className="rounded border border-border px-2 py-1 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span>{e.nome}/{e.uf}</span>
+                    <span className="flex items-center gap-2">
+                      {e.detalhe && <span className="text-muted-foreground">{e.detalhe}</span>}
+                      <Badge variant={e.status === "found" ? "default" : e.status === "partial" ? "secondary" : e.status === "error" ? "destructive" : "outline"}>
+                        {STATUS_LABEL[e.status]}
+                      </Badge>
+                    </span>
+                  </div>
+                  {e.status !== "found" && e.motivo && (
+                    <p className="mt-0.5 text-[11px] leading-snug text-amber-700" title={e.motivo}>Motivo: {e.motivo}</p>
+                  )}
                 </div>
               ))}
             </div>
