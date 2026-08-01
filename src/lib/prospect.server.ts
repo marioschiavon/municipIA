@@ -1228,8 +1228,14 @@ export async function prospectarContato(
     };
   }
 
-  emit("warn", "educacao", "Nenhum contato encontrado no domínio confirmado");
-  return empty(`Domínio confirmado (${dominioOficial}) sem contato localizável via regex/IA.`);
+  const motivoContato =
+    candidateUrls.length === 0
+      ? `Nenhuma página de Educação encontrada em ${dominioOficial} (sitemap/home e busca no domínio vieram vazios).`
+      : lidas === 0
+        ? `${candidateUrls.length} página(s) candidata(s) em ${dominioOficial}, mas nenhuma pôde ser lida (scrape bloqueado ou timeout).`
+        : `${lidas} página(s) lida(s) em ${dominioOficial}, mas sem e-mail/telefone válido (regex e IA não acharam contato aproveitável).`;
+  emit("warn", "educacao", `Nenhum contato encontrado — ${motivoContato}`);
+  return empty(motivoContato);
 }
 
 export async function prospectar(
