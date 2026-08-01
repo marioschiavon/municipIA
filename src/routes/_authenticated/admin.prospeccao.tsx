@@ -19,6 +19,14 @@ const UFS = ["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT","P
 
 type FaseIsolada = "dominio" | "secretario" | "contato";
 
+/** Rótulos em português para o status técnico da fila (valor interno segue igual). */
+const STATUS_LABEL: Record<QueueLogEntry["status"], string> = {
+  found: "OK",
+  partial: "Parcial",
+  not_found: "Não encontrado",
+  error: "Erro",
+};
+
 const FASE_LABEL: Record<FaseIsolada, string> = {
   dominio: "Fase 1 — Domínio",
   secretario: "Fase 2 — Secretário",
@@ -213,7 +221,7 @@ function LogRow({ entry, fase, resolvido, onResolvido }: {
         <span className="flex items-center gap-2">
           {entry.detalhe && <span className="text-muted-foreground">{entry.detalhe}</span>}
           <Badge variant={entry.status === "found" ? "default" : entry.status === "partial" ? "secondary" : entry.status === "error" ? "destructive" : "outline"}>
-            {entry.status}
+            {STATUS_LABEL[entry.status]}
           </Badge>
           {resolvido && (
             <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700">
@@ -222,6 +230,11 @@ function LogRow({ entry, fase, resolvido, onResolvido }: {
           )}
         </span>
       </div>
+      {entry.status !== "found" && entry.motivo && (
+        <p className="mt-1 text-[11px] leading-snug text-amber-700" title={entry.motivo}>
+          Motivo: {entry.motivo}
+        </p>
+      )}
       {precisaRevisao && (
         <div className="mt-2 space-y-2 rounded border border-amber-200 bg-white p-2">
           <div className="flex items-center gap-1.5 text-amber-700">
