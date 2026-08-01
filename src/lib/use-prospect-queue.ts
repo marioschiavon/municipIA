@@ -13,6 +13,8 @@ export type QueueLogEntry = {
   uf: string;
   status: "found" | "partial" | "not_found" | "error";
   detalhe?: string;
+  /** Motivo legível quando o status não é "found" (contexto do resultado + último aviso da fase). */
+  motivo?: string | null;
   result?: ProspectResult;
 };
 
