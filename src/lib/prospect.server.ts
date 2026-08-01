@@ -1157,10 +1157,12 @@ export async function prospectarContato(
   emit("info", "educacao", `${candidateUrls.length} candidato(s) via ${via}`);
 
   let melhor: { emails: string[]; telefones: string[]; url: string } | null = null;
+  let lidas = 0;
 
   for (const url of candidateUrls) {
     const md = await gScrape(fc, url, emit, "educacao", { hardTimeoutMs: 20_000 });
     if (!md) continue;
+    lidas++;
     const hints = extractContactsRegex(md);
     const emails = filterEmailsForFinal(hints.emails, municipio, uf, dominioOficial).filter((e) => !isSchoolEmail(e));
     const telefones = hints.telefones;
