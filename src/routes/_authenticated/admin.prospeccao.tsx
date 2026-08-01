@@ -19,6 +19,14 @@ const UFS = ["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT","P
 
 type FaseIsolada = "dominio" | "secretario" | "contato";
 
+/** Rótulos em português para o status técnico da fila (valor interno segue igual). */
+const STATUS_LABEL: Record<QueueLogEntry["status"], string> = {
+  found: "OK",
+  partial: "Parcial",
+  not_found: "Não encontrado",
+  error: "Erro",
+};
+
 const FASE_LABEL: Record<FaseIsolada, string> = {
   dominio: "Fase 1 — Domínio",
   secretario: "Fase 2 — Secretário",
