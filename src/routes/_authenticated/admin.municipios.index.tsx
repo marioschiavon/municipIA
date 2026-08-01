@@ -21,6 +21,14 @@ const INTERVALO_FNDE_MS = 1_300;
 
 type FndeLogEntry = { ibge_id: number; nome: string; uf: string; status: "found" | "not_found" | "error"; detalhe?: string };
 
+/** Rótulos em português para os status técnicos das filas. */
+const STATUS_LABEL: Record<"found" | "partial" | "not_found" | "error", string> = {
+  found: "OK",
+  partial: "Parcial",
+  not_found: "Não encontrado",
+  error: "Erro",
+};
+
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(new DOMException("Cancelado", "AbortError"));
