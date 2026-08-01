@@ -1016,8 +1016,13 @@ export async function prospectarDominio(
       motivoRevisao: forte ? null : "dominio: confirmação incerta (achado só por busca genérica, não pelo padrão site:{slug}.{uf}.gov.br)",
     };
   }
-  emit("warn", "init", "Nenhum domínio oficial confirmável encontrado");
-  return empty("Nenhum domínio oficial confirmável encontrado nesta fase.");
+  const brutos = candsA.length + candsB.length;
+  const motivo =
+    brutos === 0
+      ? `A busca (${provider}) não retornou nenhum resultado para "${queryA}" nem para "${queryB}" — pode ser cota/timeout do provedor ou o município realmente não ter site indexado.`
+      : `A busca retornou ${brutos} resultado(s), mas nenhum host confirmável como oficial (esperado algo como ${dominioEspecial ?? `${slug}.${ufLow}.gov.br`}); os achados eram de outro município/UF ou não-.gov.br. Hosts vistos: ${cands.slice(0, 4).map((c) => stripWww(shortHost(c.url))).join(", ") || "nenhum após filtro"}.`;
+  emit("warn", "init", `Nenhum domínio oficial confirmável encontrado — ${motivo}`);
+  return empty(motivo);
 }
 
 // ============================================================
