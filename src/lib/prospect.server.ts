@@ -1073,9 +1073,11 @@ export async function prospectarSecretario(
   emit("info", "nome", `${candidates.length} candidato(s) via ${via}`);
 
   let melhor: { out: NomeOnly; url: string } | null = null;
+  let lidas = 0;
   for (const url of candidates) {
     const md = await gScrape(fc, url, emit, "nome", { hardTimeoutMs: 20_000 });
     if (!md) continue;
+    lidas++;
     const out = await extractNomeWithAI(md, url, municipio, uf, emit);
     if (!out?.secretario) continue;
     if (out.confianca === "alta") {
