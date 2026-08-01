@@ -20,6 +20,12 @@ export const Route = createFileRoute("/_authenticated/admin/import")({
   }),
 });
 
+// Tabela_Escola do Censo tem 200k+ linhas — um único request longo pode bater
+// em limite da plataforma (Cloudflare Workers). Envia em lotes menores,
+// sequenciais, cada um bem dentro de qualquer limite; se um lote falhar, dá
+// pra retomar exatamente dali em vez de reenviar o arquivo inteiro do zero.
+const CHUNK_LINES = 20_000;
+
 function AdminImportPage() {
   const [type, setType] = useState<"fundeb_matriculas" | "inep_matriculas" | "inep_escolas" | "fnde">("fundeb_matriculas");
   const [file, setFile] = useState<File | null>(null);
@@ -28,60 +34,122 @@ function AdminImportPage() {
   const [result, setResult] = useState<{ ok: boolean; message: string; data?: unknown } | null>(null);
   const [syncPopLoading, setSyncPopLoading] = useState(false);
   const [recalcLoading, setRecalcLoading] = useState(false);
+  const [resumeFrom, setResumeFrom] = useState(0);
+  const [chunkTotal, setChunkTotal] = useState(0);
+  const [chunkAtual, setChunkAtual] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
   const syncPopFn = useServerFn(adminSyncPopulacao);
   const recalcFn = useServerFn(adminRecalcularScores);
 
+  function selecionarArquivo(f: File | null) {
+    setFile(f);
+    setResumeFrom(0);
+    setChunkTotal(0);
+    setChunkAtual(0);
+    setResult(null);
+  }
+
+  // Lê o stream NDJSON de UM request (chunk ou upload único) e devolve o
+  // evento final ("done"/"error"). Loga cada evento intermediário na tela.
+  async function readImportStream(res: Response): Promise<{ ok: boolean; message: string; data?: unknown }> {
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error("Resposta vazia");
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let final: { ok: boolean; message: string; data?: unknown } | null = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+          const ts = new Date().toLocaleTimeString("pt-BR", { hour12: false });
+          const dataStr = event.data !== undefined ? ` — ${JSON.stringify(event.data)}` : "";
+          setLogs((prev) => [...prev, `${ts} [${event.type.toUpperCase()}] ${event.message}${dataStr}`]);
+          if (event.type === "done" || event.type === "error") {
+            final = { ok: event.type === "done", message: event.message, data: event.data };
+          }
+        } catch {
+          setLogs((prev) => [...prev, line]);
+        }
+      }
+    }
+    return final ?? { ok: false, message: "Conexão encerrada sem confirmação do servidor" };
+  }
+
+  async function importarEmLotes(f: File, accessToken: string, signal: AbortSignal) {
+    setLogs((prev) => [...prev, `Lendo arquivo (${(f.size / 1024 / 1024).toFixed(2)} MB) para dividir em lotes...`]);
+    const text = await f.text();
+    const linhas = text.split(/\r\n|\n/);
+    const header = linhas[0];
+    const dataLinhas = linhas.slice(1).filter((l) => l.trim().length > 0);
+    const total = Math.max(1, Math.ceil(dataLinhas.length / CHUNK_LINES));
+    setChunkTotal(total);
+    setLogs((prev) => [...prev, `${dataLinhas.length.toLocaleString("pt-BR")} linhas de dados · dividido em ${total} lote(s) de até ${CHUNK_LINES.toLocaleString("pt-BR")} linhas.`]);
+
+    for (let i = resumeFrom; i < total; i++) {
+      if (signal.aborted) throw new DOMException("Cancelado", "AbortError");
+      setChunkAtual(i);
+      const slice = dataLinhas.slice(i * CHUNK_LINES, (i + 1) * CHUNK_LINES);
+      const body = [header, ...slice].join("\n");
+      const res = await fetch("/api/admin/import", {
+        method: "POST",
+        body,
+        signal,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "X-Import-Type": "inep_escolas",
+          "X-Import-Filename": encodeURIComponent(f.name),
+          "X-Chunk-Index": String(i),
+          "X-Chunk-Total": String(total),
+        },
+      });
+      const final = await readImportStream(res);
+      if (!final.ok) {
+        setResumeFrom(i);
+        throw new Error(`Lote ${i + 1}/${total} falhou: ${final.message}`);
+      }
+      setResumeFrom(i + 1);
+      if (i === total - 1) setResult(final);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!file) return;
     setLoading(true);
-    setLogs([]);
-    setResult(null);
+    if (resumeFrom === 0) { setLogs([]); setResult(null); }
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("Sessão não encontrada. Faça login novamente.");
       const abort = new AbortController();
       abortRef.current = abort;
-      // Envia o arquivo como corpo bruto da requisição (sem FormData) para que o
-      // servidor possa consumi-lo em streaming, sem bufferizar o arquivo inteiro
-      // em memória (arquivos do Censo Escolar podem ter centenas de MB).
-      const res = await fetch("/api/admin/import", {
-        method: "POST",
-        body: file,
-        signal: abort.signal,
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "X-Import-Type": type,
-          "X-Import-Filename": encodeURIComponent(file.name),
-        },
-      });
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("Resposta vazia");
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line);
-            const ts = new Date().toLocaleTimeString("pt-BR", { hour12: false });
-            const dataStr = event.data !== undefined ? ` — ${JSON.stringify(event.data)}` : "";
-            setLogs((prev) => [...prev, `${ts} [${event.type.toUpperCase()}] ${event.message}${dataStr}`]);
-            if (event.type === "done" || event.type === "error") {
-              setResult({ ok: event.type === "done", message: event.message, data: event.data });
-            }
-          } catch {
-            setLogs((prev) => [...prev, line]);
-          }
-        }
+
+      if (type === "inep_escolas") {
+        // Em lotes — arquivo grande demais pra um request só (ver CHUNK_LINES acima).
+        await importarEmLotes(file, accessToken, abort.signal);
+      } else {
+        // Envia o arquivo como corpo bruto da requisição (sem FormData) para que o
+        // servidor possa consumi-lo em streaming, sem bufferizar o arquivo inteiro
+        // em memória.
+        const res = await fetch("/api/admin/import", {
+          method: "POST",
+          body: file,
+          signal: abort.signal,
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "X-Import-Type": type,
+            "X-Import-Filename": encodeURIComponent(file.name),
+          },
+        });
+        const final = await readImportStream(res);
+        setResult(final);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -172,7 +240,7 @@ function AdminImportPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
-            <RadioGroup value={type} onValueChange={(v) => setType(v as typeof type)} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <RadioGroup value={type} onValueChange={(v) => { setType(v as typeof type); setResumeFrom(0); setChunkTotal(0); }} className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="border rounded-lg p-4 cursor-pointer hover:bg-muted/50 transition-colors">
                 <RadioGroupItem value="fundeb_matriculas" id="fundeb_matriculas" className="sr-only" />
                 <Label htmlFor="fundeb_matriculas" className="cursor-pointer space-y-2 block">
@@ -205,7 +273,7 @@ function AdminImportPage() {
                 <Label htmlFor="inep_escolas" className="cursor-pointer space-y-2 block">
                   <div className="font-semibold">3. INEP — Escolas (opcional)</div>
                   <div className="text-xs text-muted-foreground">
-                    Arquivo <code>Tabela_Escola_YYYY.csv</code>. Necessário quando o arquivo de Matrículas não possui <code>CO_MUNICIPIO</code>/<code>TP_DEPENDENCIA</code>. Ele cria o mapa <code>CO_ENTIDADE → município/rede/situação</code> usado no cruzamento.
+                    Arquivo <code>Tabela_Escola_YYYY.csv</code>. Necessário quando o arquivo de Matrículas não possui <code>CO_MUNICIPIO</code>/<code>TP_DEPENDENCIA</code>. Ele cria o mapa <code>CO_ENTIDADE → município/rede/situação</code> usado no cruzamento. Enviado automaticamente em lotes (arquivo grande demais pra um request só) — se algum lote falhar, clicar em importar de novo retoma dali, sem reenviar o que já subiu.
                   </div>
                   <a
                     href="https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/microdados/censo-escolar"
@@ -245,7 +313,7 @@ function AdminImportPage() {
                 id="file"
                 type="file"
                 accept=".csv,.txt,.gz,.xlsx,.xls"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                onChange={(e) => selecionarArquivo(e.target.files?.[0] ?? null)}
                 className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
               />
               {file && (
@@ -253,12 +321,20 @@ function AdminImportPage() {
                   {file.name} — {(file.size / 1024 / 1024).toFixed(2)} MB
                 </p>
               )}
+              {type === "inep_escolas" && chunkTotal > 0 && resumeFrom > 0 && resumeFrom < chunkTotal && (
+                <p className="text-xs text-amber-700">
+                  Lote {resumeFrom}/{chunkTotal} falhou ou foi interrompido — clicar em importar retoma a partir do lote {resumeFrom + 1}.{" "}
+                  <button type="button" className="underline" onClick={() => { setResumeFrom(0); setChunkTotal(0); }}>Recomeçar do zero</button>
+                </p>
+              )}
             </div>
 
             <div className="flex gap-2">
               <Button type="submit" disabled={loading || !file} className="flex-1">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
-                {loading ? "Importando..." : "Iniciar importação"}
+                {loading
+                  ? (chunkTotal > 0 ? `Importando lote ${chunkAtual + 1}/${chunkTotal}...` : "Importando...")
+                  : (resumeFrom > 0 && chunkTotal > 0 ? `Continuar do lote ${resumeFrom + 1}/${chunkTotal}` : "Iniciar importação")}
               </Button>
               {loading && (
                 <Button type="button" variant="destructive" onClick={cancel}>

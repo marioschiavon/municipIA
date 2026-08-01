@@ -60,18 +60,27 @@ export const Route = createFileRoute("/api/admin/import")({
                 controller.close();
                 return;
               }
+              // Suporte a upload em lotes (arquivos do Censo Escolar têm 200k+ linhas —
+              // um único request longo pode bater em limite da plataforma, ex.: contagem
+              // de subrequests do Cloudflare Workers). Sem esses headers, comporta-se
+              // como antes (um request só = "lote único, é o último").
+              const chunkIndex = Number(request.headers.get("x-chunk-index") ?? "0");
+              const chunkTotal = Number(request.headers.get("x-chunk-total") ?? "1");
+              const isLastChunk = chunkIndex >= chunkTotal - 1;
               const contentLength = Number(request.headers.get("content-length") ?? "0");
               await send({ type: "start", message: "Iniciando importação", data: { type } });
               await send({
                 type: "progress",
-                message: contentLength
-                  ? `Recebendo arquivo em streaming (~${(contentLength / 1024 / 1024).toFixed(2)} MB, sem carregar tudo em memória).`
-                  : "Recebendo arquivo em streaming (sem carregar tudo em memória).",
-                data: { name: filename, sizeBytes: contentLength || null, selectedType: type },
+                message: chunkTotal > 1
+                  ? `Recebendo lote ${chunkIndex + 1}/${chunkTotal} (~${(contentLength / 1024 / 1024).toFixed(2)} MB).`
+                  : contentLength
+                    ? `Recebendo arquivo em streaming (~${(contentLength / 1024 / 1024).toFixed(2)} MB, sem carregar tudo em memória).`
+                    : "Recebendo arquivo em streaming (sem carregar tudo em memória).",
+                data: { name: filename, sizeBytes: contentLength || null, selectedType: type, chunkIndex, chunkTotal },
               });
 
               if (type === "inep_escolas") {
-                await processInepEscolas(request.body, supabaseAdmin, send);
+                await processInepEscolas(request.body, supabaseAdmin, send, isLastChunk);
               } else if (type === "inep_matriculas") {
                 await processInepMatriculas(request.body, supabaseAdmin, send);
               } else if (type === "fundeb_matriculas") {
@@ -85,9 +94,13 @@ export const Route = createFileRoute("/api/admin/import")({
                 const buffer = await new Response(request.body).arrayBuffer();
                 await processFnde(new Uint8Array(buffer), supabaseAdmin, send, filename);
               }
-              await send({ type: "recalc", message: "Recalculando scores em massa..." });
-              const recalc = await recalcScores(supabaseAdmin);
-              await send({ type: "done", message: "Importação finalizada", data: recalc });
+              if (isLastChunk) {
+                await send({ type: "recalc", message: "Recalculando scores em massa..." });
+                const recalc = await recalcScores(supabaseAdmin);
+                await send({ type: "done", message: "Importação finalizada", data: recalc });
+              } else {
+                await send({ type: "done", message: `Lote ${chunkIndex + 1}/${chunkTotal} concluído`, data: { chunkIndex, chunkTotal, partial: true } });
+              }
               controller.close();
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
@@ -261,7 +274,33 @@ async function loadInepEscolaMap(supabaseAdmin: any, send: any): Promise<Map<num
   return map;
 }
 
-async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmin: any, send: any) {
+// Reconta escolas municipais ativas por município direto do banco (não do que
+// esta requisição viu) — necessário porque, com upload em lotes, um único
+// request só enxerga uma fatia do arquivo; a contagem definitiva só pode vir
+// de uma varredura completa do que já foi gravado em `inep_escolas`.
+async function recontarEscolasMunicipais(supabaseAdmin: any, ano: number, send: any): Promise<Map<number, number>> {
+  const counts = new Map<number, number>();
+  const pageSize = 10000;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabaseAdmin
+      .from("inep_escolas")
+      .select("ibge_id")
+      .eq("ano", ano)
+      .eq("tp_dependencia", 3)
+      .eq("tp_situacao", 1)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`inep_escolas/recontagem: ${error.message}`);
+    const rows = (data ?? []) as { ibge_id: number }[];
+    for (const r of rows) counts.set(r.ibge_id, (counts.get(r.ibge_id) ?? 0) + 1);
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+  await send({ type: "progress", message: `Recontagem completa: ${counts.size.toLocaleString("pt-BR")} municípios com rede municipal ativa.` });
+  return counts;
+}
+
+async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmin: any, send: any, isLastChunk: boolean) {
   const src = createLineSource(body);
   const { delimiter, headers } = await readHeader(src);
   await send({
@@ -308,7 +347,7 @@ async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmi
     data: { ano, jaImportadas },
   });
 
-  const municipais = new Map<number, number>();
+  const municipaisLote = new Map<number, number>();
   let totalLinhas = 0;
   let ignored = 0;
   let countDep3 = 0;
@@ -382,7 +421,7 @@ async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmi
     batch.push({ co_entidade: co, ibge_id: ibge, tp_dependencia: dep, tp_situacao: sit, ano });
     if (dep === 3) countDep3++;
     if (sit === 1) countSit1++;
-    if (dep === 3 && sit === 1) municipais.set(ibge, (municipais.get(ibge) ?? 0) + 1);
+    if (dep === 3 && sit === 1) municipaisLote.set(ibge, (municipaisLote.get(ibge) ?? 0) + 1);
 
     if (batch.length >= BATCH) await flush();
 
@@ -393,12 +432,12 @@ async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmi
       const taxa = Math.round(totalLinhas / Math.max(elapsed, 1));
       await send({
         type: "progress",
-        message: `↳ ${totalLinhas.toLocaleString("pt-BR")} linhas lidas · ${gravadas.toLocaleString("pt-BR")} gravadas no banco · ${ignored.toLocaleString("pt-BR")} ignoradas · ${municipais.size.toLocaleString("pt-BR")} municípios com rede municipal ativa · ${Math.round(elapsed)}s (${taxa.toLocaleString("pt-BR")} linhas/s)`,
+        message: `↳ ${totalLinhas.toLocaleString("pt-BR")} linhas lidas · ${gravadas.toLocaleString("pt-BR")} gravadas no banco · ${ignored.toLocaleString("pt-BR")} ignoradas · ${municipaisLote.size.toLocaleString("pt-BR")} municípios com rede municipal ativa neste lote · ${Math.round(elapsed)}s (${taxa.toLocaleString("pt-BR")} linhas/s)`,
         data: {
           lidas: totalLinhas,
           gravadas,
           ignoradas: ignored,
-          municipios: municipais.size,
+          municipios: municipaisLote.size,
           dep3: countDep3,
           sit1: countSit1,
           segundos: Math.round(elapsed),
@@ -407,10 +446,10 @@ async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmi
       });
     }
 
-    // ---- Flush progressivo das contagens por município (a cada 100 mil linhas) ----
-    if (totalLinhas - lastMuniFlush >= 100000 && municipais.size > 0) {
+    // ---- Flush progressivo das contagens por município (a cada 100 mil linhas dentro deste lote) ----
+    if (totalLinhas - lastMuniFlush >= 100000 && municipaisLote.size > 0) {
       lastMuniFlush = totalLinhas;
-      const parciais = Array.from(municipais.entries());
+      const parciais = Array.from(municipaisLote.entries());
       const upd = await aplicarContagens(parciais);
       await send({
         type: "progress",
@@ -424,16 +463,27 @@ async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmi
   const elapsedTotal = Math.round((Date.now() - t0) / 1000);
   await send({
     type: "progress",
-    message: `${totalLinhas.toLocaleString("pt-BR")} escolas lidas · ${gravadas.toLocaleString("pt-BR")} gravadas · dep=3: ${countDep3.toLocaleString("pt-BR")} · sit=1: ${countSit1.toLocaleString("pt-BR")} · municipais ativas: ${Array.from(municipais.values()).reduce((a, b) => a + b, 0).toLocaleString("pt-BR")} em ${municipais.size.toLocaleString("pt-BR")} municípios · ${elapsedTotal}s.`,
+    message: `${totalLinhas.toLocaleString("pt-BR")} escolas lidas neste lote · ${gravadas.toLocaleString("pt-BR")} gravadas · dep=3: ${countDep3.toLocaleString("pt-BR")} · sit=1: ${countSit1.toLocaleString("pt-BR")} · ${elapsedTotal}s.`,
     data: { ignored, sampleIgnored, gravadas, segundos: elapsedTotal },
   });
 
+  if (!isLastChunk) {
+    await send({
+      type: "progress",
+      message: "Lote gravado — contagem final de escolas por município e checagem de sanidade só rodam no último lote.",
+    });
+    return;
+  }
+
+  // Contagem definitiva por município — varre o banco (não o que este lote
+  // viu), pois com upload em lotes cada request só enxerga uma fatia do arquivo.
+  const municipais = await recontarEscolasMunicipais(supabaseAdmin, ano, send);
   const entries = Array.from(municipais.entries());
   const updated = await aplicarContagens(entries);
   const amostra = entries.slice(0, 3).map(([ibge, c]) => `${ibge}=${c}`).join(", ");
   await send({
     type: "progress",
-    message: `Contagem de escolas municipais atualizada em ${updated.toLocaleString("pt-BR")} municípios (amostra: ${amostra}). Ignoradas: ${ignored.toLocaleString("pt-BR")}. Não encontrados no catálogo: ${notFound.toLocaleString("pt-BR")}.`,
+    message: `Contagem de escolas municipais atualizada em ${updated.toLocaleString("pt-BR")} municípios (amostra: ${amostra}). Não encontrados no catálogo: ${notFound.toLocaleString("pt-BR")}.`,
     data: { sampleNotFound, updatedTotal },
   });
 
@@ -446,7 +496,7 @@ async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmi
   if (totalBanco < 150000 || municipais.size < 5000) {
     await send({
       type: "progress",
-      message: `⚠️ ATENÇÃO: o banco terminou com apenas ${totalBanco.toLocaleString("pt-BR")} escolas em ${municipais.size.toLocaleString("pt-BR")} municípios — abaixo do esperado (~215.000 escolas / ~5.570 municípios). O arquivo provavelmente foi cortado no meio. Reenvie o mesmo arquivo: o import é idempotente e vai completar o que falta.`,
+      message: `⚠️ ATENÇÃO: o banco terminou com apenas ${totalBanco.toLocaleString("pt-BR")} escolas em ${municipais.size.toLocaleString("pt-BR")} municípios — abaixo do esperado (~215.000 escolas / ~5.570 municípios). Confira se todos os lotes foram enviados com sucesso; reenviar os lotes que faltaram é seguro (import idempotente).`,
       data: { totalBanco, municipios: municipais.size, incompleto: true },
     });
   } else {
