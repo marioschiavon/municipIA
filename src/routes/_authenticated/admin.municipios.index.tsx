@@ -2,24 +2,86 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useRef, useState, useMemo } from "react";
-import { adminListMunicipios, adminListMunicipioIds, adminFetchFndeAtual } from "@/lib/admin.functions";
+import {
+  adminListMunicipios,
+  adminListMunicipioIds,
+  adminFetchFndeAtual,
+} from "@/lib/admin.functions";
 import { useProspectQueue, type QueueMunicipio } from "@/lib/use-prospect-queue";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Search, Loader2, ChevronLeft, ChevronRight, Pencil, PlayCircle, StopCircle, AlertTriangle } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { MunicipioDetalheModal } from "@/components/MunicipioDetalheModal";
+import {
+  Search,
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
+  Pencil,
+  Eye,
+  PlayCircle,
+  StopCircle,
+  AlertTriangle,
+} from "lucide-react";
 
-const UFS = ["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO"];
+const UFS = [
+  "AC",
+  "AL",
+  "AM",
+  "AP",
+  "BA",
+  "CE",
+  "DF",
+  "ES",
+  "GO",
+  "MA",
+  "MG",
+  "MS",
+  "MT",
+  "PA",
+  "PB",
+  "PE",
+  "PI",
+  "PR",
+  "RJ",
+  "RN",
+  "RO",
+  "RR",
+  "RS",
+  "SC",
+  "SE",
+  "SP",
+  "TO",
+];
 const PAGE_SIZE = 50;
 const INTERVALO_MS = 30_000;
 // SICONFI (Tesouro Nacional) limita a 1 requisição/segundo — folga de 300ms.
 const INTERVALO_FNDE_MS = 1_300;
 
-type FndeLogEntry = { ibge_id: number; nome: string; uf: string; status: "found" | "not_found" | "error"; detalhe?: string };
+type FndeLogEntry = {
+  ibge_id: number;
+  nome: string;
+  uf: string;
+  status: "found" | "not_found" | "error";
+  detalhe?: string;
+};
 
 /** Rótulos em português para os status técnicos das filas. */
 const STATUS_LABEL: Record<"found" | "partial" | "not_found" | "error", string> = {
@@ -33,10 +95,14 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(new DOMException("Cancelado", "AbortError"));
     const t = setTimeout(resolve, ms);
-    signal.addEventListener("abort", () => {
-      clearTimeout(t);
-      reject(new DOMException("Cancelado", "AbortError"));
-    }, { once: true });
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        reject(new DOMException("Cancelado", "AbortError"));
+      },
+      { once: true },
+    );
   });
 }
 
@@ -54,14 +120,19 @@ function AdminMunicipios() {
   const [qInput, setQInput] = useState("");
   const [revisao, setRevisao] = useState(false);
   const [page, setPage] = useState(0);
+  const [detalheId, setDetalheId] = useState<number | null>(null);
 
-  const filters = useMemo(() => ({
-    uf: uf === "all" ? undefined : uf,
-    status: status === "all" ? undefined : status,
-    q: q || undefined,
-    revisao: revisao || undefined,
-    page, pageSize: PAGE_SIZE,
-  }), [uf, status, q, revisao, page]);
+  const filters = useMemo(
+    () => ({
+      uf: uf === "all" ? undefined : uf,
+      status: status === "all" ? undefined : status,
+      q: q || undefined,
+      revisao: revisao || undefined,
+      page,
+      pageSize: PAGE_SIZE,
+    }),
+    [uf, status, q, revisao, page],
+  );
 
   const list = useQuery({
     queryKey: ["admin-municipios", filters],
@@ -107,11 +178,20 @@ function AdminMunicipios() {
       const r = await fetchFndeFn({ data: { ibge_id: m.ibge_id } });
       if (!r.ok) return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: "not_found" };
       return {
-        ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: "found",
+        ibge_id: m.ibge_id,
+        nome: m.nome,
+        uf: m.uf,
+        status: "found",
         detalhe: `R$ ${r.valor.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} (${r.ano}/${r.periodo})`,
       };
     } catch (e) {
-      return { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf, status: "error", detalhe: e instanceof Error ? e.message : "Falha" };
+      return {
+        ibge_id: m.ibge_id,
+        nome: m.nome,
+        uf: m.uf,
+        status: "error",
+        detalhe: e instanceof Error ? e.message : "Falha",
+      };
     }
   }
 
@@ -161,23 +241,58 @@ function AdminMunicipios() {
     <div className="space-y-4">
       <div>
         <h2 className="text-2xl font-bold tracking-tight">Municípios</h2>
-        <p className="text-sm text-muted-foreground">Edite dados quantitativos, contatos da secretaria e matrículas por etapa.</p>
+        <p className="text-sm text-muted-foreground">
+          Edite dados quantitativos, contatos da secretaria e matrículas por etapa.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-white p-4">
-        <form className="flex flex-1 gap-2 min-w-[280px]" onSubmit={(e) => { e.preventDefault(); setQ(qInput); setPage(0); }}>
-          <Input placeholder="Nome do município..." value={qInput} onChange={(e) => setQInput(e.target.value)} />
-          <Button type="submit" size="icon" variant="outline"><Search className="h-4 w-4" /></Button>
+        <form
+          className="flex flex-1 gap-2 min-w-[280px]"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setQ(qInput);
+            setPage(0);
+          }}
+        >
+          <Input
+            placeholder="Nome do município..."
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
+          />
+          <Button type="submit" size="icon" variant="outline">
+            <Search className="h-4 w-4" />
+          </Button>
         </form>
-        <Select value={uf} onValueChange={(v) => { setUf(v); setPage(0); }}>
-          <SelectTrigger className="w-[110px]"><SelectValue placeholder="UF" /></SelectTrigger>
+        <Select
+          value={uf}
+          onValueChange={(v) => {
+            setUf(v);
+            setPage(0);
+          }}
+        >
+          <SelectTrigger className="w-[110px]">
+            <SelectValue placeholder="UF" />
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos UFs</SelectItem>
-            {UFS.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}
+            {UFS.map((u) => (
+              <SelectItem key={u} value={u}>
+                {u}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
-        <Select value={status} onValueChange={(v) => { setStatus(v); setPage(0); }}>
-          <SelectTrigger className="w-[160px]"><SelectValue placeholder="Status" /></SelectTrigger>
+        <Select
+          value={status}
+          onValueChange={(v) => {
+            setStatus(v);
+            setPage(0);
+          }}
+        >
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos status</SelectItem>
             <SelectItem value="sem_dados">Sem dados</SelectItem>
@@ -186,8 +301,16 @@ function AdminMunicipios() {
           </SelectContent>
         </Select>
         <label className="flex items-center gap-1.5 text-sm">
-          <Checkbox checked={revisao} onCheckedChange={(v) => { setRevisao(!!v); setPage(0); }} />
-          <span className="flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> Precisa revisão</span>
+          <Checkbox
+            checked={revisao}
+            onCheckedChange={(v) => {
+              setRevisao(!!v);
+              setPage(0);
+            }}
+          />
+          <span className="flex items-center gap-1">
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> Precisa revisão
+          </span>
         </label>
         <div className="ml-auto text-sm text-muted-foreground">
           {list.data ? `${list.data.total.toLocaleString("pt-BR")} resultado(s)` : "..."}
@@ -197,8 +320,17 @@ function AdminMunicipios() {
             <StopCircle className="mr-1.5 h-4 w-4" /> Cancelar
           </Button>
         ) : (
-          <Button size="sm" variant="outline" onClick={iniciarProspeccaoEmMassa} disabled={queue.loadingIds || fndeRunning}>
-            {queue.loadingIds ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-1.5 h-4 w-4" />}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={iniciarProspeccaoEmMassa}
+            disabled={queue.loadingIds || fndeRunning}
+          >
+            {queue.loadingIds ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <PlayCircle className="mr-1.5 h-4 w-4" />
+            )}
             Prospectar todos os filtrados
           </Button>
         )}
@@ -207,8 +339,17 @@ function AdminMunicipios() {
             <StopCircle className="mr-1.5 h-4 w-4" /> Cancelar
           </Button>
         ) : (
-          <Button size="sm" variant="outline" onClick={iniciarBuscaFndeEmMassa} disabled={fndeLoadingIds || queue.running}>
-            {fndeLoadingIds ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-1.5 h-4 w-4" />}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={iniciarBuscaFndeEmMassa}
+            disabled={fndeLoadingIds || queue.running}
+          >
+            {fndeLoadingIds ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <PlayCircle className="mr-1.5 h-4 w-4" />
+            )}
             Buscar FUNDEB de todos os filtrados
           </Button>
         )}
@@ -220,7 +361,9 @@ function AdminMunicipios() {
             <span className="font-semibold">
               Prospecção em massa {queue.running ? "— em andamento" : "— finalizada"}
             </span>
-            <span className="text-muted-foreground">{queue.done}/{queue.total} processado(s)</span>
+            <span className="text-muted-foreground">
+              {queue.done}/{queue.total} processado(s)
+            </span>
           </div>
           <Progress value={queue.total > 0 ? (queue.done / queue.total) * 100 : 0} />
           {queue.running && (
@@ -235,18 +378,35 @@ function AdminMunicipios() {
           {queue.log.length > 0 && (
             <div className="max-h-64 overflow-y-auto space-y-1">
               {queue.log.map((e, i) => (
-                <div key={`${e.ibge_id}-${i}`} className="rounded border border-border px-2 py-1 text-xs">
+                <div
+                  key={`${e.ibge_id}-${i}`}
+                  className="rounded border border-border px-2 py-1 text-xs"
+                >
                   <div className="flex items-center justify-between">
-                    <span>{e.nome}/{e.uf}</span>
+                    <span>
+                      {e.nome}/{e.uf}
+                    </span>
                     <span className="flex items-center gap-2">
                       {e.detalhe && <span className="text-muted-foreground">{e.detalhe}</span>}
-                      <Badge variant={e.status === "found" ? "default" : e.status === "partial" ? "secondary" : e.status === "error" ? "destructive" : "outline"}>
+                      <Badge
+                        variant={
+                          e.status === "found"
+                            ? "default"
+                            : e.status === "partial"
+                              ? "secondary"
+                              : e.status === "error"
+                                ? "destructive"
+                                : "outline"
+                        }
+                      >
                         {STATUS_LABEL[e.status]}
                       </Badge>
                     </span>
                   </div>
                   {e.status !== "found" && e.motivo && (
-                    <p className="mt-0.5 text-[11px] leading-snug text-amber-700" title={e.motivo}>Motivo: {e.motivo}</p>
+                    <p className="mt-0.5 text-[11px] leading-snug text-amber-700" title={e.motivo}>
+                      Motivo: {e.motivo}
+                    </p>
                   )}
                 </div>
               ))}
@@ -261,22 +421,39 @@ function AdminMunicipios() {
             <span className="font-semibold">
               Busca de FUNDEB em massa {fndeRunning ? "— em andamento" : "— finalizada"}
             </span>
-            <span className="text-muted-foreground">{fndeDone}/{fndeTotal} processado(s)</span>
+            <span className="text-muted-foreground">
+              {fndeDone}/{fndeTotal} processado(s)
+            </span>
           </div>
           <Progress value={fndeTotal > 0 ? (fndeDone / fndeTotal) * 100 : 0} />
           {fndeRunning && (
             <p className="text-xs text-muted-foreground">
-              {fndeCurrent ? `Processando: ${fndeCurrent.nome}/${fndeCurrent.uf}...` : "Iniciando..."}
+              {fndeCurrent
+                ? `Processando: ${fndeCurrent.nome}/${fndeCurrent.uf}...`
+                : "Iniciando..."}
             </p>
           )}
           {fndeLog.length > 0 && (
             <div className="max-h-64 overflow-y-auto space-y-1">
               {fndeLog.map((e, i) => (
-                <div key={`${e.ibge_id}-${i}`} className="flex items-center justify-between rounded border border-border px-2 py-1 text-xs">
-                  <span>{e.nome}/{e.uf}</span>
+                <div
+                  key={`${e.ibge_id}-${i}`}
+                  className="flex items-center justify-between rounded border border-border px-2 py-1 text-xs"
+                >
+                  <span>
+                    {e.nome}/{e.uf}
+                  </span>
                   <span className="flex items-center gap-2">
                     {e.detalhe && <span className="text-muted-foreground">{e.detalhe}</span>}
-                    <Badge variant={e.status === "found" ? "default" : e.status === "error" ? "destructive" : "outline"}>
+                    <Badge
+                      variant={
+                        e.status === "found"
+                          ? "default"
+                          : e.status === "error"
+                            ? "destructive"
+                            : "outline"
+                      }
+                    >
                       {STATUS_LABEL[e.status]}
                     </Badge>
                   </span>
@@ -304,33 +481,66 @@ function AdminMunicipios() {
           </TableHeader>
           <TableBody>
             {list.isLoading && (
-              <TableRow><TableCell colSpan={9} className="text-center py-8"><Loader2 className="inline h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
+              <TableRow>
+                <TableCell colSpan={9} className="text-center py-8">
+                  <Loader2 className="inline h-5 w-5 animate-spin text-muted-foreground" />
+                </TableCell>
+              </TableRow>
             )}
             {list.data?.items.map((m) => (
               <TableRow key={m.ibge_id}>
                 <TableCell className="font-medium">{m.nome}</TableCell>
                 <TableCell>{m.uf}</TableCell>
-                <TableCell className="text-right tabular-nums">{m.populacao.toLocaleString("pt-BR")}</TableCell>
-                <TableCell className="text-right tabular-nums">{m.matriculas_total.toLocaleString("pt-BR")}</TableCell>
-                <TableCell className="text-sm text-slate-600">{m.secretario ?? <span className="text-muted-foreground italic">—</span>}</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {m.populacao.toLocaleString("pt-BR")}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {m.matriculas_total.toLocaleString("pt-BR")}
+                </TableCell>
+                <TableCell className="text-sm text-slate-600">
+                  {m.secretario ?? <span className="text-muted-foreground italic">—</span>}
+                </TableCell>
                 <TableCell>
-                  <Badge variant={m.status === "validado" ? "default" : m.status === "pendente" ? "secondary" : "outline"}>
+                  <Badge
+                    variant={
+                      m.status === "validado"
+                        ? "default"
+                        : m.status === "pendente"
+                          ? "secondary"
+                          : "outline"
+                    }
+                  >
                     {m.status}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right tabular-nums font-semibold">{m.score}</TableCell>
                 <TableCell>
                   {m.revisao_necessaria && (
-                    <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
+                    <Badge
+                      variant="outline"
+                      className="border-amber-300 bg-amber-50 text-amber-700"
+                    >
                       <AlertTriangle className="mr-1 h-3 w-3" /> Revisar
                     </Badge>
                   )}
                 </TableCell>
                 <TableCell>
-                  <Link to="/admin/municipios/$ibgeId" params={{ ibgeId: String(m.ibge_id) }}
-                    className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 text-xs hover:bg-accent">
-                    <Pencil className="h-3 w-3" /> Editar
-                  </Link>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setDetalheId(m.ibge_id)}
+                      className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 text-xs hover:bg-accent"
+                    >
+                      <Eye className="h-3 w-3" /> Detalhes
+                    </button>
+                    <Link
+                      to="/admin/municipios/$ibgeId"
+                      params={{ ibgeId: String(m.ibge_id) }}
+                      className="inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 text-xs hover:bg-accent"
+                    >
+                      <Pencil className="h-3 w-3" /> Editar
+                    </Link>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -340,15 +550,33 @@ function AdminMunicipios() {
 
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={page === 0}
+          >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <span className="text-sm text-muted-foreground">Página {page + 1} de {totalPages}</span>
-          <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}>
+          <span className="text-sm text-muted-foreground">
+            Página {page + 1} de {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+            disabled={page >= totalPages - 1}
+          >
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
       )}
+
+      <MunicipioDetalheModal
+        ibgeId={detalheId}
+        open={detalheId != null}
+        onOpenChange={(o) => !o && setDetalheId(null)}
+      />
     </div>
   );
 }
