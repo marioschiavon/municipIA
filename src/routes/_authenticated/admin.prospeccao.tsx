@@ -87,14 +87,19 @@ export const Route = createFileRoute("/_authenticated/admin/prospeccao")({
 function AdminProspeccao() {
   const listIdsFn = useServerFn(adminListMunicipioIds);
   const countFn = useServerFn(adminCountElegiveis);
+  const cicloFn = useServerFn(adminProspeccaoCiclo);
+  const resetFn = useServerFn(adminResetCicloProspeccao);
   const qc = useQueryClient();
 
   const [fase, setFase] = useState<FaseIsolada>("dominio");
   const [uf, setUf] = useState("all");
   const [loteSize, setLoteSize] = useState(500);
   const [provider, setProvider] = useState<"apify" | "firecrawl">("apify");
+  const [modo, setModo] = useState<"continuar" | "repescagem">("continuar");
   const [resolvidos, setResolvidos] = useState<Set<number>>(new Set());
   const [detalheId, setDetalheId] = useState<number | null>(null);
+  const [lote, setLote] = useState<{ inicio: string; fim: string } | null>(null);
+  const [resetando, setResetando] = useState(false);
 
   const filtros = { uf: uf === "all" ? undefined : uf };
 
@@ -103,20 +108,46 @@ function AdminProspeccao() {
     queryFn: () => countFn({ data: { fase, ...filtros } }),
   });
 
+  const ciclo = useQuery({
+    queryKey: ["admin-prospeccao-ciclo", fase, filtros],
+    queryFn: () => cicloFn({ data: { fase, ...filtros } }),
+  });
+
   const queue = useProspectQueue(FASE_INTERVALO_MS[fase]);
 
   async function iniciarLote() {
     queue.setLoadingIds(true);
     setResolvidos(new Set());
+    setLote(null);
     try {
-      const { items } = await listIdsFn({ data: { ...filtros, fase } });
-      const lote = items.slice(0, Math.max(1, loteSize));
-      await queue.iniciar(lote, fase, provider, () => {
+      const { items } = await listIdsFn({
+        data: { ...filtros, fase, modo, limit: Math.max(1, loteSize) },
+      });
+      if (items.length === 0) return;
+      const primeiro = items[0];
+      const ultimo = items[items.length - 1];
+      setLote({
+        inicio: `${primeiro.nome}/${primeiro.uf}`,
+        fim: `${ultimo.nome}/${ultimo.uf}`,
+      });
+      await queue.iniciar(items, fase, provider, () => {
         qc.invalidateQueries({ queryKey: ["admin-prospeccao-count"] });
+        qc.invalidateQueries({ queryKey: ["admin-prospeccao-ciclo"] });
         qc.invalidateQueries({ queryKey: ["admin-municipios"] });
       });
     } finally {
       queue.setLoadingIds(false);
+    }
+  }
+
+  async function reiniciarCiclo() {
+    if (!window.confirm("Reiniciar o ciclo desta fase? Todos os municípios voltam a ser tentados desde o início.")) return;
+    setResetando(true);
+    try {
+      await resetFn({ data: { fase, ...filtros } });
+      qc.invalidateQueries({ queryKey: ["admin-prospeccao-ciclo"] });
+    } finally {
+      setResetando(false);
     }
   }
 
@@ -125,6 +156,7 @@ function AdminProspeccao() {
     qc.invalidateQueries({ queryKey: ["admin-prospeccao-count"] });
     qc.invalidateQueries({ queryKey: ["admin-municipios"] });
   }
+
 
   return (
     <div className="space-y-4">
