@@ -113,6 +113,9 @@ export type Database = {
           secretario_confirmado_por: string | null
           status: string
           telefones: string[]
+          tentativa_contato_em: string | null
+          tentativa_dominio_em: string | null
+          tentativa_secretario_em: string | null
           updated_at: string
         }
         Insert: {
@@ -141,6 +144,9 @@ export type Database = {
           secretario_confirmado_por?: string | null
           status?: string
           telefones?: string[]
+          tentativa_contato_em?: string | null
+          tentativa_dominio_em?: string | null
+          tentativa_secretario_em?: string | null
           updated_at?: string
         }
         Update: {
@@ -169,6 +175,9 @@ export type Database = {
           secretario_confirmado_por?: string | null
           status?: string
           telefones?: string[]
+          tentativa_contato_em?: string | null
+          tentativa_dominio_em?: string | null
+          tentativa_secretario_em?: string | null
           updated_at?: string
         }
         Relationships: [

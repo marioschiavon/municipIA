@@ -62,11 +62,18 @@ export const Route = createFileRoute("/api/prospect")({
         // (Fase 1) — sem isso não têm onde vasculhar sem recorrer ao Google/Apify,
         // que é exatamente o custo que a separação em fases quer evitar.
         if ((fase === "secretario" || fase === "contato") && !dominioConfirmado) {
+          // Marca a tentativa mesmo assim: sem isso o município volta pro topo da
+          // fila em todo lote e trava o rodízio.
+          if (ibgeId) {
+            const { marcarTentativaProspeccao } = await import("@/lib/catalog-update.server");
+            await marcarTentativaProspeccao(ibgeId, fase).catch(() => {});
+          }
           return new Response(
             JSON.stringify({ kind: "progress", level: "error", etapa: "final", message: "Domínio oficial ainda não confirmado — rode a Fase 1 (domínio) primeiro", ts: Date.now() }) + "\n",
             { status: 400, headers: { "Content-Type": "application/x-ndjson; charset=utf-8" } },
           );
         }
+
 
         const { prospectar, prospectarDominio, prospectarSecretario, prospectarContato } = await import("@/lib/prospect.server");
         const encoder = new TextEncoder();
@@ -139,8 +146,17 @@ export const Route = createFileRoute("/api/prospect")({
                 ts: Date.now(),
               });
             } finally {
+              // Cursor do rodízio: sempre registra a tentativa (achou ou não),
+              // para o próximo lote continuar de onde este parou.
+              if (ibgeId) {
+                try {
+                  const { marcarTentativaProspeccao } = await import("@/lib/catalog-update.server");
+                  await marcarTentativaProspeccao(ibgeId, fase);
+                } catch { /* noop */ }
+              }
               controller.close();
             }
+
           },
         });
 

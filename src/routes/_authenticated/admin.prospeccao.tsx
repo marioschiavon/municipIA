@@ -9,7 +9,10 @@ import {
   adminListMunicipioIds,
   adminCountElegiveis,
   adminResolveRevisao,
+  adminProspeccaoCiclo,
+  adminResetCicloProspeccao,
 } from "@/lib/admin.functions";
+
 import { useProspectQueue, type QueueLogEntry } from "@/lib/use-prospect-queue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { MunicipioDetalheModal } from "@/components/MunicipioDetalheModal";
-import { Loader2, PlayCircle, StopCircle, AlertTriangle, Check, Eye } from "lucide-react";
+import { Loader2, PlayCircle, StopCircle, AlertTriangle, Check, Eye, RotateCcw } from "lucide-react";
 
 const UFS = [
   "AC",
@@ -87,14 +90,19 @@ export const Route = createFileRoute("/_authenticated/admin/prospeccao")({
 function AdminProspeccao() {
   const listIdsFn = useServerFn(adminListMunicipioIds);
   const countFn = useServerFn(adminCountElegiveis);
+  const cicloFn = useServerFn(adminProspeccaoCiclo);
+  const resetFn = useServerFn(adminResetCicloProspeccao);
   const qc = useQueryClient();
 
   const [fase, setFase] = useState<FaseIsolada>("dominio");
   const [uf, setUf] = useState("all");
   const [loteSize, setLoteSize] = useState(500);
   const [provider, setProvider] = useState<"apify" | "firecrawl">("apify");
+  const [modo, setModo] = useState<"continuar" | "repescagem">("continuar");
   const [resolvidos, setResolvidos] = useState<Set<number>>(new Set());
   const [detalheId, setDetalheId] = useState<number | null>(null);
+  const [lote, setLote] = useState<{ inicio: string; fim: string } | null>(null);
+  const [resetando, setResetando] = useState(false);
 
   const filtros = { uf: uf === "all" ? undefined : uf };
 
@@ -103,20 +111,46 @@ function AdminProspeccao() {
     queryFn: () => countFn({ data: { fase, ...filtros } }),
   });
 
+  const ciclo = useQuery({
+    queryKey: ["admin-prospeccao-ciclo", fase, filtros],
+    queryFn: () => cicloFn({ data: { fase, ...filtros } }),
+  });
+
   const queue = useProspectQueue(FASE_INTERVALO_MS[fase]);
 
   async function iniciarLote() {
     queue.setLoadingIds(true);
     setResolvidos(new Set());
+    setLote(null);
     try {
-      const { items } = await listIdsFn({ data: { ...filtros, fase } });
-      const lote = items.slice(0, Math.max(1, loteSize));
-      await queue.iniciar(lote, fase, provider, () => {
+      const { items } = await listIdsFn({
+        data: { ...filtros, fase, modo, limit: Math.max(1, loteSize) },
+      });
+      if (items.length === 0) return;
+      const primeiro = items[0];
+      const ultimo = items[items.length - 1];
+      setLote({
+        inicio: `${primeiro.nome}/${primeiro.uf}`,
+        fim: `${ultimo.nome}/${ultimo.uf}`,
+      });
+      await queue.iniciar(items, fase, provider, () => {
         qc.invalidateQueries({ queryKey: ["admin-prospeccao-count"] });
+        qc.invalidateQueries({ queryKey: ["admin-prospeccao-ciclo"] });
         qc.invalidateQueries({ queryKey: ["admin-municipios"] });
       });
     } finally {
       queue.setLoadingIds(false);
+    }
+  }
+
+  async function reiniciarCiclo() {
+    if (!window.confirm("Reiniciar o ciclo desta fase? Todos os municípios voltam a ser tentados desde o início.")) return;
+    setResetando(true);
+    try {
+      await resetFn({ data: { fase, ...filtros } });
+      qc.invalidateQueries({ queryKey: ["admin-prospeccao-ciclo"] });
+    } finally {
+      setResetando(false);
     }
   }
 
@@ -125,6 +159,7 @@ function AdminProspeccao() {
     qc.invalidateQueries({ queryKey: ["admin-prospeccao-count"] });
     qc.invalidateQueries({ queryKey: ["admin-municipios"] });
   }
+
 
   return (
     <div className="space-y-4">
@@ -191,6 +226,22 @@ function AdminProspeccao() {
             disabled={queue.running}
           />
         </div>
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">Modo</label>
+          <Select
+            value={modo}
+            onValueChange={(v) => setModo(v as "continuar" | "repescagem")}
+            disabled={queue.running}
+          >
+            <SelectTrigger className="w-[190px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="continuar">Continuar de onde parou</SelectItem>
+              <SelectItem value="repescagem">Repescagem (já tentados)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div className="text-sm text-muted-foreground">
           {count.isLoading
             ? "..."
@@ -216,6 +267,39 @@ function AdminProspeccao() {
         )}
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-white px-4 py-3 text-sm">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <RotateCcw className="h-4 w-4 shrink-0" />
+          {ciclo.isLoading || !ciclo.data ? (
+            "Carregando progresso do ciclo..."
+          ) : (
+            <span>
+              Ciclo atual:{" "}
+              <strong className="text-foreground">
+                {ciclo.data.jaTentados.toLocaleString("pt-BR")}
+              </strong>{" "}
+              de {ciclo.data.elegiveis.toLocaleString("pt-BR")} já tentados nesta fase
+              {ciclo.data.proximo
+                ? ` — próximo lote começa em ${ciclo.data.proximo.nome}/${ciclo.data.proximo.uf}`
+                : " — nada elegível no filtro atual"}
+              {ciclo.data.naoTentados === 0 && ciclo.data.elegiveis > 0
+                ? " (ciclo completo: reinicia pelos mais antigos)"
+                : ""}
+            </span>
+          )}
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={queue.running || resetando}
+          onClick={reiniciarCiclo}
+        >
+          {resetando ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+          Reiniciar ciclo
+        </Button>
+      </div>
+
+
       {(queue.running || queue.log.length > 0) && (
         <div className="rounded-lg border border-border bg-white p-4 space-y-3">
           <div className="flex items-center justify-between text-sm">
@@ -227,6 +311,12 @@ function AdminProspeccao() {
             </span>
           </div>
           <Progress value={queue.total > 0 ? (queue.done / queue.total) * 100 : 0} />
+          {lote && (
+            <p className="text-xs text-muted-foreground">
+              Lote de {lote.inicio} até {lote.fim}
+            </p>
+          )}
+
           {queue.running && (
             <p className="text-xs text-muted-foreground">
               {queue.waiting
