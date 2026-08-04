@@ -22,6 +22,30 @@ function mergeRevisaoMotivos(
   return novoMotivo ? [...semFase, novoMotivo] : semFase;
 }
 
+/** Coluna que guarda a última tentativa de prospecção por fase (cursor do rodízio de lotes). */
+export const TENTATIVA_COL = {
+  dominio: "tentativa_dominio_em",
+  secretario: "tentativa_secretario_em",
+  contato: "tentativa_contato_em",
+} as const;
+
+/**
+ * Marca que este município JÁ foi tentado nesta fase — independente de ter
+ * encontrado algo. É o cursor que faz o próximo lote continuar de onde parou
+ * em vez de recomeçar sempre pelos mesmos "não encontrados".
+ */
+export async function marcarTentativaProspeccao(ibgeId: number, fase: ProspectFase) {
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const now = new Date().toISOString();
+  const patch =
+    fase === "completo"
+      ? { tentativa_dominio_em: now, tentativa_secretario_em: now, tentativa_contato_em: now }
+      : { [TENTATIVA_COL[fase]]: now };
+  await supabaseAdmin
+    .from("municipios_educacao")
+    .upsert({ ibge_id: ibgeId, ...patch }, { onConflict: "ibge_id" });
+}
+
 export async function persistProspectResult(ibgeId: number, result: ProspectResult, fase: ProspectFase = "completo") {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
@@ -29,6 +53,7 @@ export async function persistProspectResult(ibgeId: number, result: ProspectResu
     await persistFaseIsolada(supabaseAdmin, ibgeId, result, fase);
     return;
   }
+
 
   const [{ data: mun }, { data: existente }] = await Promise.all([
     supabaseAdmin.from("municipios").select("populacao, matriculas_total, fnde_anual").eq("ibge_id", ibgeId).maybeSingle(),
