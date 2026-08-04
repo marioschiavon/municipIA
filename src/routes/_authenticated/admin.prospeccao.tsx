@@ -27,7 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { MunicipioDetalheModal } from "@/components/MunicipioDetalheModal";
-import { Loader2, PlayCircle, StopCircle, AlertTriangle, Check, Eye } from "lucide-react";
+import { Loader2, PlayCircle, StopCircle, AlertTriangle, Check, Eye, RotateCcw } from "lucide-react";
 
 const UFS = [
   "AC",
