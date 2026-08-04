@@ -288,7 +288,7 @@ export const adminResetCicloProspeccao = createServerFn({ method: "POST" })
       for (let i = 0; i < ids.length; i += CHUNK) {
         const { error } = await supabaseAdmin
           .from("municipios_educacao")
-          .update({ [col]: null })
+          .update({ [col]: null } as never)
           .in("ibge_id", ids.slice(i, i + CHUNK));
         if (error) throw new Error(error.message);
       }
@@ -297,7 +297,7 @@ export const adminResetCicloProspeccao = createServerFn({ method: "POST" })
 
     const { error } = await supabaseAdmin
       .from("municipios_educacao")
-      .update({ [col]: null })
+      .update({ [col]: null } as never)
       .not(col, "is", null);
     if (error) throw new Error(error.message);
     return { ok: true, afetados: null };
