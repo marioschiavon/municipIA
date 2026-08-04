@@ -321,7 +321,33 @@ async function gSearch(
   return filtered;
 }
 
-/** Google SERP Scraper do Apify — fallback quando Firecrawl trunca/empobrece snippets. */
+/** Motor de busca da OpenAI (Responses API + web_search) — usado quando o Apify
+ * fica indisponível (cota/crédito/token). Devolve [] se a OpenAI também falhar. */
+async function openaiSearch(
+  query: string,
+  emit: Emit,
+  etapa: EtapaTag,
+  opts: { limit?: number; timeoutMs?: number; uf?: string } = {},
+): Promise<SearchCandidate[]> {
+  const { openaiWebSearch } = await import("./openai.server");
+  emit("info", etapa, `OpenAI web search: "${query}"`);
+  const r = await openaiWebSearch(query, { limit: opts.limit ?? 10, timeoutMs: opts.timeoutMs ?? 60_000 });
+  if (!r.ok) {
+    emit("warn", etapa, `OpenAI web search indisponível (${r.reason.slice(0, 160)})`);
+    return [];
+  }
+  const ufLow = opts.uf?.toLowerCase();
+  const cands: SearchCandidate[] = r.hits
+    .filter((p) => !isBlockedHost(p.url) && (!ufLow || !govUf(p.url) || govUf(p.url) === ufLow))
+    .map((p) => ({ url: p.url, title: p.title, description: p.snippet, markdown: null }));
+  emit("info", etapa, `OpenAI trouxe ${cands.length} resultado(s) em ${(r.elapsedMs / 1000).toFixed(1)}s`, {
+    candidatos: cands.slice(0, 5).map((c) => ({ url: c.url, snippet: `${c.title} — ${c.description}`.slice(0, 260) })),
+  });
+  return cands;
+}
+
+/** Google SERP Scraper do Apify — fallback quando Firecrawl trunca/empobrece snippets.
+ * Se o Apify falhar por cota/crédito/token, refaz a busca pela OpenAI. */
 async function apifySearch(
   query: string,
   emit: Emit,
@@ -333,6 +359,10 @@ async function apifySearch(
   const r = await googleSerp(query, { resultsPerPage: limit, timeoutMs: opts.timeoutMs ?? 45_000 });
   if (!r.ok) {
     emit("warn", etapa, `Apify SERP indisponível (${r.reason})`);
+    if (QUOTA_RE.test(r.reason) || /APIFY_TOKEN|monthly usage|usage limit/i.test(r.reason)) {
+      emit("warn", etapa, "Apify sem cota/crédito — refazendo a busca pela OpenAI");
+      return openaiSearch(query, emit, etapa, opts);
+    }
     return [];
   }
   const ufLow = opts.uf?.toLowerCase();
@@ -350,8 +380,13 @@ async function apifySearch(
       snippet: `${c.title} — ${c.description}`.slice(0, 260),
     })),
   });
+  if (cands.length === 0) {
+    emit("warn", etapa, "Apify retornou SERP vazio — tentando OpenAI web search");
+    return openaiSearch(query, emit, etapa, opts);
+  }
   return cands;
 }
+
 
 type SearchFn = (
   query: string,
