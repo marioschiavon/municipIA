@@ -109,6 +109,9 @@ function AdminProspeccao() {
   const [provider, setProvider] = useState<"apify" | "firecrawl">("apify");
   const [modo, setModo] = useState<"continuar" | "repescagem">("continuar");
   const [revisoes, setRevisoes] = useState<RevisaoItem[]>([]);
+  // Municípios já tratados manualmente (chave `ibge:fase`). Sem isso, o efeito
+  // abaixo reinsere o item na fila assim que `queue.log` muda de referência.
+  const resolvidosRef = useRef<Set<string>>(new Set());
   const [destaque, setDestaque] = useState<number | null>(null);
   const [detalheId, setDetalheId] = useState<number | null>(null);
   const [lote, setLote] = useState<{ inicio: string; fim: string } | null>(null);
