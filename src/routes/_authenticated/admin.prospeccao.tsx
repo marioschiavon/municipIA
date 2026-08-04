@@ -184,6 +184,7 @@ function AdminProspeccao() {
   }
 
   function marcarResolvido(ibgeId: number, faseItem: FaseIsolada) {
+    resolvidosRef.current.add(`${ibgeId}:${faseItem}`);
     setRevisoes((prev) => prev.filter((r) => !(r.ibge_id === ibgeId && r.fase === faseItem)));
     qc.invalidateQueries({ queryKey: ["admin-prospeccao-count"] });
     qc.invalidateQueries({ queryKey: ["admin-municipios"] });
