@@ -311,6 +311,12 @@ function AdminProspeccao() {
             </span>
           </div>
           <Progress value={queue.total > 0 ? (queue.done / queue.total) * 100 : 0} />
+          {lote && (
+            <p className="text-xs text-muted-foreground">
+              Lote de {lote.inicio} até {lote.fim}
+            </p>
+          )}
+
           {queue.running && (
             <p className="text-xs text-muted-foreground">
               {queue.waiting
