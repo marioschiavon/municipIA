@@ -1,10 +1,11 @@
 // Aba dedicada à prospecção em lotes, por fase separada (domínio → secretário
 // → contato) — cada fase evita rebuscar o que a anterior já achou, e resultados
-// fracos/incertos aparecem na hora pra auditoria/correção manual do admin.
+// fracos/incertos vão para uma fila lateral de revisão manual, que só esvazia
+// quando o admin trata cada município.
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   adminListMunicipioIds,
   adminCountElegiveis,
@@ -61,6 +62,9 @@ const UFS = [
 
 type FaseIsolada = "dominio" | "secretario" | "contato";
 
+/** Item da fila lateral de revisão — guarda a fase de origem, já que a fila sobrevive a novos lotes. */
+type RevisaoItem = QueueLogEntry & { fase: FaseIsolada };
+
 /** Rótulos em português para o status técnico da fila (valor interno segue igual). */
 const STATUS_LABEL: Record<QueueLogEntry["status"], string> = {
   found: "OK",
@@ -73,6 +77,11 @@ const FASE_LABEL: Record<FaseIsolada, string> = {
   dominio: "Fase 1 — Domínio",
   secretario: "Fase 2 — Secretário",
   contato: "Fase 3 — Contato",
+};
+const FASE_CURTA: Record<FaseIsolada, string> = {
+  dominio: "Domínio",
+  secretario: "Secretário",
+  contato: "Contato",
 };
 // Fase 1/3 são baratas (sem IA ou regex-primeiro) — pausa curta. Fase 2 usa IA por
 // candidato — pausa maior, pra não estourar rate limit do provider. A busca em si
@@ -99,7 +108,8 @@ function AdminProspeccao() {
   const [loteSize, setLoteSize] = useState(500);
   const [provider, setProvider] = useState<"apify" | "firecrawl">("apify");
   const [modo, setModo] = useState<"continuar" | "repescagem">("continuar");
-  const [resolvidos, setResolvidos] = useState<Set<number>>(new Set());
+  const [revisoes, setRevisoes] = useState<RevisaoItem[]>([]);
+  const [destaque, setDestaque] = useState<number | null>(null);
   const [detalheId, setDetalheId] = useState<number | null>(null);
   const [lote, setLote] = useState<{ inicio: string; fim: string } | null>(null);
   const [resetando, setResetando] = useState(false);
@@ -118,9 +128,22 @@ function AdminProspeccao() {
 
   const queue = useProspectQueue(FASE_INTERVALO_MS[fase]);
 
+  // Toda entrada do log marcada como "revisar" entra (uma vez) na fila lateral.
+  // Ela permanece lá mesmo depois de novos lotes até o admin tratar o município.
+  useEffect(() => {
+    const pendentes = queue.log.filter((e) => e.result?.revisar);
+    if (pendentes.length === 0) return;
+    setRevisoes((prev) => {
+      const vistos = new Set(prev.map((r) => `${r.ibge_id}:${r.fase}`));
+      const novos = pendentes
+        .filter((e) => !vistos.has(`${e.ibge_id}:${fase}`))
+        .map((e) => ({ ...e, fase }) as RevisaoItem);
+      return novos.length > 0 ? [...novos, ...prev] : prev;
+    });
+  }, [queue.log, fase]);
+
   async function iniciarLote() {
     queue.setLoadingIds(true);
-    setResolvidos(new Set());
     setLote(null);
     try {
       const { items } = await listIdsFn({
@@ -154,12 +177,21 @@ function AdminProspeccao() {
     }
   }
 
-  function marcarResolvido(ibgeId: number) {
-    setResolvidos((prev) => new Set(prev).add(ibgeId));
+  function marcarResolvido(ibgeId: number, faseItem: FaseIsolada) {
+    setRevisoes((prev) => prev.filter((r) => !(r.ibge_id === ibgeId && r.fase === faseItem)));
     qc.invalidateQueries({ queryKey: ["admin-prospeccao-count"] });
     qc.invalidateQueries({ queryKey: ["admin-municipios"] });
   }
 
+  function irParaRevisao(ibgeId: number) {
+    setDestaque(ibgeId);
+    document
+      .getElementById(`revisao-${ibgeId}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => setDestaque((d) => (d === ibgeId ? null : d)), 2000);
+  }
+
+  const pendentesIds = new Set(revisoes.map((r) => r.ibge_id));
 
   return (
     <div className="space-y-4">
@@ -168,7 +200,8 @@ function AdminProspeccao() {
         <p className="text-sm text-muted-foreground">
           Cada fase roda separadamente sobre um lote de municípios — domínio primeiro, depois
           secretário e contato (que já usam o domínio confirmado, sem buscar no Google/Apify de
-          novo). Resultados fracos aparecem abaixo pra revisão na hora.
+          novo). Resultados fracos vão para a fila de revisão ao lado e só saem de lá quando você
+          atualizar o município.
         </p>
       </div>
 
@@ -299,47 +332,80 @@ function AdminProspeccao() {
         </Button>
       </div>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="order-2 min-w-0 lg:order-1">
+          {(queue.running || queue.log.length > 0) && (
+            <div className="space-y-3 rounded-lg border border-border bg-white p-4">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-semibold">
+                  {FASE_LABEL[fase]} {queue.running ? "— em andamento" : "— finalizado"}
+                </span>
+                <span className="text-muted-foreground">
+                  {queue.done}/{queue.total} processado(s)
+                </span>
+              </div>
+              <Progress value={queue.total > 0 ? (queue.done / queue.total) * 100 : 0} />
+              {lote && (
+                <p className="text-xs text-muted-foreground">
+                  Lote de {lote.inicio} até {lote.fim}
+                </p>
+              )}
 
-      {(queue.running || queue.log.length > 0) && (
-        <div className="rounded-lg border border-border bg-white p-4 space-y-3">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-semibold">
-              {FASE_LABEL[fase]} {queue.running ? "— em andamento" : "— finalizado"}
-            </span>
-            <span className="text-muted-foreground">
-              {queue.done}/{queue.total} processado(s)
-            </span>
-          </div>
-          <Progress value={queue.total > 0 ? (queue.done / queue.total) * 100 : 0} />
-          {lote && (
-            <p className="text-xs text-muted-foreground">
-              Lote de {lote.inicio} até {lote.fim}
-            </p>
+              {queue.running && (
+                <p className="text-xs text-muted-foreground">
+                  {queue.waiting
+                    ? "Aguardando antes do próximo município..."
+                    : queue.current
+                      ? `Processando: ${queue.current.nome}/${queue.current.uf}...`
+                      : "Iniciando..."}
+                </p>
+              )}
+              <div className="max-h-[32rem] space-y-2 overflow-y-auto">
+                {queue.log.map((e, i) => (
+                  <LogRow
+                    key={`${e.ibge_id}-${i}`}
+                    entry={e}
+                    pendente={pendentesIds.has(e.ibge_id)}
+                    onRevisar={() => irParaRevisao(e.ibge_id)}
+                    onDetalhes={() => setDetalheId(e.ibge_id)}
+                  />
+                ))}
+              </div>
+            </div>
           )}
-
-          {queue.running && (
-            <p className="text-xs text-muted-foreground">
-              {queue.waiting
-                ? "Aguardando antes do próximo município..."
-                : queue.current
-                  ? `Processando: ${queue.current.nome}/${queue.current.uf}...`
-                  : "Iniciando..."}
-            </p>
-          )}
-          <div className="max-h-[32rem] space-y-2 overflow-y-auto">
-            {queue.log.map((e, i) => (
-              <LogRow
-                key={`${e.ibge_id}-${i}`}
-                entry={e}
-                fase={fase}
-                resolvido={resolvidos.has(e.ibge_id)}
-                onResolvido={() => marcarResolvido(e.ibge_id)}
-                onDetalhes={() => setDetalheId(e.ibge_id)}
-              />
-            ))}
-          </div>
         </div>
-      )}
+
+        <aside className="order-1 min-w-0 lg:order-2">
+          <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/40 p-4 lg:sticky lg:top-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 text-sm font-semibold">
+                <AlertTriangle className="h-4 w-4 text-amber-600" /> Precisa de revisão
+              </span>
+              <Badge variant="outline" className="border-amber-300 bg-white text-amber-700">
+                {revisoes.length}
+              </Badge>
+            </div>
+            {revisoes.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Nenhuma revisão pendente. Resultados fracos aparecem aqui e só saem depois que você
+                salvar ou marcar como revisado.
+              </p>
+            ) : (
+              <div className="max-h-[36rem] space-y-2 overflow-y-auto pr-1">
+                {revisoes.map((r) => (
+                  <RevisaoCard
+                    key={`${r.ibge_id}-${r.fase}`}
+                    item={r}
+                    destacado={destaque === r.ibge_id}
+                    onResolvido={() => marcarResolvido(r.ibge_id, r.fase)}
+                    onDetalhes={() => setDetalheId(r.ibge_id)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </aside>
+      </div>
 
       <MunicipioDetalheModal
         ibgeId={detalheId}
@@ -352,20 +418,79 @@ function AdminProspeccao() {
 
 function LogRow({
   entry,
-  fase,
-  resolvido,
-  onResolvido,
+  pendente,
+  onRevisar,
   onDetalhes,
 }: {
   entry: QueueLogEntry;
-  fase: FaseIsolada;
-  resolvido: boolean;
+  pendente: boolean;
+  onRevisar: () => void;
+  onDetalhes: () => void;
+}) {
+  return (
+    <div
+      className={`rounded border px-3 py-2 text-xs ${pendente ? "border-amber-300 bg-amber-50" : "border-border"}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate font-medium">
+          {entry.nome}/{entry.uf}
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          {entry.detalhe && <span className="text-muted-foreground">{entry.detalhe}</span>}
+          <Badge
+            variant={
+              entry.status === "found"
+                ? "default"
+                : entry.status === "partial"
+                  ? "secondary"
+                  : entry.status === "error"
+                    ? "destructive"
+                    : "outline"
+            }
+          >
+            {STATUS_LABEL[entry.status]}
+          </Badge>
+          <button
+            type="button"
+            onClick={onDetalhes}
+            className="inline-flex items-center gap-1 rounded border border-input px-1.5 py-0.5 text-[11px] hover:bg-accent"
+          >
+            <Eye className="h-3 w-3" /> Detalhes
+          </button>
+        </span>
+      </div>
+      {entry.status !== "found" && entry.motivo && (
+        <p className="mt-1 text-[11px] leading-snug text-amber-700" title={entry.motivo}>
+          Motivo: {entry.motivo}
+        </p>
+      )}
+      {pendente && (
+        <button
+          type="button"
+          onClick={onRevisar}
+          className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 underline underline-offset-2"
+        >
+          <AlertTriangle className="h-3 w-3" /> Na fila de revisão — abrir
+        </button>
+      )}
+    </div>
+  );
+}
+
+function RevisaoCard({
+  item,
+  destacado,
+  onResolvido,
+  onDetalhes,
+}: {
+  item: RevisaoItem;
+  destacado: boolean;
   onResolvido: () => void;
   onDetalhes: () => void;
 }) {
   const resolveFn = useServerFn(adminResolveRevisao);
-  const r = entry.result;
-  const precisaRevisao = !!r?.revisar && !resolvido;
+  const r = item.result;
+  const fase = item.fase;
   const [saving, setSaving] = useState(false);
   const [dominio, setDominio] = useState(r?.dominioOficialConfirmado ?? "");
   const [secretario, setSecretario] = useState(r?.secretario ?? "");
@@ -391,7 +516,7 @@ function LogRow({
                   .map((s) => s.trim())
                   .filter(Boolean),
               };
-      await resolveFn({ data: { ibge_id: entry.ibge_id, fase, patch } });
+      await resolveFn({ data: { ibge_id: item.ibge_id, fase, patch } });
       onResolvido();
     } finally {
       setSaving(false);
@@ -401,7 +526,7 @@ function LogRow({
   async function marcarComoRevisado() {
     setSaving(true);
     try {
-      await resolveFn({ data: { ibge_id: entry.ibge_id, fase } });
+      await resolveFn({ data: { ibge_id: item.ibge_id, fase } });
       onResolvido();
     } finally {
       setSaving(false);
@@ -410,26 +535,18 @@ function LogRow({
 
   return (
     <div
-      className={`rounded border px-3 py-2 text-xs ${precisaRevisao ? "border-amber-300 bg-amber-50" : "border-border"}`}
+      id={`revisao-${item.ibge_id}`}
+      className={`space-y-2 rounded border bg-white p-2 text-xs transition-shadow ${
+        destacado ? "border-amber-500 shadow-md ring-2 ring-amber-300" : "border-amber-200"
+      }`}
     >
-      <div className="flex items-center justify-between">
-        <span className="font-medium">
-          {entry.nome}/{entry.uf}
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate font-medium">
+          {item.nome}/{item.uf}
         </span>
-        <span className="flex items-center gap-2">
-          {entry.detalhe && <span className="text-muted-foreground">{entry.detalhe}</span>}
-          <Badge
-            variant={
-              entry.status === "found"
-                ? "default"
-                : entry.status === "partial"
-                  ? "secondary"
-                  : entry.status === "error"
-                    ? "destructive"
-                    : "outline"
-            }
-          >
-            {STATUS_LABEL[entry.status]}
+        <span className="flex shrink-0 items-center gap-1.5">
+          <Badge variant="outline" className="text-[10px]">
+            {FASE_CURTA[fase]}
           </Badge>
           <button
             type="button"
@@ -438,67 +555,53 @@ function LogRow({
           >
             <Eye className="h-3 w-3" /> Detalhes
           </button>
-          {resolvido && (
-            <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700">
-              <Check className="mr-1 h-3 w-3" /> revisado
-            </Badge>
-          )}
         </span>
       </div>
-      {entry.status !== "found" && entry.motivo && (
-        <p className="mt-1 text-[11px] leading-snug text-amber-700" title={entry.motivo}>
-          Motivo: {entry.motivo}
-        </p>
+      <p className="flex items-start gap-1.5 leading-snug text-amber-700">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        {r?.motivoRevisao ?? item.motivo ?? "Confiança baixa — revise antes de confiar neste dado."}
+      </p>
+      {fase === "dominio" && (
+        <Input
+          value={dominio}
+          onChange={(e) => setDominio(e.target.value)}
+          placeholder="domínio oficial (ex.: abadiadegoias.go.gov.br)"
+        />
       )}
-      {precisaRevisao && (
-        <div className="mt-2 space-y-2 rounded border border-amber-200 bg-white p-2">
-          <div className="flex items-center gap-1.5 text-amber-700">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            {r?.motivoRevisao ?? "Confiança baixa — revise antes de confiar neste dado."}
-          </div>
-          {fase === "dominio" && (
-            <Input
-              value={dominio}
-              onChange={(e) => setDominio(e.target.value)}
-              placeholder="domínio oficial (ex.: abadiadegoias.go.gov.br)"
-            />
-          )}
-          {fase === "secretario" && (
-            <div className="grid grid-cols-2 gap-2">
-              <Input
-                value={secretario}
-                onChange={(e) => setSecretario(e.target.value)}
-                placeholder="Secretário(a)"
-              />
-              <Input value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Cargo" />
-            </div>
-          )}
-          {fase === "contato" && (
-            <div className="grid grid-cols-2 gap-2">
-              <Textarea
-                rows={2}
-                value={emailsText}
-                onChange={(e) => setEmailsText(e.target.value)}
-                placeholder="e-mails (um por linha)"
-              />
-              <Textarea
-                rows={2}
-                value={telefonesText}
-                onChange={(e) => setTelefonesText(e.target.value)}
-                placeholder="telefones (um por linha)"
-              />
-            </div>
-          )}
-          <div className="flex gap-2">
-            <Button size="sm" disabled={saving} onClick={salvar}>
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Salvar alterações"}
-            </Button>
-            <Button size="sm" variant="outline" disabled={saving} onClick={marcarComoRevisado}>
-              Marcar como revisado
-            </Button>
-          </div>
+      {fase === "secretario" && (
+        <div className="space-y-2">
+          <Input
+            value={secretario}
+            onChange={(e) => setSecretario(e.target.value)}
+            placeholder="Secretário(a)"
+          />
+          <Input value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Cargo" />
         </div>
       )}
+      {fase === "contato" && (
+        <div className="space-y-2">
+          <Textarea
+            rows={2}
+            value={emailsText}
+            onChange={(e) => setEmailsText(e.target.value)}
+            placeholder="e-mails (um por linha)"
+          />
+          <Textarea
+            rows={2}
+            value={telefonesText}
+            onChange={(e) => setTelefonesText(e.target.value)}
+            placeholder="telefones (um por linha)"
+          />
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" disabled={saving} onClick={salvar}>
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Salvar alterações"}
+        </Button>
+        <Button size="sm" variant="outline" disabled={saving} onClick={marcarComoRevisado}>
+          <Check className="mr-1 h-3.5 w-3.5" /> Marcar como revisado
+        </Button>
+      </div>
     </div>
   );
 }
