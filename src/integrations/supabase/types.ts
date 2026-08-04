@@ -91,8 +91,10 @@ export type Database = {
           atualizado_em: string | null
           breakdown: Json
           cargo: string | null
+          contato_confirmado_por: string | null
           created_at: string
           dominio_confirmado_em: string | null
+          dominio_confirmado_por: string | null
           dominio_oficial: string | null
           emails: string[]
           equipe: Json
@@ -106,6 +108,7 @@ export type Database = {
           revisao_necessaria: boolean
           score: number
           secretario: string | null
+          secretario_confirmado_por: string | null
           status: string
           telefones: string[]
           updated_at: string
@@ -114,8 +117,10 @@ export type Database = {
           atualizado_em?: string | null
           breakdown?: Json
           cargo?: string | null
+          contato_confirmado_por?: string | null
           created_at?: string
           dominio_confirmado_em?: string | null
+          dominio_confirmado_por?: string | null
           dominio_oficial?: string | null
           emails?: string[]
           equipe?: Json
@@ -129,6 +134,7 @@ export type Database = {
           revisao_necessaria?: boolean
           score?: number
           secretario?: string | null
+          secretario_confirmado_por?: string | null
           status?: string
           telefones?: string[]
           updated_at?: string
@@ -137,8 +143,10 @@ export type Database = {
           atualizado_em?: string | null
           breakdown?: Json
           cargo?: string | null
+          contato_confirmado_por?: string | null
           created_at?: string
           dominio_confirmado_em?: string | null
+          dominio_confirmado_por?: string | null
           dominio_oficial?: string | null
           emails?: string[]
           equipe?: Json
@@ -152,6 +160,7 @@ export type Database = {
           revisao_necessaria?: boolean
           score?: number
           secretario?: string | null
+          secretario_confirmado_por?: string | null
           status?: string
           telefones?: string[]
           updated_at?: string
