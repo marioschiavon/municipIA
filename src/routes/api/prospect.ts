@@ -146,8 +146,17 @@ export const Route = createFileRoute("/api/prospect")({
                 ts: Date.now(),
               });
             } finally {
+              // Cursor do rodízio: sempre registra a tentativa (achou ou não),
+              // para o próximo lote continuar de onde este parou.
+              if (ibgeId) {
+                try {
+                  const { marcarTentativaProspeccao } = await import("@/lib/catalog-update.server");
+                  await marcarTentativaProspeccao(ibgeId, fase);
+                } catch { /* noop */ }
+              }
               controller.close();
             }
+
           },
         });
 
