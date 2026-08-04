@@ -226,6 +226,22 @@ function AdminProspeccao() {
             disabled={queue.running}
           />
         </div>
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">Modo</label>
+          <Select
+            value={modo}
+            onValueChange={(v) => setModo(v as "continuar" | "repescagem")}
+            disabled={queue.running}
+          >
+            <SelectTrigger className="w-[190px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="continuar">Continuar de onde parou</SelectItem>
+              <SelectItem value="repescagem">Repescagem (já tentados)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div className="text-sm text-muted-foreground">
           {count.isLoading
             ? "..."
@@ -250,6 +266,39 @@ function AdminProspeccao() {
           </Button>
         )}
       </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-white px-4 py-3 text-sm">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <RotateCcw className="h-4 w-4 shrink-0" />
+          {ciclo.isLoading || !ciclo.data ? (
+            "Carregando progresso do ciclo..."
+          ) : (
+            <span>
+              Ciclo atual:{" "}
+              <strong className="text-foreground">
+                {ciclo.data.jaTentados.toLocaleString("pt-BR")}
+              </strong>{" "}
+              de {ciclo.data.elegiveis.toLocaleString("pt-BR")} já tentados nesta fase
+              {ciclo.data.proximo
+                ? ` — próximo lote começa em ${ciclo.data.proximo.nome}/${ciclo.data.proximo.uf}`
+                : " — nada elegível no filtro atual"}
+              {ciclo.data.naoTentados === 0 && ciclo.data.elegiveis > 0
+                ? " (ciclo completo: reinicia pelos mais antigos)"
+                : ""}
+            </span>
+          )}
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={queue.running || resetando}
+          onClick={reiniciarCiclo}
+        >
+          {resetando ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+          Reiniciar ciclo
+        </Button>
+      </div>
+
 
       {(queue.running || queue.log.length > 0) && (
         <div className="rounded-lg border border-border bg-white p-4 space-y-3">
