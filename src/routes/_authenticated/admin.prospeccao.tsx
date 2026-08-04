@@ -5,7 +5,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   adminListMunicipioIds,
   adminCountElegiveis,
@@ -109,6 +109,9 @@ function AdminProspeccao() {
   const [provider, setProvider] = useState<"apify" | "firecrawl">("apify");
   const [modo, setModo] = useState<"continuar" | "repescagem">("continuar");
   const [revisoes, setRevisoes] = useState<RevisaoItem[]>([]);
+  // Municípios já tratados manualmente (chave `ibge:fase`). Sem isso, o efeito
+  // abaixo reinsere o item na fila assim que `queue.log` muda de referência.
+  const resolvidosRef = useRef<Set<string>>(new Set());
   const [destaque, setDestaque] = useState<number | null>(null);
   const [detalheId, setDetalheId] = useState<number | null>(null);
   const [lote, setLote] = useState<{ inicio: string; fim: string } | null>(null);
@@ -136,7 +139,10 @@ function AdminProspeccao() {
     setRevisoes((prev) => {
       const vistos = new Set(prev.map((r) => `${r.ibge_id}:${r.fase}`));
       const novos = pendentes
-        .filter((e) => !vistos.has(`${e.ibge_id}:${fase}`))
+        .filter((e) => {
+          const chave = `${e.ibge_id}:${fase}`;
+          return !vistos.has(chave) && !resolvidosRef.current.has(chave);
+        })
         .map((e) => ({ ...e, fase }) as RevisaoItem);
       return novos.length > 0 ? [...novos, ...prev] : prev;
     });
@@ -178,6 +184,7 @@ function AdminProspeccao() {
   }
 
   function marcarResolvido(ibgeId: number, faseItem: FaseIsolada) {
+    resolvidosRef.current.add(`${ibgeId}:${faseItem}`);
     setRevisoes((prev) => prev.filter((r) => !(r.ibge_id === ibgeId && r.fase === faseItem)));
     qc.invalidateQueries({ queryKey: ["admin-prospeccao-count"] });
     qc.invalidateQueries({ queryKey: ["admin-municipios"] });
