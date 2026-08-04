@@ -9,7 +9,10 @@ import {
   adminListMunicipioIds,
   adminCountElegiveis,
   adminResolveRevisao,
+  adminProspeccaoCiclo,
+  adminResetCicloProspeccao,
 } from "@/lib/admin.functions";
+
 import { useProspectQueue, type QueueLogEntry } from "@/lib/use-prospect-queue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
