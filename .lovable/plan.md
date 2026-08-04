@@ -1,39 +1,56 @@
-## O que verifiquei agora
+# Prospecção em lote: continuar de onde parou (Alpha v0.50)
 
-- O Apify está funcionando: consulta SERP de teste (`site:maringa.pr.gov.br prefeitura`) voltou 10 resultados em 8s.
-- O banco mostra 5.571 municípios, 274 com domínio e 267 registros atualizados nas últimas 24h — ou seja, a Fase 1 grava sim em parte dos casos; não é uma pane global.
-- Por isso **não dá para afirmar uma causa única** para os `not_found` atuais: cada município pode falhar por um motivo diferente (SERP sem resultado, host não confirmável pelo padrão `slug.uf.gov.br`, resultados descartados por UF/município estranho, timeout).
-- O problema real hoje é de visibilidade: cada fase já produz um motivo (`empty("Nenhum domínio oficial confirmável encontrado nesta fase.")`, avisos `warn` como "Removi N resultados .gov.br de outra UF", "Sem candidatos por sitemap/home") mas **nada disso chega na linha do painel** — a fila só mostra `not_found` e "0 contato(s)".
+## Problema
 
-## O que fazer
+Hoje a lista de municípios elegíveis é montada por "quem ainda não tem o dado da fase", ordenada por nome (A→Z), e o lote sempre pega os primeiros N. Como quem não foi encontrado continua elegível, todo novo lote recomeça exatamente pelos mesmos municípios que já falharam — nunca avança para o resto da lista.
 
-1. **Propagar o motivo até a tela**
-   - Na fila (`use-prospect-queue.ts`), além de capturar erros, guardar também o último evento `warn` e o campo `contexto` do resultado final.
-   - Montar um `detalhe` legível: motivo do resultado (`contexto`) e, se houver, o último aviso relevante.
+## Solução: cursor por tentativa (rodízio automático)
 
-2. **Rótulos em português no log e na tabela**
-   - `found` → **OK**
-   - `partial` → **Parcial**
-   - `not_found` → **Não encontrado**
-   - `error` → **Erro**
-   - Somente rótulo de exibição; os valores internos e no banco continuam iguais para não quebrar filtros e gravação.
+Registrar, no banco, a data/hora da última tentativa de cada município em cada fase. A fila passa a ordenar por "quem nunca foi tentado primeiro, depois quem foi tentado há mais tempo". Assim:
 
-3. **Mostrar o motivo na linha**
-   - Em `Não encontrado` e `Erro`, exibir o motivo abaixo do nome do município (texto pequeno, cor de alerta), com o motivo completo em `title` para copiar/relatar.
-   - Em `OK`, manter o resumo curto (domínio confirmado / nome encontrado / nº de contatos).
+- Lote 1 (500) processa os 500 primeiros e marca a tentativa.
+- Lote 2 começa no município 501, porque os 500 anteriores passam para o fim da fila.
+- Quando todos os elegíveis já tiverem sido tentados uma vez, o ciclo reinicia sozinho pelo mais antigo — que é o comportamento desejado ("depois que ler todos, começa novamente").
 
-4. **Motivos mais específicos nas fases** (mensagens em `prospect.server.ts`)
-   - Fase 1: distinguir "a busca não retornou nenhum resultado" de "vieram N resultados, mas nenhum host confirmável (ex.: só facebook/portal estadual)" e de "timeout na busca".
-   - Fase 2: distinguir "sem candidatos de página de educação no domínio" de "páginas lidas, mas IA não achou nome".
-   - Fase 3: distinguir "nenhuma página legível (scrape bloqueado)" de "página lida sem contato".
+O cancelamento no meio do lote não atrapalha: a marcação acontece município a município, ao terminar cada um.
 
-5. Bump de versão em `src/lib/version.ts` (Alpha v0.47).
+## Alterações
 
-## Detalhes técnicos
+### 1. Banco (migração)
 
-- Arquivos: `src/lib/use-prospect-queue.ts` (captura de motivo), `src/routes/_authenticated/admin.prospeccao.tsx` (rótulos + linha de motivo), `src/routes/_authenticated/admin.municipios.index.tsx` (mesmos rótulos), `src/lib/prospect.server.ts` (mensagens de motivo mais específicas), `src/lib/version.ts`.
-- Sem mudança de schema no banco.
+Na tabela `municipios_educacao`, três colunas de tentativa:
 
-## Validação
+- `tentativa_dominio_em` (timestamptz, nulo)
+- `tentativa_secretario_em` (timestamptz, nulo)
+- `tentativa_contato_em` (timestamptz, nulo)
 
-Rodar um lote pequeno da Fase 1 (5 municípios) e confirmar que cada linha "Não encontrado" traz um motivo textual utilizável — com esses motivos em mãos, dá para diagnosticar com precisão a causa real dos `not_found` em massa no próximo passo.
+Índices para ordenação rápida por fase.
+
+### 2. Marcar tentativa a cada município
+
+Em `src/lib/catalog-update.server.ts` (`persistProspectResult` / `persistFaseIsolada`), gravar a coluna de tentativa da fase com `now()` em **todo** resultado — encontrado, parcial ou não encontrado. Em `src/routes/api/prospect.ts`, marcar a tentativa também nos caminhos que hoje encerram antes de persistir (ex.: fase 2/3 sem domínio confirmado e erros de provedor), para que um município problemático não trave a fila em loop.
+
+### 3. Ordenação e seleção do lote
+
+Em `src/lib/admin.functions.ts`:
+
+- `adminListMunicipioIds` passa a ordenar por `tentativa_<fase>_em` ascendente com nulos primeiro (desempate por nome) quando há fase selecionada.
+- Aceitar `limit` no servidor para trazer só o tamanho do lote, em vez de carregar todos os elegíveis e cortar no cliente.
+- Nova função `adminProspeccaoCiclo`: retorna quantos elegíveis nunca foram tentados, quantos já foram, e a data da tentativa mais antiga — para mostrar o progresso do ciclo.
+
+### 4. Tela `/admin/prospeccao`
+
+- Indicador do ciclo: "Ciclo atual: 1.240 de 3.900 já tentados nesta fase — próximo lote continua de onde parou".
+- No card do lote, mostrar de onde o lote começou (primeiro município) e onde parou (último processado).
+- Botão "Reiniciar ciclo" (limpa as marcas de tentativa da fase/UF filtrada) para quando o admin quiser forçar recomeço do zero, com confirmação.
+- Opção "Repetir só os não encontrados": inverte o critério e prioriza quem já foi tentado e falhou, para uma varredura de repescagem consciente.
+
+### 5. Versão
+
+Bump para **Alpha v0.50** em `src/lib/version.ts`.
+
+## Observações técnicas
+
+- O cursor é por (município, fase), guardado no banco — funciona entre sessões, navegadores e após recarregar a página.
+- Filtro de UF continua valendo: o rodízio acontece dentro do recorte filtrado.
+- Nada muda no pipeline de busca em si (Apify/OpenAI/scraper); só a seleção e a ordem dos municípios do lote.
