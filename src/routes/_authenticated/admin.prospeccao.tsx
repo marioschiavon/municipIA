@@ -139,7 +139,10 @@ function AdminProspeccao() {
     setRevisoes((prev) => {
       const vistos = new Set(prev.map((r) => `${r.ibge_id}:${r.fase}`));
       const novos = pendentes
-        .filter((e) => !vistos.has(`${e.ibge_id}:${fase}`))
+        .filter((e) => {
+          const chave = `${e.ibge_id}:${fase}`;
+          return !vistos.has(chave) && !resolvidosRef.current.has(chave);
+        })
         .map((e) => ({ ...e, fase }) as RevisaoItem);
       return novos.length > 0 ? [...novos, ...prev] : prev;
     });
