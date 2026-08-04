@@ -138,7 +138,31 @@ const ListAllIdsInput = z.object({
   status: z.string().optional(),
   q: z.string().optional(),
   fase: z.enum(["dominio", "secretario", "contato"]).optional(),
+  /** Tamanho do lote — o servidor já devolve só o necessário, na ordem do rodízio. */
+  limit: z.number().int().min(1).max(5000).optional(),
+  /** "continuar" = nunca tentados primeiro; "repescagem" = só os já tentados (mais antigos primeiro). */
+  modo: z.enum(["continuar", "repescagem"]).default("continuar"),
 });
+
+/** Colunas de tentativa por fase — cursor do rodízio de lotes. */
+const TENTATIVA_COL = {
+  dominio: "tentativa_dominio_em",
+  secretario: "tentativa_secretario_em",
+  contato: "tentativa_contato_em",
+} as const;
+
+// Filtro de elegibilidade quando a consulta parte de `municipios_educacao`
+// (necessário para ordenar por tentativa no nível de cima).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyFaseFilterEdu(q: any, fase: ProspectFaseFiltro) {
+  if (fase === "dominio") return q.is("dominio_oficial", null);
+  if (fase === "secretario") return q.not("dominio_oficial", "is", null).is("secretario", null);
+  return q
+    .not("dominio_oficial", "is", null)
+    .eq("emails", "{}")
+    .eq("telefones", "{}");
+}
+
 export const adminListMunicipioIds = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => ListAllIdsInput.parse(d))
@@ -146,29 +170,139 @@ export const adminListMunicipioIds = createServerFn({ method: "POST" })
     await assertAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const items: Array<{ ibge_id: number; nome: string; uf: string }> = [];
+
+    // Com fase definida a busca parte de municipios_educacao, para poder ordenar
+    // pela coluna de tentativa (rodízio: nunca tentados primeiro, depois os mais antigos).
+    if (data.fase) {
+      const col = TENTATIVA_COL[data.fase];
+      let q = supabaseAdmin
+        .from("municipios_educacao")
+        .select("ibge_id, municipios!inner(nome, uf)")
+        .order(col, { ascending: true, nullsFirst: data.modo === "continuar" })
+        .order("ibge_id", { ascending: true })
+        .limit(data.limit ?? 1000);
+      if (data.uf) q = q.eq("municipios.uf", data.uf);
+      if (data.q) q = q.ilike("municipios.nome", `%${data.q}%`);
+      if (data.status) q = q.eq("status", data.status);
+      if (data.modo === "repescagem") q = q.not(col, "is", null);
+      q = applyFaseFilterEdu(q, data.fase);
+      const { data: rows, error } = await q;
+      if (error) throw new Error(error.message);
+      for (const r of (rows ?? []) as any[])
+        items.push({ ibge_id: r.ibge_id, nome: r.municipios?.nome, uf: r.municipios?.uf });
+      return { items };
+    }
+
     const CHUNK = 1000;
     let from = 0;
     for (;;) {
       let q = supabaseAdmin
         .from("municipios")
-        .select(
-          "ibge_id, nome, uf, municipios_educacao!inner(status, dominio_oficial, secretario, emails, telefones)",
-        )
+        .select("ibge_id, nome, uf, municipios_educacao!inner(status)")
         .order("nome", { ascending: true })
         .range(from, from + CHUNK - 1);
       if (data.uf) q = q.eq("uf", data.uf);
       if (data.q) q = q.ilike("nome", `%${data.q}%`);
       if (data.status) q = q.eq("municipios_educacao.status", data.status);
-      q = applyFaseFilter(q, data.fase);
       const { data: rows, error } = await q;
       if (error) throw new Error(error.message);
       for (const r of (rows ?? []) as any[])
         items.push({ ibge_id: r.ibge_id, nome: r.nome, uf: r.uf });
       if (!rows || rows.length < CHUNK) break;
       from += CHUNK;
+      if (data.limit && items.length >= data.limit) break;
     }
-    return { items };
+    return { items: data.limit ? items.slice(0, data.limit) : items };
   });
+
+// ============ CICLO DE PROSPECÇÃO (quanto do rodízio já foi percorrido) ============
+const CicloInput = z.object({
+  fase: z.enum(["dominio", "secretario", "contato"]),
+  uf: z.string().length(2).optional(),
+  q: z.string().optional(),
+  status: z.string().optional(),
+});
+export const adminProspeccaoCiclo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => CicloInput.parse(d))
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const col = TENTATIVA_COL[data.fase];
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const base = (head: boolean) => {
+      let q = supabaseAdmin
+        .from("municipios_educacao")
+        .select("ibge_id, municipios!inner(nome, uf)", head ? { count: "exact", head: true } : { count: "exact" });
+      if (data.uf) q = q.eq("municipios.uf", data.uf);
+      if (data.q) q = q.ilike("municipios.nome", `%${data.q}%`);
+      if (data.status) q = q.eq("status", data.status);
+      return applyFaseFilterEdu(q, data.fase);
+    };
+
+    const [{ count: elegiveis }, { count: pendentesCiclo }, { data: proximo }] = await Promise.all([
+      base(true),
+      base(true).is(col, null),
+      base(false)
+        .order(col, { ascending: true, nullsFirst: true })
+        .order("ibge_id", { ascending: true })
+        .limit(1),
+    ]);
+
+    const total = elegiveis ?? 0;
+    const naoTentados = pendentesCiclo ?? 0;
+    const primeiro = (proximo ?? [])[0] as any;
+    return {
+      elegiveis: total,
+      naoTentados,
+      jaTentados: Math.max(0, total - naoTentados),
+      proximo: primeiro
+        ? { ibge_id: primeiro.ibge_id, nome: primeiro.municipios?.nome, uf: primeiro.municipios?.uf }
+        : null,
+    };
+  });
+
+// ============ REINICIAR CICLO (limpa as marcas de tentativa da fase) ============
+export const adminResetCicloProspeccao = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({
+      fase: z.enum(["dominio", "secretario", "contato"]),
+      uf: z.string().length(2).optional(),
+    }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const col = TENTATIVA_COL[data.fase];
+
+    if (data.uf) {
+      const { data: muns, error: mErr } = await supabaseAdmin
+        .from("municipios")
+        .select("ibge_id")
+        .eq("uf", data.uf);
+      if (mErr) throw new Error(mErr.message);
+      const ids = (muns ?? []).map((m: any) => m.ibge_id);
+      const CHUNK = 500;
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const { error } = await supabaseAdmin
+          .from("municipios_educacao")
+          .update({ [col]: null })
+          .in("ibge_id", ids.slice(i, i + CHUNK));
+        if (error) throw new Error(error.message);
+      }
+      return { ok: true, afetados: ids.length };
+    }
+
+    const { error } = await supabaseAdmin
+      .from("municipios_educacao")
+      .update({ [col]: null })
+      .not(col, "is", null);
+    if (error) throw new Error(error.message);
+    return { ok: true, afetados: null };
+  });
+
 
 // ============ COUNT ELEGÍVEIS (badge "N elegíveis" na tela de lote) ============
 const CountElegiveisInput = z.object({
