@@ -99,7 +99,7 @@ function AdminEditMunicipio() {
   const [prospEvents, setProspEvents] = useState<ProgressEvent[]>([]);
   const prospAbortRef = useRef<AbortController | null>(null);
 
-  async function rodarProspeccao(opts: { provider?: "firecrawl" | "apify"; fase?: ProspectFase; button: "atualizar" | "apify" | ProspectFase }) {
+  async function rodarProspeccao(opts: { fase?: ProspectFase; button: "atualizar" | ProspectFase }) {
     if (!data.data?.municipio) return;
     const { nome, uf } = data.data.municipio;
     setProspEvents([]);
@@ -117,7 +117,7 @@ function AdminEditMunicipio() {
         // Ao contrário do antigo botão público, os modos aqui SEMPRE mandam
         // ibgeId — inclusive o teste com Apify e as fases isoladas persistem,
         // pra dar pra comparar o resultado salvo de verdade.
-        body: JSON.stringify({ municipio: nome, uf, ibgeId: id, provider: opts.provider ?? "firecrawl", fase: opts.fase ?? "completo" }),
+        body: JSON.stringify({ municipio: nome, uf, ibgeId: id, fase: opts.fase ?? "completo" }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -216,7 +216,7 @@ function AdminEditMunicipio() {
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-lg font-semibold">Prospecção ao vivo</h3>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" onClick={() => rodarProspeccao({ provider: "firecrawl", fase: "completo", button: "atualizar" })} disabled={prospRunning}>
+            <Button size="sm" onClick={() => rodarProspeccao({ fase: "completo", button: "atualizar" })} disabled={prospRunning}>
               {prospRunning && activeButton === "atualizar" ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Buscando…</> : <><RefreshCw className="mr-1.5 h-4 w-4" /> Atualizar agora</>}
             </Button>
             <Button size="sm" variant="outline" onClick={() => rodarProspeccao({ provider: "apify", fase: "completo", button: "apify" })} disabled={prospRunning} title="Roda a mesma busca só com Apify — salva no catálogo igual, pra comparar o resultado real">
