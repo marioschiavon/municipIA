@@ -241,35 +241,33 @@ type InepEscolaMapRow = {
 
 async function loadInepEscolaMap(supabaseAdmin: any, send: any): Promise<Map<number, InepEscolaMapRow>> {
   const map = new Map<number, InepEscolaMapRow>();
-  const pageSize = 10000;
-  let from = 0;
 
   await send({
     type: "progress",
     message: "Carregando mapa Escola → Município importado anteriormente (tabela INEP — Escolas)...",
   });
 
-  while (true) {
-    const { data, error } = await supabaseAdmin
-      .from("inep_escolas")
-      .select("co_entidade, ibge_id, tp_dependencia, tp_situacao")
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`inep_escolas/mapa: ${error.message}`);
-
-    const rows = (data ?? []) as InepEscolaMapRow[];
-    for (const row of rows) {
-      if (row.co_entidade && row.ibge_id) map.set(Number(row.co_entidade), row);
-    }
-
-    if (from === 0 || rows.length < pageSize) {
-      await send({
-        type: "progress",
-        message: `Mapa carregado: ${map.size.toLocaleString("pt-BR")} escolas disponíveis para cruzamento.`,
-      });
-    }
-    if (rows.length < pageSize) break;
-    from += pageSize;
+  const rows = await fetchAllByKeyset<InepEscolaMapRow>(
+    (after) => {
+      let q = supabaseAdmin
+        .from("inep_escolas")
+        .select("co_entidade, ibge_id, tp_dependencia, tp_situacao")
+        .order("co_entidade", { ascending: true })
+        .limit(PG_PAGE);
+      if (after !== null) q = q.gt("co_entidade", after);
+      return q;
+    },
+    (r) => Number(r.co_entidade),
+    "inep_escolas/mapa",
+  );
+  for (const row of rows) {
+    if (row.co_entidade && row.ibge_id) map.set(Number(row.co_entidade), row);
   }
+
+  await send({
+    type: "progress",
+    message: `Mapa carregado: ${map.size.toLocaleString("pt-BR")} escolas disponíveis para cruzamento.`,
+  });
 
   return map;
 }
@@ -278,25 +276,31 @@ async function loadInepEscolaMap(supabaseAdmin: any, send: any): Promise<Map<num
 // esta requisição viu) — necessário porque, com upload em lotes, um único
 // request só enxerga uma fatia do arquivo; a contagem definitiva só pode vir
 // de uma varredura completa do que já foi gravado em `inep_escolas`.
-async function recontarEscolasMunicipais(supabaseAdmin: any, ano: number, send: any): Promise<Map<number, number>> {
+export async function recontarEscolasMunicipais(supabaseAdmin: any, ano: number, send: any): Promise<Map<number, number>> {
   const counts = new Map<number, number>();
-  const pageSize = 10000;
-  let from = 0;
-  for (;;) {
-    const { data, error } = await supabaseAdmin
-      .from("inep_escolas")
-      .select("ibge_id")
-      .eq("ano", ano)
-      .eq("tp_dependencia", 3)
-      .eq("tp_situacao", 1)
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`inep_escolas/recontagem: ${error.message}`);
-    const rows = (data ?? []) as { ibge_id: number }[];
-    for (const r of rows) counts.set(r.ibge_id, (counts.get(r.ibge_id) ?? 0) + 1);
-    if (rows.length < pageSize) break;
-    from += pageSize;
-  }
-  await send({ type: "progress", message: `Recontagem completa: ${counts.size.toLocaleString("pt-BR")} municípios com rede municipal ativa.` });
+  const rows = await fetchAllByKeyset<{ co_entidade: number; ibge_id: number }>(
+    (after) => {
+      let q = supabaseAdmin
+        .from("inep_escolas")
+        .select("co_entidade, ibge_id")
+        .eq("ano", ano)
+        .eq("tp_dependencia", 3)
+        .eq("tp_situacao", 1)
+        .order("co_entidade", { ascending: true })
+        .limit(PG_PAGE);
+      if (after !== null) q = q.gt("co_entidade", after);
+      return q;
+    },
+    (r) => Number(r.co_entidade),
+    "inep_escolas/recontagem",
+    async (loaded) => {
+      if (loaded % 50000 === 0) {
+        await send({ type: "progress", message: `↳ recontagem: ${loaded.toLocaleString("pt-BR")} escolas municipais ativas lidas...` });
+      }
+    },
+  );
+  for (const r of rows) counts.set(Number(r.ibge_id), (counts.get(Number(r.ibge_id)) ?? 0) + 1);
+  await send({ type: "progress", message: `Recontagem completa: ${rows.length.toLocaleString("pt-BR")} escolas · ${counts.size.toLocaleString("pt-BR")} municípios com rede municipal ativa.` });
   return counts;
 }
 
