@@ -455,7 +455,7 @@ async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmi
   // Contagem definitiva por município — varre o banco (não o que este lote
   // viu), pois com upload em lotes cada request só enxerga uma fatia do arquivo.
   const municipais = await recontarEscolasMunicipais(supabaseAdmin, ano, send);
-  const entries = Array.from(municipais.entries());
+  const entries: [number, number][] = Array.from(municipais.entries());
   const updated = await aplicarContagens(entries);
   const amostra = entries.slice(0, 3).map(([ibge, c]) => `${ibge}=${c}`).join(", ");
   await send({
