@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Upload, ArrowLeft, Loader2, CheckCircle, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { adminSyncPopulacao, adminRecalcularScores } from "@/lib/admin.functions";
+import { adminSyncPopulacao, adminRecalcularScores, adminReconsolidarEscolas } from "@/lib/admin.functions";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -34,6 +34,7 @@ function AdminImportPage() {
   const [result, setResult] = useState<{ ok: boolean; message: string; data?: unknown } | null>(null);
   const [syncPopLoading, setSyncPopLoading] = useState(false);
   const [recalcLoading, setRecalcLoading] = useState(false);
+  const [reconsLoading, setReconsLoading] = useState(false);
   const [resumeFrom, setResumeFrom] = useState(0);
   const [chunkTotal, setChunkTotal] = useState(0);
   const [chunkAtual, setChunkAtual] = useState(0);
@@ -41,6 +42,7 @@ function AdminImportPage() {
 
   const syncPopFn = useServerFn(adminSyncPopulacao);
   const recalcFn = useServerFn(adminRecalcularScores);
+  const reconsFn = useServerFn(adminReconsolidarEscolas);
 
   function selecionarArquivo(f: File | null) {
     setFile(f);
