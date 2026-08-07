@@ -4,6 +4,7 @@ import type { Database } from "@/integrations/supabase/types";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import { fetchAllByKeyset, fetchAllByRange, PG_PAGE } from "@/lib/pg-paginate.server";
+import { recontarEscolasMunicipais } from "@/lib/catalog-consolidate.server";
 
 // Mapeamento das colunas agregadas do Censo Escolar (Tabela_Matricula) para etapas internas.
 // Fonte: dicionário oficial INEP - Censo Escolar (arquivo Matricula por escola).
