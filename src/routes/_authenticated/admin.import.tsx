@@ -250,7 +250,22 @@ function AdminImportPage() {
             </Button>
           </CardContent>
         </Card>
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base">Reconsolidar escolas por município</CardTitle>
+            <CardDescription>
+              Reaplica a contagem de escolas municipais ativas usando as escolas já gravadas no banco — sem reenviar o arquivo do Censo.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={reconsolidar} disabled={reconsLoading} variant="outline" className="w-full">
+              {reconsLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle className="w-4 h-4 mr-2" />}
+              Reconsolidar escolas
+            </Button>
+          </CardContent>
+        </Card>
       </div>
+
 
       <Card>
         <CardHeader>
