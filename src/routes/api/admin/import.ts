@@ -784,16 +784,17 @@ function mapFundebEtapa(tipoEducacao: string, tipoEnsino: string, tipoTurma: str
 
 async function loadMunicipioNameMap(supabaseAdmin: any, send: any): Promise<Map<string, number>> {
   const map = new Map<string, number>();
-  const pageSize = 2000;
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabaseAdmin
-      .from("municipios")
-      .select("ibge_id, nome, uf")
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`municipios: ${error.message}`);
-    if (!data || data.length === 0) break;
-    for (const row of data) map.set(`${row.uf.toUpperCase()}|${normalizeMunName(row.nome)}`, row.ibge_id);
-    if (data.length < pageSize) break;
+  const rows = await fetchAllByRange<{ ibge_id: number; nome: string; uf: string }>(
+    (from, to) => supabaseAdmin.from("municipios").select("ibge_id, nome, uf").order("ibge_id", { ascending: true }).range(from, to),
+    "municipios",
+  );
+  for (const row of rows) map.set(`${row.uf.toUpperCase()}|${normalizeMunName(row.nome)}`, row.ibge_id);
+  // Guarda de sanidade: o Brasil tem 5.570 municípios. Se o catálogo veio
+  // truncado, cruzar agora gravaria dados parciais e mascararia o problema.
+  if (map.size < 5000) {
+    throw new Error(
+      `Catálogo de municípios carregado incompleto (${map.size.toLocaleString("pt-BR")} de ~5.570). Importação abortada para não gravar dados parciais.`,
+    );
   }
   await send({ type: "progress", message: `Catálogo carregado: ${map.size.toLocaleString("pt-BR")} municípios para cruzamento por UF + nome.` });
   return map;
