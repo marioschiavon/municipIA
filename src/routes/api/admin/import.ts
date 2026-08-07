@@ -273,37 +273,8 @@ async function loadInepEscolaMap(supabaseAdmin: any, send: any): Promise<Map<num
   return map;
 }
 
-// Reconta escolas municipais ativas por município direto do banco (não do que
-// esta requisição viu) — necessário porque, com upload em lotes, um único
-// request só enxerga uma fatia do arquivo; a contagem definitiva só pode vir
-// de uma varredura completa do que já foi gravado em `inep_escolas`.
-export async function recontarEscolasMunicipais(supabaseAdmin: any, ano: number, send: any): Promise<Map<number, number>> {
-  const counts = new Map<number, number>();
-  const rows = await fetchAllByKeyset<{ co_entidade: number; ibge_id: number }>(
-    (after) => {
-      let q = supabaseAdmin
-        .from("inep_escolas")
-        .select("co_entidade, ibge_id")
-        .eq("ano", ano)
-        .eq("tp_dependencia", 3)
-        .eq("tp_situacao", 1)
-        .order("co_entidade", { ascending: true })
-        .limit(PG_PAGE);
-      if (after !== null) q = q.gt("co_entidade", after);
-      return q;
-    },
-    (r) => Number(r.co_entidade),
-    "inep_escolas/recontagem",
-    async (loaded) => {
-      if (loaded % 50000 === 0) {
-        await send({ type: "progress", message: `↳ recontagem: ${loaded.toLocaleString("pt-BR")} escolas municipais ativas lidas...` });
-      }
-    },
-  );
-  for (const r of rows) counts.set(Number(r.ibge_id), (counts.get(Number(r.ibge_id)) ?? 0) + 1);
-  await send({ type: "progress", message: `Recontagem completa: ${rows.length.toLocaleString("pt-BR")} escolas · ${counts.size.toLocaleString("pt-BR")} municípios com rede municipal ativa.` });
-  return counts;
-}
+// Recontagem definitiva por município vive em catalog-consolidate.server.ts
+// (reutilizada pelo botão "Reconsolidar escolas" do painel admin).
 
 async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmin: any, send: any, isLastChunk: boolean) {
   const src = createLineSource(body);
