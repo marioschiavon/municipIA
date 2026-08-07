@@ -194,6 +194,23 @@ function AdminImportPage() {
     }
   }
 
+  async function reconsolidar() {
+    setReconsLoading(true);
+    setLogs((prev) => [...prev, "[ESCOLAS] Reconsolidando contagem de escolas a partir do que já está no banco..."]);
+    try {
+      const r = await reconsFn({ data: {} });
+      setLogs((prev) => [
+        ...prev,
+        `[ESCOLAS] OK (ano ${r.ano}): ${r.totalEscolas.toLocaleString("pt-BR")} escolas municipais ativas em ${r.municipios.toLocaleString("pt-BR")} municípios · ${r.updated.toLocaleString("pt-BR")} atualizados · ${r.notFound.toLocaleString("pt-BR")} sem correspondência no catálogo.`,
+      ]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setLogs((prev) => [...prev, `[ESCOLAS] ERRO: ${msg}`]);
+    } finally {
+      setReconsLoading(false);
+    }
+  }
+
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
