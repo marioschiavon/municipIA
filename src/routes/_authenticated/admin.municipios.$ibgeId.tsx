@@ -95,7 +95,7 @@ function AdminEditMunicipio() {
 
   // ===== Prospecção ao vivo (Firecrawl ou Apify, completa ou por fase) — só admin, sempre salva =====
   const [prospRunning, setProspRunning] = useState(false);
-  const [activeButton, setActiveButton] = useState<"atualizar" | "apify" | ProspectFase | null>(null);
+  const [activeButton, setActiveButton] = useState<"atualizar" | ProspectFase | null>(null);
   const [prospEvents, setProspEvents] = useState<ProgressEvent[]>([]);
   const prospAbortRef = useRef<AbortController | null>(null);
 
@@ -218,9 +218,6 @@ function AdminEditMunicipio() {
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" onClick={() => rodarProspeccao({ fase: "completo", button: "atualizar" })} disabled={prospRunning}>
               {prospRunning && activeButton === "atualizar" ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Buscando…</> : <><RefreshCw className="mr-1.5 h-4 w-4" /> Atualizar agora</>}
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => rodarProspeccao({ provider: "apify", fase: "completo", button: "apify" })} disabled={prospRunning} title="Roda a mesma busca só com Apify — salva no catálogo igual, pra comparar o resultado real">
-              {prospRunning && activeButton === "apify" ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Testando…</> : "Testar com Apify"}
             </Button>
             <span className="mx-1 h-5 w-px bg-border" />
             <Button size="sm" variant="ghost" onClick={() => rodarProspeccao({ fase: "dominio", button: "dominio" })} disabled={prospRunning} title="Roda só a Fase 1 (descobrir domínio oficial)">
