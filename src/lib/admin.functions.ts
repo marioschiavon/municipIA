@@ -953,16 +953,29 @@ export const adminRecalcularScores = createServerFn({ method: "POST" })
     await assertAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { calcularScore, contarCampos } = await import("./catalog-score");
+    const { fetchAllByRange } = await import("./pg-paginate.server");
 
-    const { data: munis, error: mErr } = await supabaseAdmin
-      .from("municipios")
-      .select("ibge_id, populacao, matriculas_total, fnde_anual");
-    if (mErr) throw new Error(mErr.message);
+    // A Data API devolve no máximo 1.000 linhas por request — paginar é
+    // obrigatório, senão só os primeiros 1.000 municípios recebem score.
+    const munis = await fetchAllByRange<any>(
+      (from, to) =>
+        supabaseAdmin
+          .from("municipios")
+          .select("ibge_id, populacao, matriculas_total, fnde_anual")
+          .order("ibge_id", { ascending: true })
+          .range(from, to),
+      "municipios",
+    );
 
-    const { data: edus, error: eErr } = await supabaseAdmin
-      .from("municipios_educacao")
-      .select("ibge_id, secretario, cargo, emails, telefones, horario, equipe, atualizado_em");
-    if (eErr) throw new Error(eErr.message);
+    const edus = await fetchAllByRange<any>(
+      (from, to) =>
+        supabaseAdmin
+          .from("municipios_educacao")
+          .select("ibge_id, secretario, cargo, emails, telefones, horario, equipe, atualizado_em")
+          .order("ibge_id", { ascending: true })
+          .range(from, to),
+      "municipios_educacao",
+    );
 
     const eduMap = new Map((edus ?? []).map((e: any) => [e.ibge_id, e]));
     const faixas = { alto: 0, medio: 0, baixo: 0 };
