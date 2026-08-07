@@ -1025,3 +1025,33 @@ export const adminRecalcularScores = createServerFn({ method: "POST" })
     }
     return { total: processed, faixas };
   });
+
+// ============ RECONSOLIDAR ESCOLAS (a partir do que já está no banco) ============
+// Reaplica a contagem de escolas municipais ativas por município usando as
+// linhas já gravadas em `inep_escolas` — sem precisar reenviar o arquivo do
+// Censo (200k+ linhas). Necessário porque importações antigas gravaram as
+// escolas, mas a consolidação por município saiu truncada.
+export const adminReconsolidarEscolas = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { ano?: number } | undefined) => input ?? {})
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { recontarEscolasMunicipais, aplicarContagemEscolas } = await import("./catalog-consolidate.server");
+
+    let ano = data.ano;
+    if (!ano) {
+      const { data: recente } = await supabaseAdmin
+        .from("inep_escolas")
+        .select("ano")
+        .order("ano", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      ano = (recente as any)?.ano ?? new Date().getFullYear();
+    }
+
+    const counts = await recontarEscolasMunicipais(supabaseAdmin, ano!);
+    const totalEscolas = Array.from(counts.values()).reduce((a, b) => a + b, 0);
+    const { updated, notFound } = await aplicarContagemEscolas(supabaseAdmin, counts);
+    return { ano: ano!, municipios: counts.size, totalEscolas, updated, notFound };
+  });
