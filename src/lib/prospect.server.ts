@@ -267,8 +267,73 @@ async function openaiSearch(
   return cands;
 }
 
-/** Google SERP Scraper do Apify — fallback quando Firecrawl trunca/empobrece snippets.
- * Se o Apify falhar por cota/crédito/token, refaz a busca pela OpenAI. */
+
+/** Último elo da cadeia de busca: Gemini (Lovable AI Gateway). Não tem acesso à
+ * web — responde com URLs prováveis a partir do conhecimento do modelo, então o
+ * resultado vale só como pista (sempre acaba marcado para revisão). */
+async function geminiSearch(
+  query: string,
+  emit: Emit,
+  etapa: EtapaTag,
+  opts: { limit?: number; uf?: string } = {},
+): Promise<SearchCandidate[]> {
+  const key = process.env.LOVABLE_API_KEY;
+  if (!key) {
+    emit("warn", etapa, "Gemini indisponível (LOVABLE_API_KEY ausente)");
+    return [];
+  }
+  emit("info", etapa, `Gemini (Lovable AI) sugerindo fontes para: "${query}"`);
+  try {
+    const { createLovableAiGatewayProvider, LOVABLE_DEFAULT_MODEL } = await import("./ai-gateway.server");
+    const model = createLovableAiGatewayProvider(key)(LOVABLE_DEFAULT_MODEL);
+    const { object } = await generateObject({
+      model,
+      schema: z.object({
+        resultados: z.array(
+          z.object({
+            url: z.string(),
+            titulo: z.string(),
+            resumo: z.string(),
+          }),
+        ),
+      }),
+      prompt: `Liste até ${opts.limit ?? 5} URLs oficiais brasileiras (preferência .gov.br) que provavelmente respondem a esta busca: "${query}".
+Só inclua endereços que você tem alta certeza de que existem. Se não tiver certeza, devolva lista vazia.
+Responda apenas com JSON válido no schema.`,
+    });
+    const ufLow = opts.uf?.toLowerCase();
+    const cands: SearchCandidate[] = (object.resultados ?? [])
+      .filter((r) => /^https?:\/\//i.test(r.url))
+      .filter((r) => !isBlockedHost(r.url) && (!ufLow || !govUf(r.url) || govUf(r.url) === ufLow))
+      .map((r) => ({ url: r.url, title: r.titulo, description: r.resumo, markdown: null }));
+    emit(
+      cands.length > 0 ? "info" : "warn",
+      etapa,
+      `Gemini sugeriu ${cands.length} fonte(s) (baixa confiança — sem busca real na web)`,
+      { candidatos: cands.slice(0, 5).map((c) => c.url) },
+    );
+    return cands;
+  } catch (e) {
+    emit("warn", etapa, "Gemini falhou ao sugerir fontes", String(e));
+    return [];
+  }
+}
+
+/** Cascata de fallback quando o Apify não entrega: OpenAI → Gemini. */
+async function fallbackSearch(
+  query: string,
+  emit: Emit,
+  etapa: EtapaTag,
+  opts: { limit?: number; timeoutMs?: number; uf?: string } = {},
+): Promise<SearchCandidate[]> {
+  const viaOpenai = await openaiSearch(query, emit, etapa, opts);
+  if (viaOpenai.length > 0) return viaOpenai;
+  emit("warn", etapa, "OpenAI não trouxe resultados — última tentativa pelo Gemini");
+  return geminiSearch(query, emit, etapa, { limit: opts.limit, uf: opts.uf });
+}
+
+/** Google SERP Scraper do Apify — motor principal de busca.
+ * Se falhar ou vier vazio, cai para OpenAI (web_search) e, por último, Gemini. */
 async function apifySearch(
   query: string,
   emit: Emit,
@@ -282,9 +347,9 @@ async function apifySearch(
     emit("warn", etapa, `Apify SERP indisponível (${r.reason})`);
     if (QUOTA_RE.test(r.reason) || /APIFY_TOKEN|monthly usage|usage limit/i.test(r.reason)) {
       emit("warn", etapa, "Apify sem cota/crédito — refazendo a busca pela OpenAI");
-      return openaiSearch(query, emit, etapa, opts);
+      return fallbackSearch(query, emit, etapa, opts);
     }
-    return [];
+    return fallbackSearch(query, emit, etapa, opts);
   }
   const ufLow = opts.uf?.toLowerCase();
   const cands: SearchCandidate[] = r.pages
@@ -303,7 +368,7 @@ async function apifySearch(
   });
   if (cands.length === 0) {
     emit("warn", etapa, "Apify retornou SERP vazio — tentando OpenAI web search");
-    return openaiSearch(query, emit, etapa, opts);
+    return fallbackSearch(query, emit, etapa, opts);
   }
   return cands;
 }
