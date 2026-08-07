@@ -953,16 +953,29 @@ export const adminRecalcularScores = createServerFn({ method: "POST" })
     await assertAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { calcularScore, contarCampos } = await import("./catalog-score");
+    const { fetchAllByRange } = await import("./pg-paginate.server");
 
-    const { data: munis, error: mErr } = await supabaseAdmin
-      .from("municipios")
-      .select("ibge_id, populacao, matriculas_total, fnde_anual");
-    if (mErr) throw new Error(mErr.message);
+    // A Data API devolve no máximo 1.000 linhas por request — paginar é
+    // obrigatório, senão só os primeiros 1.000 municípios recebem score.
+    const munis = await fetchAllByRange<any>(
+      (from, to) =>
+        supabaseAdmin
+          .from("municipios")
+          .select("ibge_id, populacao, matriculas_total, fnde_anual")
+          .order("ibge_id", { ascending: true })
+          .range(from, to),
+      "municipios",
+    );
 
-    const { data: edus, error: eErr } = await supabaseAdmin
-      .from("municipios_educacao")
-      .select("ibge_id, secretario, cargo, emails, telefones, horario, equipe, atualizado_em");
-    if (eErr) throw new Error(eErr.message);
+    const edus = await fetchAllByRange<any>(
+      (from, to) =>
+        supabaseAdmin
+          .from("municipios_educacao")
+          .select("ibge_id, secretario, cargo, emails, telefones, horario, equipe, atualizado_em")
+          .order("ibge_id", { ascending: true })
+          .range(from, to),
+      "municipios_educacao",
+    );
 
     const eduMap = new Map((edus ?? []).map((e: any) => [e.ibge_id, e]));
     const faixas = { alto: 0, medio: 0, baixo: 0 };
@@ -1011,4 +1024,34 @@ export const adminRecalcularScores = createServerFn({ method: "POST" })
       processed += updates.length;
     }
     return { total: processed, faixas };
+  });
+
+// ============ RECONSOLIDAR ESCOLAS (a partir do que já está no banco) ============
+// Reaplica a contagem de escolas municipais ativas por município usando as
+// linhas já gravadas em `inep_escolas` — sem precisar reenviar o arquivo do
+// Censo (200k+ linhas). Necessário porque importações antigas gravaram as
+// escolas, mas a consolidação por município saiu truncada.
+export const adminReconsolidarEscolas = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { ano?: number } | undefined) => input ?? {})
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { recontarEscolasMunicipais, aplicarContagemEscolas } = await import("./catalog-consolidate.server");
+
+    let ano = data.ano;
+    if (!ano) {
+      const { data: recente } = await supabaseAdmin
+        .from("inep_escolas")
+        .select("ano")
+        .order("ano", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      ano = (recente as any)?.ano ?? new Date().getFullYear();
+    }
+
+    const counts = await recontarEscolasMunicipais(supabaseAdmin, ano!);
+    const totalEscolas = Array.from(counts.values()).reduce((a, b) => a + b, 0);
+    const { updated, notFound } = await aplicarContagemEscolas(supabaseAdmin, counts);
+    return { ano: ano!, municipios: counts.size, totalEscolas, updated, notFound };
   });

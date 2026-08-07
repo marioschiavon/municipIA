@@ -3,6 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
+import { fetchAllByKeyset, fetchAllByRange, PG_PAGE } from "@/lib/pg-paginate.server";
+import { recontarEscolasMunicipais } from "@/lib/catalog-consolidate.server";
 
 // Mapeamento das colunas agregadas do Censo Escolar (Tabela_Matricula) para etapas internas.
 // Fonte: dicionário oficial INEP - Censo Escolar (arquivo Matricula por escola).
@@ -241,64 +243,39 @@ type InepEscolaMapRow = {
 
 async function loadInepEscolaMap(supabaseAdmin: any, send: any): Promise<Map<number, InepEscolaMapRow>> {
   const map = new Map<number, InepEscolaMapRow>();
-  const pageSize = 10000;
-  let from = 0;
 
   await send({
     type: "progress",
     message: "Carregando mapa Escola → Município importado anteriormente (tabela INEP — Escolas)...",
   });
 
-  while (true) {
-    const { data, error } = await supabaseAdmin
-      .from("inep_escolas")
-      .select("co_entidade, ibge_id, tp_dependencia, tp_situacao")
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`inep_escolas/mapa: ${error.message}`);
-
-    const rows = (data ?? []) as InepEscolaMapRow[];
-    for (const row of rows) {
-      if (row.co_entidade && row.ibge_id) map.set(Number(row.co_entidade), row);
-    }
-
-    if (from === 0 || rows.length < pageSize) {
-      await send({
-        type: "progress",
-        message: `Mapa carregado: ${map.size.toLocaleString("pt-BR")} escolas disponíveis para cruzamento.`,
-      });
-    }
-    if (rows.length < pageSize) break;
-    from += pageSize;
+  const rows = await fetchAllByKeyset<InepEscolaMapRow>(
+    (after) => {
+      let q = supabaseAdmin
+        .from("inep_escolas")
+        .select("co_entidade, ibge_id, tp_dependencia, tp_situacao")
+        .order("co_entidade", { ascending: true })
+        .limit(PG_PAGE);
+      if (after !== null) q = q.gt("co_entidade", after);
+      return q;
+    },
+    (r) => Number(r.co_entidade),
+    "inep_escolas/mapa",
+  );
+  for (const row of rows) {
+    if (row.co_entidade && row.ibge_id) map.set(Number(row.co_entidade), row);
   }
+
+  await send({
+    type: "progress",
+    message: `Mapa carregado: ${map.size.toLocaleString("pt-BR")} escolas disponíveis para cruzamento.`,
+  });
 
   return map;
 }
 
-// Reconta escolas municipais ativas por município direto do banco (não do que
-// esta requisição viu) — necessário porque, com upload em lotes, um único
-// request só enxerga uma fatia do arquivo; a contagem definitiva só pode vir
-// de uma varredura completa do que já foi gravado em `inep_escolas`.
-async function recontarEscolasMunicipais(supabaseAdmin: any, ano: number, send: any): Promise<Map<number, number>> {
-  const counts = new Map<number, number>();
-  const pageSize = 10000;
-  let from = 0;
-  for (;;) {
-    const { data, error } = await supabaseAdmin
-      .from("inep_escolas")
-      .select("ibge_id")
-      .eq("ano", ano)
-      .eq("tp_dependencia", 3)
-      .eq("tp_situacao", 1)
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`inep_escolas/recontagem: ${error.message}`);
-    const rows = (data ?? []) as { ibge_id: number }[];
-    for (const r of rows) counts.set(r.ibge_id, (counts.get(r.ibge_id) ?? 0) + 1);
-    if (rows.length < pageSize) break;
-    from += pageSize;
-  }
-  await send({ type: "progress", message: `Recontagem completa: ${counts.size.toLocaleString("pt-BR")} municípios com rede municipal ativa.` });
-  return counts;
-}
+// Recontagem definitiva por município vive em catalog-consolidate.server.ts
+// (reutilizada pelo botão "Reconsolidar escolas" do painel admin).
 
 async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmin: any, send: any, isLastChunk: boolean) {
   const src = createLineSource(body);
@@ -478,7 +455,7 @@ async function processInepEscolas(body: ReadableStream<Uint8Array>, supabaseAdmi
   // Contagem definitiva por município — varre o banco (não o que este lote
   // viu), pois com upload em lotes cada request só enxerga uma fatia do arquivo.
   const municipais = await recontarEscolasMunicipais(supabaseAdmin, ano, send);
-  const entries = Array.from(municipais.entries());
+  const entries: [number, number][] = Array.from(municipais.entries());
   const updated = await aplicarContagens(entries);
   const amostra = entries.slice(0, 3).map(([ibge, c]) => `${ibge}=${c}`).join(", ");
   await send({
@@ -779,16 +756,17 @@ function mapFundebEtapa(tipoEducacao: string, tipoEnsino: string, tipoTurma: str
 
 async function loadMunicipioNameMap(supabaseAdmin: any, send: any): Promise<Map<string, number>> {
   const map = new Map<string, number>();
-  const pageSize = 2000;
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabaseAdmin
-      .from("municipios")
-      .select("ibge_id, nome, uf")
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`municipios: ${error.message}`);
-    if (!data || data.length === 0) break;
-    for (const row of data) map.set(`${row.uf.toUpperCase()}|${normalizeMunName(row.nome)}`, row.ibge_id);
-    if (data.length < pageSize) break;
+  const rows = await fetchAllByRange<{ ibge_id: number; nome: string; uf: string }>(
+    (from, to) => supabaseAdmin.from("municipios").select("ibge_id, nome, uf").order("ibge_id", { ascending: true }).range(from, to),
+    "municipios",
+  );
+  for (const row of rows) map.set(`${row.uf.toUpperCase()}|${normalizeMunName(row.nome)}`, row.ibge_id);
+  // Guarda de sanidade: o Brasil tem 5.570 municípios. Se o catálogo veio
+  // truncado, cruzar agora gravaria dados parciais e mascararia o problema.
+  if (map.size < 5000) {
+    throw new Error(
+      `Catálogo de municípios carregado incompleto (${map.size.toLocaleString("pt-BR")} de ~5.570). Importação abortada para não gravar dados parciais.`,
+    );
   }
   await send({ type: "progress", message: `Catálogo carregado: ${map.size.toLocaleString("pt-BR")} municípios para cruzamento por UF + nome.` });
   return map;
