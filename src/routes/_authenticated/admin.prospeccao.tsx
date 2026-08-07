@@ -106,7 +106,6 @@ function AdminProspeccao() {
   const [fase, setFase] = useState<FaseIsolada>("dominio");
   const [uf, setUf] = useState("all");
   const [loteSize, setLoteSize] = useState(500);
-  const [provider, setProvider] = useState<"apify" | "firecrawl">("apify");
   const [modo, setModo] = useState<"continuar" | "repescagem">("continuar");
   const [revisoes, setRevisoes] = useState<RevisaoItem[]>([]);
   // Municípios já tratados manualmente (chave `ibge:fase`). Sem isso, o efeito
@@ -162,7 +161,7 @@ function AdminProspeccao() {
         inicio: `${primeiro.nome}/${primeiro.uf}`,
         fim: `${ultimo.nome}/${ultimo.uf}`,
       });
-      await queue.iniciar(items, fase, provider, () => {
+      await queue.iniciar(items, fase, () => {
         qc.invalidateQueries({ queryKey: ["admin-prospeccao-count"] });
         qc.invalidateQueries({ queryKey: ["admin-prospeccao-ciclo"] });
         qc.invalidateQueries({ queryKey: ["admin-municipios"] });
@@ -239,22 +238,6 @@ function AdminProspeccao() {
             ))}
           </SelectContent>
         </Select>
-        <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">Provedor de busca</label>
-          <Select
-            value={provider}
-            onValueChange={(v) => setProvider(v as "apify" | "firecrawl")}
-            disabled={queue.running}
-          >
-            <SelectTrigger className="w-[130px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="apify">Apify</SelectItem>
-              <SelectItem value="firecrawl">Firecrawl</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
         <div className="space-y-1">
           <label className="text-xs text-muted-foreground">Tamanho do lote</label>
           <Input

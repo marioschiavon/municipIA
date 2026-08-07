@@ -32,7 +32,6 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 async function processarUm(
   m: QueueMunicipio,
   fase: ProspectFase,
-  provider: "firecrawl" | "apify",
   signal: AbortSignal,
 ): Promise<QueueLogEntry> {
   try {
@@ -42,7 +41,7 @@ async function processarUm(
     const res = await fetch("/api/prospect", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ municipio: m.nome, uf: m.uf, ibgeId: m.ibge_id, fase, provider }),
+      body: JSON.stringify({ municipio: m.nome, uf: m.uf, ibgeId: m.ibge_id, fase }),
       signal,
     });
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -112,7 +111,6 @@ export function useProspectQueue(intervalMs: number) {
   async function iniciar(
     items: QueueMunicipio[],
     fase: ProspectFase,
-    provider: "firecrawl" | "apify" = "apify",
     onDone?: () => void,
   ) {
     if (items.length === 0) return;
@@ -127,7 +125,7 @@ export function useProspectQueue(intervalMs: number) {
         if (controller.signal.aborted) break;
         const m = items[i];
         setCurrent(m);
-        const entry = await processarUm(m, fase, provider, controller.signal);
+        const entry = await processarUm(m, fase, controller.signal);
         setLog((prev) => [entry, ...prev].slice(0, 300));
         setDone((d) => d + 1);
         if (i < items.length - 1) {

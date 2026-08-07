@@ -151,7 +151,7 @@ function AdminMunicipios() {
       const { items } = await listIdsFn({
         data: { uf: filters.uf, status: filters.status, q: filters.q },
       });
-      await queue.iniciar(items, "completo", "apify", () => {
+      await queue.iniciar(items, "completo", () => {
         qc.invalidateQueries({ queryKey: ["admin-municipios"] });
       });
     } finally {

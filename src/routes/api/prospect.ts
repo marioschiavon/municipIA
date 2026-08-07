@@ -5,7 +5,6 @@ const Input = z.object({
   municipio: z.string().min(1),
   uf: z.string().length(2),
   ibgeId: z.number().int().positive().optional(),
-  provider: z.enum(["firecrawl", "apify"]).optional(),
   fase: z.enum(["completo", "dominio", "secretario", "contato"]).default("completo"),
 });
 
@@ -35,7 +34,7 @@ export const Route = createFileRoute("/api/prospect")({
           });
         }
 
-        const { municipio, uf, ibgeId, provider, fase } = parsed.data;
+        const { municipio, uf, ibgeId, fase } = parsed.data;
 
         // Se já sabemos o domínio oficial confirmado deste município (de uma run
         // anterior ou de edição manual do admin), o pipeline usa ele com
@@ -86,7 +85,7 @@ export const Route = createFileRoute("/api/prospect")({
             try {
               let result;
               if (fase === "dominio") {
-                result = await prospectarDominio(municipio, uf, (evt) => send(evt), provider ?? "apify");
+                result = await prospectarDominio(municipio, uf, (evt) => send(evt));
                 send({ kind: "final", result, ts: Date.now() });
               } else if (fase === "secretario") {
                 result = await prospectarSecretario(municipio, uf, dominioConfirmado!, (evt) => send(evt));
@@ -96,7 +95,7 @@ export const Route = createFileRoute("/api/prospect")({
                 send({ kind: "final", result, ts: Date.now() });
               } else {
                 // prospectar() já emite seu próprio evento "kind: final" internamente (sendFinal).
-                result = await prospectar(municipio, uf, (evt) => send(evt), ibgeId, provider ?? "apify", dominioConfirmado, paginaEducacaoConhecida);
+                result = await prospectar(municipio, uf, (evt) => send(evt), ibgeId, dominioConfirmado, paginaEducacaoConhecida);
               }
               // Persistir se temos ibgeId
               if (ibgeId && result) {
