@@ -31,16 +31,40 @@ const ConfiancaLoose = z
 
 // Membro da equipe (coordenador, diretor, assessor, chefe de gabinete, etc.).
 const EquipeSchema = z
-  .array(
+  .preprocess((v) => {
+    // A IA às vezes devolve string ("Fulano — Diretor"), objeto solto, ou itens
+    // sem nome. Normalizamos antes de validar para não estourar o schema.
+    const arr = Array.isArray(v) ? v : v == null ? [] : [v];
+    return arr
+      .map((item) => {
+        if (typeof item === "string") {
+          const [nome, cargo] = item.split(/\s+[—–-]\s+/);
+          return { nome: nome?.trim(), cargo: cargo?.trim() ?? null };
+        }
+        if (item && typeof item === "object") {
+          const o = item as Record<string, unknown>;
+          const nome = o.nome ?? o.name ?? o.pessoa;
+          return {
+            nome: typeof nome === "string" ? nome.trim() : undefined,
+            cargo: typeof o.cargo === "string" ? o.cargo : ((o.funcao as string) ?? null),
+            email: typeof o.email === "string" ? o.email : null,
+            telefone: typeof o.telefone === "string" ? o.telefone : null,
+          };
+        }
+        return null;
+      })
+      .filter((m): m is { nome: string; cargo: string | null } => !!m && !!m.nome);
+  }, z.array(
     z.object({
       nome: z.string(),
       cargo: z.string().nullable().optional().default(null),
       email: z.string().nullable().optional().default(null),
       telefone: z.string().nullable().optional().default(null),
     }),
-  )
+  ))
   .optional()
   .default([]);
+
 
 // Schema completo — usado nos estágios 2/3/4 (contato).
 const ExtractSchema = z.object({
