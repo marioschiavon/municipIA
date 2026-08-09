@@ -97,6 +97,48 @@ const NomeSchema = z.object({
   equipe: EquipeSchema,
 });
 
+/**
+ * Wrapper resiliente do generateObject.
+ *
+ * Quando o modelo devolve JSON válido mas fora do schema (campo extra, array em
+ * vez de objeto, texto solto, cerca ```json), o AI SDK estoura
+ * AI_NoObjectGeneratedError e a extração inteira era perdida. Aqui recuperamos o
+ * texto cru (`error.text`), extraímos o primeiro bloco JSON e revalidamos com o
+ * mesmo schema — que já é tolerante (campos opcionais + defaults). Só falha de
+ * verdade se nem assim der para aproveitar.
+ */
+async function generateObjectResiliente<T extends z.ZodTypeAny>(
+  args: Parameters<typeof generateObject>[0] & { schema: T },
+): Promise<z.infer<T>> {
+  try {
+    const { object } = await generateObject(args as never);
+    return object as z.infer<T>;
+  } catch (e) {
+    const texto = (e as { text?: string })?.text;
+    if (typeof texto === "string" && texto.trim()) {
+      const limpo = texto
+        .replace(/^\s*```(?:json)?/i, "")
+        .replace(/```\s*$/, "")
+        .trim();
+      const inicio = limpo.search(/[[{]/);
+      if (inicio >= 0) {
+        const fim = Math.max(limpo.lastIndexOf("}"), limpo.lastIndexOf("]"));
+        try {
+          const bruto = JSON.parse(limpo.slice(inicio, fim + 1)) as unknown;
+          const alvo = Array.isArray(bruto) ? { equipe: bruto } : bruto;
+          const parsed = (args.schema as z.ZodTypeAny).safeParse(alvo);
+          if (parsed.success) return parsed.data as z.infer<T>;
+        } catch {
+          // segue para o throw abaixo
+        }
+      }
+    }
+    throw e;
+  }
+}
+
+
+
 type Extracted = {
   secretario: string | null;
   cargo: string | null;
