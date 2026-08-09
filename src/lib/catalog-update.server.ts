@@ -181,6 +181,15 @@ async function persistFaseIsolada(
   let telefones: string[] = existente?.telefones ?? [];
   let equipe = existente?.equipe ?? [];
 
+  // A equipe pode aparecer em QUALQUER fase (o SERP/scrape costuma trazer a
+  // lista de coordenadores junto). Em vez de sobrescrever, mesclamos sempre —
+  // nunca apagamos a equipe já gravada quando a fase atual não trouxe nada.
+  const equipeMesclada = mergeEquipe(equipe, result.equipe);
+  if (equipeMesclada !== equipe) {
+    equipe = equipeMesclada;
+    patch.equipe = equipe;
+  }
+
   if (fase === "dominio") {
     if (result.dominioOficialConfirmado) {
       patch.dominio_oficial = result.dominioOficialConfirmado;
@@ -190,10 +199,8 @@ async function persistFaseIsolada(
   } else if (fase === "secretario") {
     secretario = result.secretario;
     cargo = result.cargo;
-    equipe = (result.equipe ?? []).map((e) => ({ nome: e.nome, cargo: e.cargo ?? "", email: e.email ?? null, telefone: e.telefone ?? null }));
     patch.secretario = secretario;
     patch.cargo = cargo;
-    patch.equipe = equipe;
     patch.secretario_confirmado_em = now;
   } else {
     emails = result.emails ?? [];
