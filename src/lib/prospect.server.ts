@@ -2,7 +2,7 @@
 // 1) Fecha o NOME atual.  2) Busca contato vinculado ao nome.
 // 3) Busca contato institucional da Secretaria (inclui Câmara Municipal).
 // 4) Fallback geral → gabinete.
-import { generateObject } from "ai";
+import { generateObject, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
 import { getExtractionModel } from "./ai-gateway.server";
 import { fetchHtml, htmlToMarkdown, extractContactsRegex } from "./scraper.server";
@@ -882,6 +882,14 @@ Responda APENAS com JSON válido seguindo o schema.`;
     );
     return out;
   } catch (e) {
+    if (NoObjectGeneratedError.isInstance(e)) {
+      emit(
+        "warn",
+        "nome",
+        "A resposta da IA não continha um nome aproveitável — seguindo para a próxima fonte",
+      );
+      return null;
+    }
     emit("error", "nome", "IA falhou ao extrair nome", String(e));
     return null;
   }
