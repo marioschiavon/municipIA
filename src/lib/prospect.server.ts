@@ -360,7 +360,7 @@ async function geminiSearch(
   try {
     const { createLovableAiGatewayProvider, LOVABLE_DEFAULT_MODEL } = await import("./ai-gateway.server");
     const model = createLovableAiGatewayProvider(key)(LOVABLE_DEFAULT_MODEL);
-    const { object } = await generateObject({
+    const object = await generateObjectResiliente({
       model,
       schema: z.object({
         resultados: z.array(
@@ -800,7 +800,7 @@ ${conteudo}
 Responda APENAS com JSON válido seguindo o schema.`;
   emit("info", "nome", "IA extraindo NOME atual (sem contatos)...");
   try {
-    const { object } = await generateObject({
+    const object = await generateObjectResiliente({
       model: ai.model,
       schema: NomeSchema,
       prompt,
@@ -896,7 +896,7 @@ ${conteudo}
 Responda APENAS com JSON válido seguindo o schema.`;
   emit("info", etapa, `IA ${modo === "snippets" ? "(snippets)" : "(página)"} extraindo contatos${nomeAlvo ? ` de "${nomeAlvo}"` : ""}...`, { pistas: hints });
   try {
-    const { object } = await generateObject({
+    const object = await generateObjectResiliente({
       model: ai.model,
       schema: ExtractSchema,
       prompt,
@@ -984,7 +984,7 @@ ${conteudo}
 
 Responda APENAS com JSON válido seguindo o schema.`;
   try {
-    const { object } = await generateObject({
+    const object = await generateObjectResiliente({
       model: ai.model,
       schema: EnrichSchema,
       prompt,
