@@ -22,6 +22,45 @@ function mergeRevisaoMotivos(
   return novoMotivo ? [...semFase, novoMotivo] : semFase;
 }
 
+type EquipeMembro = { nome: string; cargo: string; email: string | null; telefone: string | null };
+
+const normNome = (n: string) =>
+  n.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+
+/**
+ * Mescla a equipe já gravada com a encontrada agora: não apaga ninguém,
+ * deduplica por nome e enriquece cargo/e-mail/telefone quando faltavam.
+ * Retorna a MESMA referência quando nada muda (evita UPDATE desnecessário).
+ */
+function mergeEquipe(
+  atual: EquipeMembro[],
+  nova: ProspectResult["equipe"],
+): EquipeMembro[] {
+  if (!nova || nova.length === 0) return atual;
+  const out: EquipeMembro[] = (atual ?? []).map((m) => ({ ...m }));
+  const idx = new Map(out.map((m, i) => [normNome(m.nome ?? ""), i]));
+  let mudou = false;
+
+  for (const e of nova) {
+    const nome = (e.nome ?? "").trim();
+    if (!nome) continue;
+    const key = normNome(nome);
+    const at = idx.get(key);
+    if (at === undefined) {
+      out.push({ nome, cargo: e.cargo ?? "", email: e.email ?? null, telefone: e.telefone ?? null });
+      idx.set(key, out.length - 1);
+      mudou = true;
+      continue;
+    }
+    const cur = out[at];
+    if (!cur.cargo && e.cargo) { cur.cargo = e.cargo; mudou = true; }
+    if (!cur.email && e.email) { cur.email = e.email; mudou = true; }
+    if (!cur.telefone && e.telefone) { cur.telefone = e.telefone; mudou = true; }
+  }
+
+  return mudou ? out : atual;
+}
+
 /** Coluna que guarda a última tentativa de prospecção por fase (cursor do rodízio de lotes). */
 export const TENTATIVA_COL = {
   dominio: "tentativa_dominio_em",
