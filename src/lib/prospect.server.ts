@@ -140,12 +140,18 @@ async function generateObjectResiliente<T extends z.ZodTypeAny>(
 function textoOuNull(valor: unknown): string | null {
   if (typeof valor !== "string") return null;
   const texto = valor.trim();
-  if (!texto || /^(null|n\/a|não encontrado|nao encontrado|desconhecido)$/i.test(texto)) return null;
+  if (!texto || /^(null|n\/a|não encontrado|nao encontrado|desconhecido)$/i.test(texto)) {
+    return null;
+  }
   return texto;
 }
 
 function listaDeTextos(valor: unknown): string[] {
-  const itens = Array.isArray(valor) ? valor : typeof valor === "string" ? valor.split(/[;,\n]/) : [];
+  const itens = Array.isArray(valor)
+    ? valor
+    : typeof valor === "string"
+      ? valor.split(/[;,\n]/)
+      : [];
   return itens.map(textoOuNull).filter((item): item is string => item !== null);
 }
 
@@ -160,22 +166,30 @@ function normalizarRespostaEstruturada(valor: unknown): unknown {
 
   const raiz = valor as Record<string, unknown>;
   const envelope = raiz.resultado ?? raiz.result ?? raiz.data ?? raiz.output;
-  const fonte = envelope && typeof envelope === "object" && !Array.isArray(envelope)
-    ? envelope as Record<string, unknown>
-    : raiz;
+  const fonte =
+    envelope && typeof envelope === "object" && !Array.isArray(envelope)
+      ? (envelope as Record<string, unknown>)
+      : raiz;
 
   const secretarioBruto =
     fonte.secretario ?? fonte["secretário"] ?? fonte.secretaria ?? fonte.titular ?? fonte.nome;
-  const secretarioObjeto = secretarioBruto && typeof secretarioBruto === "object" && !Array.isArray(secretarioBruto)
-    ? secretarioBruto as Record<string, unknown>
-    : null;
+  const secretarioObjeto =
+    secretarioBruto && typeof secretarioBruto === "object" && !Array.isArray(secretarioBruto)
+      ? (secretarioBruto as Record<string, unknown>)
+      : null;
   const secretario = textoOuNull(
     secretarioObjeto?.nome ?? secretarioObjeto?.name ?? secretarioObjeto?.pessoa ?? secretarioBruto,
   );
   const cargo = textoOuNull(
-    fonte.cargo ?? fonte.funcao ?? fonte["função"] ?? secretarioObjeto?.cargo ?? secretarioObjeto?.funcao,
+    fonte.cargo ??
+      fonte.funcao ??
+      fonte["função"] ??
+      secretarioObjeto?.cargo ??
+      secretarioObjeto?.funcao,
   );
-  const contexto = textoOuNull(fonte.contexto ?? fonte.evidencia ?? fonte.justificativa ?? fonte.trecho);
+  const contexto = textoOuNull(
+    fonte.contexto ?? fonte.evidencia ?? fonte.justificativa ?? fonte.trecho,
+  );
   const dataReferencia = textoOuNull(
     fonte.dataReferencia ?? fonte.data_referencia ?? fonte.data ?? fonte.referencia,
   );
@@ -198,8 +212,6 @@ function normalizarRespostaEstruturada(valor: unknown): unknown {
     equipe,
   };
 }
-
-
 
 type Extracted = {
   secretario: string | null;
