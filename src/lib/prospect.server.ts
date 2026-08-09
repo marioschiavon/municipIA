@@ -1523,14 +1523,19 @@ export async function prospectar(
   // ESTÁGIO 1 — NOME ATUAL (apenas nome, sem contato)
   // ============================================================
   emit("info", "nome", "Estágio 1 — identificar NOME atual do(a) Secretário(a) de Educação");
+  // Query principal (validada manualmente: traz o site oficial + nome do titular
+  // nos snippets na maioria dos municípios testados).
+  const queryNome0 = `nome e contato do secretário(a) de educação de ${municipio} ${uf}`;
   const queryNomeA = `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual`;
   const queryNomeB = `secretário OR secretária de educação ${municipio} ${uf} ${anoAtual} atual`;
   const queryNomeC = `site:${dominioOficial ?? `${slug}.${ufLow}.gov.br`} secretaria educação secretário`;
-  const [candsNomeA, candsNomeB, candsNomeC] = await Promise.all([
+  const [candsNome0, candsNomeA, candsNomeB, candsNomeC] = await Promise.all([
+    search(queryNome0, "nome", { limit: 8, timeoutMs: 8000, uf }),
     search(queryNomeA, "nome", { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf }),
     search(queryNomeB, "nome", { limit: 6, tbs: "qdr:y", timeoutMs: 8000, uf }),
     search(queryNomeC, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf }),
   ]);
+
   // Fallback de domínio: se o domínio padrão {slug}.{uf}.gov.br não retornou nada e não
   // conhecemos o domínio real do município, tenta {uf}.gov.br com o nome do município.
   // CUIDADO: em capitais de estado, o portal do próprio ESTADO ({uf}.gov.br) menciona a
