@@ -35,25 +35,33 @@ const EquipeSchema = z
     // A IA às vezes devolve string ("Fulano — Diretor"), objeto solto, ou itens
     // sem nome. Normalizamos antes de validar para não estourar o schema.
     const arr = Array.isArray(v) ? v : v == null ? [] : [v];
+    type Bruto = {
+      nome?: string;
+      cargo: string | null;
+      email: string | null;
+      telefone: string | null;
+    };
     return arr
-      .map((item) => {
+      .map((item): Bruto | null => {
         if (typeof item === "string") {
           const [nome, cargo] = item.split(/\s+[—–-]\s+/);
-          return { nome: nome?.trim(), cargo: cargo?.trim() ?? null };
+          return { nome: nome?.trim(), cargo: cargo?.trim() ?? null, email: null, telefone: null };
         }
         if (item && typeof item === "object") {
           const o = item as Record<string, unknown>;
           const nome = o.nome ?? o.name ?? o.pessoa;
+          const cargo = o.cargo ?? o.funcao;
           return {
             nome: typeof nome === "string" ? nome.trim() : undefined,
-            cargo: typeof o.cargo === "string" ? o.cargo : ((o.funcao as string) ?? null),
+            cargo: typeof cargo === "string" ? cargo : null,
             email: typeof o.email === "string" ? o.email : null,
             telefone: typeof o.telefone === "string" ? o.telefone : null,
           };
         }
         return null;
       })
-      .filter((m): m is { nome: string; cargo: string | null } => !!m && !!m.nome);
+      .filter((m): m is Bruto & { nome: string } => !!m && !!m.nome);
+
   }, z.array(
     z.object({
       nome: z.string(),
