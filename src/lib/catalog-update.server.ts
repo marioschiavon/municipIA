@@ -114,14 +114,10 @@ export async function persistProspectResult(ibgeId: number, result: ProspectResu
   const cargo = preservar ? existente!.cargo : result.cargo;
   const emails = preservar ? (existente!.emails ?? []) : (result.emails ?? []);
   const telefones = preservar ? (existente!.telefones ?? []) : (result.telefones ?? []);
+  // Equipe nunca é apagada: mescla o que já existia com o que veio agora.
   const equipe = preservar
     ? (existente!.equipe ?? [])
-    : (result.equipe ?? []).map((e) => ({
-        nome: e.nome,
-        cargo: e.cargo ?? "",
-        email: e.email ?? null,
-        telefone: e.telefone ?? null,
-      }));
+    : mergeEquipe(existente?.equipe ?? [], result.equipe);
   const horario = preservar ? existente!.horario : (result.horarioAtendimento ?? null);
   const fonte = preservar ? existente!.fonte : result.fonte;
   const fonte_url = preservar ? existente!.fonte_url : result.fonteUrl;
