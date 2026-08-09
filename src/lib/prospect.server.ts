@@ -125,7 +125,7 @@ async function generateObjectResiliente<T extends z.ZodTypeAny>(
         const fim = Math.max(limpo.lastIndexOf("}"), limpo.lastIndexOf("]"));
         try {
           const bruto = JSON.parse(limpo.slice(inicio, fim + 1)) as unknown;
-          const alvo = Array.isArray(bruto) ? { equipe: bruto } : bruto;
+          const alvo = normalizarRespostaEstruturada(bruto);
           const parsed = (args.schema as z.ZodTypeAny).safeParse(alvo);
           if (parsed.success) return parsed.data as z.infer<T>;
         } catch {
@@ -135,6 +135,68 @@ async function generateObjectResiliente<T extends z.ZodTypeAny>(
     }
     throw e;
   }
+}
+
+function textoOuNull(valor: unknown): string | null {
+  if (typeof valor !== "string") return null;
+  const texto = valor.trim();
+  if (!texto || /^(null|n\/a|não encontrado|nao encontrado|desconhecido)$/i.test(texto)) return null;
+  return texto;
+}
+
+function listaDeTextos(valor: unknown): string[] {
+  const itens = Array.isArray(valor) ? valor : typeof valor === "string" ? valor.split(/[;,\n]/) : [];
+  return itens.map(textoOuNull).filter((item): item is string => item !== null);
+}
+
+/**
+ * Converte variações frequentes da resposta dos modelos para o contrato interno.
+ * É aplicada somente quando a validação estruturada original falha, portanto não
+ * interfere nas respostas que já respeitam o schema.
+ */
+function normalizarRespostaEstruturada(valor: unknown): unknown {
+  if (Array.isArray(valor)) return { equipe: valor };
+  if (!valor || typeof valor !== "object") return valor;
+
+  const raiz = valor as Record<string, unknown>;
+  const envelope = raiz.resultado ?? raiz.result ?? raiz.data ?? raiz.output;
+  const fonte = envelope && typeof envelope === "object" && !Array.isArray(envelope)
+    ? envelope as Record<string, unknown>
+    : raiz;
+
+  const secretarioBruto =
+    fonte.secretario ?? fonte["secretário"] ?? fonte.secretaria ?? fonte.titular ?? fonte.nome;
+  const secretarioObjeto = secretarioBruto && typeof secretarioBruto === "object" && !Array.isArray(secretarioBruto)
+    ? secretarioBruto as Record<string, unknown>
+    : null;
+  const secretario = textoOuNull(
+    secretarioObjeto?.nome ?? secretarioObjeto?.name ?? secretarioObjeto?.pessoa ?? secretarioBruto,
+  );
+  const cargo = textoOuNull(
+    fonte.cargo ?? fonte.funcao ?? fonte["função"] ?? secretarioObjeto?.cargo ?? secretarioObjeto?.funcao,
+  );
+  const contexto = textoOuNull(fonte.contexto ?? fonte.evidencia ?? fonte.justificativa ?? fonte.trecho);
+  const dataReferencia = textoOuNull(
+    fonte.dataReferencia ?? fonte.data_referencia ?? fonte.data ?? fonte.referencia,
+  );
+  const horarioAtendimento = textoOuNull(
+    fonte.horarioAtendimento ?? fonte.horario_atendimento ?? fonte.horario,
+  );
+  const equipe = fonte.equipe ?? fonte.membros ?? fonte.colaboradores ?? fonte.servidores ?? [];
+  const confiancaBruta = fonte.confianca ?? fonte["confiança"] ?? fonte.confidence ?? "baixa";
+
+  return {
+    ...fonte,
+    secretario,
+    cargo,
+    contexto,
+    confianca: textoOuNull(confiancaBruta) ?? "baixa",
+    dataReferencia,
+    horarioAtendimento,
+    emails: listaDeTextos(fonte.emails ?? fonte.email),
+    telefones: listaDeTextos(fonte.telefones ?? fonte.telefone ?? fonte.fones),
+    equipe,
+  };
 }
 
 
