@@ -1549,7 +1549,7 @@ export async function prospectar(
     candsNomeCfb = await search(queryNomeCfb, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf });
   }
   // Priorizar resultados do domínio oficial do município (queryNomeC/fb) ANTES de A/B.
-  const candsNome = filterForeignMunicipio(dedupeByUrl([...candsNomeC, ...candsNomeCfb, ...candsNomeA, ...candsNomeB]), slug, emit, "nome");
+  const candsNome = filterForeignMunicipio(dedupeByUrl([...candsNomeC, ...candsNomeCfb, ...candsNome0, ...candsNomeA, ...candsNomeB]), slug, emit, "nome");
   addToPool(candsNome);
   const rankedNome = preferGov(candsNome, (u) => /(educa|secretari)/i.test(u), ufLow);
   const snippetsNome = snippetsBlock(rankedNome);
