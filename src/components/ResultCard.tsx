@@ -149,6 +149,26 @@ function Timeline({ events, live }: { events: ProgressEvent[]; live: boolean }) 
   );
 }
 
+// Prioridade de exibição dos cargos da equipe: quem decide primeiro.
+const RANK_CARGO: Array<[RegExp, number]> = [
+  [/secret[áa]ri[oa]\s+(municipal\s+)?de\s+educa|secret[áa]ri[oa]\b/i, 0],
+  [/adjunt|vice-?secret/i, 1],
+  [/chefe\s+de\s+gabinete|gabinete/i, 2],
+  [/diretor|superintend/i, 3],
+  [/coordenador/i, 4],
+  [/assessor/i, 5],
+];
+
+function rankCargo(cargo?: string | null) {
+  if (!cargo) return 90;
+  for (const [re, r] of RANK_CARGO) if (re.test(cargo)) return r;
+  return 50;
+}
+
+function ordenarEquipe<T extends { nome: string; cargo?: string | null }>(equipe: T[]): T[] {
+  return [...equipe].sort((a, b) => rankCargo(a.cargo) - rankCargo(b.cargo) || a.nome.localeCompare(b.nome, "pt-BR"));
+}
+
 
 export function ResultCard({ municipio, uf, state, slow }: Props) {
   const result = state.phase === "done" ? state.result : null;
