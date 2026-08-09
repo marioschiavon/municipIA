@@ -194,6 +194,37 @@ export function ResultCard({ municipio, uf, state, slow }: Props) {
 
       {result && (
         <div className="mt-4 space-y-2.5 text-sm">
+          {result.equipe && result.equipe.length > 0 && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                <Users className="h-4 w-4" />
+                Equipe da Secretaria ({result.equipe.length})
+              </div>
+              <ul className="mt-2 space-y-1.5">
+                {ordenarEquipe(result.equipe).map((m, i) => (
+                  <li
+                    key={i}
+                    className="rounded border border-emerald-100 bg-white px-2.5 py-1.5 text-xs"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-slate-900">{m.nome}</span>
+                      {m.cargo && (
+                        <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
+                          {m.cargo}
+                        </span>
+                      )}
+                    </div>
+                    {(m.email || m.telefone) && (
+                      <div className="mt-1 text-slate-600">
+                        {m.email && <span className="mr-2">✉ {m.email}</span>}
+                        {m.telefone && <span>☎ {m.telefone}</span>}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {result.secretario && (
             <Field
               icon={<User className="h-4 w-4" />}
@@ -247,28 +278,7 @@ export function ResultCard({ municipio, uf, state, slow }: Props) {
               value={result.horarioAtendimento}
             />
           )}
-          {result.equipe && result.equipe.length > 0 && (
-            <Field
-              icon={<Users className="h-4 w-4" />}
-              label={`Equipe (${result.equipe.length})`}
-              value={
-                <ul className="mt-1 space-y-1.5">
-                  {result.equipe.map((m, i) => (
-                    <li key={i} className="rounded border border-slate-100 bg-slate-50 px-2.5 py-1.5 text-xs">
-                      <div className="font-medium text-slate-800">{m.nome}</div>
-                      {m.cargo && <div className="text-slate-600">{m.cargo}</div>}
-                      {(m.email || m.telefone) && (
-                        <div className="mt-0.5 text-slate-500">
-                          {m.email && <span className="mr-2">✉ {m.email}</span>}
-                          {m.telefone && <span>☎ {m.telefone}</span>}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              }
-            />
-          )}
+
           {result.fonte && (
             <Field
               icon={<ExternalLink className="h-4 w-4" />}
