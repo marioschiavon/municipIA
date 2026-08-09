@@ -22,6 +22,45 @@ function mergeRevisaoMotivos(
   return novoMotivo ? [...semFase, novoMotivo] : semFase;
 }
 
+type EquipeMembro = { nome: string; cargo: string; email: string | null; telefone: string | null };
+
+const normNome = (n: string) =>
+  n.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+
+/**
+ * Mescla a equipe já gravada com a encontrada agora: não apaga ninguém,
+ * deduplica por nome e enriquece cargo/e-mail/telefone quando faltavam.
+ * Retorna a MESMA referência quando nada muda (evita UPDATE desnecessário).
+ */
+function mergeEquipe(
+  atual: EquipeMembro[],
+  nova: ProspectResult["equipe"],
+): EquipeMembro[] {
+  if (!nova || nova.length === 0) return atual;
+  const out: EquipeMembro[] = (atual ?? []).map((m) => ({ ...m }));
+  const idx = new Map(out.map((m, i) => [normNome(m.nome ?? ""), i]));
+  let mudou = false;
+
+  for (const e of nova) {
+    const nome = (e.nome ?? "").trim();
+    if (!nome) continue;
+    const key = normNome(nome);
+    const at = idx.get(key);
+    if (at === undefined) {
+      out.push({ nome, cargo: e.cargo ?? "", email: e.email ?? null, telefone: e.telefone ?? null });
+      idx.set(key, out.length - 1);
+      mudou = true;
+      continue;
+    }
+    const cur = out[at];
+    if (!cur.cargo && e.cargo) { cur.cargo = e.cargo; mudou = true; }
+    if (!cur.email && e.email) { cur.email = e.email; mudou = true; }
+    if (!cur.telefone && e.telefone) { cur.telefone = e.telefone; mudou = true; }
+  }
+
+  return mudou ? out : atual;
+}
+
 /** Coluna que guarda a última tentativa de prospecção por fase (cursor do rodízio de lotes). */
 export const TENTATIVA_COL = {
   dominio: "tentativa_dominio_em",
@@ -75,14 +114,10 @@ export async function persistProspectResult(ibgeId: number, result: ProspectResu
   const cargo = preservar ? existente!.cargo : result.cargo;
   const emails = preservar ? (existente!.emails ?? []) : (result.emails ?? []);
   const telefones = preservar ? (existente!.telefones ?? []) : (result.telefones ?? []);
+  // Equipe nunca é apagada: mescla o que já existia com o que veio agora.
   const equipe = preservar
     ? (existente!.equipe ?? [])
-    : (result.equipe ?? []).map((e) => ({
-        nome: e.nome,
-        cargo: e.cargo ?? "",
-        email: e.email ?? null,
-        telefone: e.telefone ?? null,
-      }));
+    : mergeEquipe(existente?.equipe ?? [], result.equipe);
   const horario = preservar ? existente!.horario : (result.horarioAtendimento ?? null);
   const fonte = preservar ? existente!.fonte : result.fonte;
   const fonte_url = preservar ? existente!.fonte_url : result.fonteUrl;
@@ -181,6 +216,15 @@ async function persistFaseIsolada(
   let telefones: string[] = existente?.telefones ?? [];
   let equipe = existente?.equipe ?? [];
 
+  // A equipe pode aparecer em QUALQUER fase (o SERP/scrape costuma trazer a
+  // lista de coordenadores junto). Em vez de sobrescrever, mesclamos sempre —
+  // nunca apagamos a equipe já gravada quando a fase atual não trouxe nada.
+  const equipeMesclada = mergeEquipe(equipe, result.equipe);
+  if (equipeMesclada !== equipe) {
+    equipe = equipeMesclada;
+    patch.equipe = equipe;
+  }
+
   if (fase === "dominio") {
     if (result.dominioOficialConfirmado) {
       patch.dominio_oficial = result.dominioOficialConfirmado;
@@ -190,10 +234,8 @@ async function persistFaseIsolada(
   } else if (fase === "secretario") {
     secretario = result.secretario;
     cargo = result.cargo;
-    equipe = (result.equipe ?? []).map((e) => ({ nome: e.nome, cargo: e.cargo ?? "", email: e.email ?? null, telefone: e.telefone ?? null }));
     patch.secretario = secretario;
     patch.cargo = cargo;
-    patch.equipe = equipe;
     patch.secretario_confirmado_em = now;
   } else {
     emails = result.emails ?? [];
