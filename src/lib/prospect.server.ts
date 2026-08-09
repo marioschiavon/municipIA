@@ -31,16 +31,48 @@ const ConfiancaLoose = z
 
 // Membro da equipe (coordenador, diretor, assessor, chefe de gabinete, etc.).
 const EquipeSchema = z
-  .array(
+  .preprocess((v) => {
+    // A IA às vezes devolve string ("Fulano — Diretor"), objeto solto, ou itens
+    // sem nome. Normalizamos antes de validar para não estourar o schema.
+    const arr = Array.isArray(v) ? v : v == null ? [] : [v];
+    type Bruto = {
+      nome?: string;
+      cargo: string | null;
+      email: string | null;
+      telefone: string | null;
+    };
+    return arr
+      .map((item): Bruto | null => {
+        if (typeof item === "string") {
+          const [nome, cargo] = item.split(/\s+[—–-]\s+/);
+          return { nome: nome?.trim(), cargo: cargo?.trim() ?? null, email: null, telefone: null };
+        }
+        if (item && typeof item === "object") {
+          const o = item as Record<string, unknown>;
+          const nome = o.nome ?? o.name ?? o.pessoa;
+          const cargo = o.cargo ?? o.funcao;
+          return {
+            nome: typeof nome === "string" ? nome.trim() : undefined,
+            cargo: typeof cargo === "string" ? cargo : null,
+            email: typeof o.email === "string" ? o.email : null,
+            telefone: typeof o.telefone === "string" ? o.telefone : null,
+          };
+        }
+        return null;
+      })
+      .filter((m): m is Bruto & { nome: string } => !!m && !!m.nome);
+
+  }, z.array(
     z.object({
       nome: z.string(),
       cargo: z.string().nullable().optional().default(null),
       email: z.string().nullable().optional().default(null),
       telefone: z.string().nullable().optional().default(null),
     }),
-  )
+  ))
   .optional()
   .default([]);
+
 
 // Schema completo — usado nos estágios 2/3/4 (contato).
 const ExtractSchema = z.object({
@@ -64,6 +96,48 @@ const NomeSchema = z.object({
   dataReferencia: z.string().nullable().optional().default(null),
   equipe: EquipeSchema,
 });
+
+/**
+ * Wrapper resiliente do generateObject.
+ *
+ * Quando o modelo devolve JSON válido mas fora do schema (campo extra, array em
+ * vez de objeto, texto solto, cerca ```json), o AI SDK estoura
+ * AI_NoObjectGeneratedError e a extração inteira era perdida. Aqui recuperamos o
+ * texto cru (`error.text`), extraímos o primeiro bloco JSON e revalidamos com o
+ * mesmo schema — que já é tolerante (campos opcionais + defaults). Só falha de
+ * verdade se nem assim der para aproveitar.
+ */
+async function generateObjectResiliente<T extends z.ZodTypeAny>(
+  args: Parameters<typeof generateObject>[0] & { schema: T },
+): Promise<z.infer<T>> {
+  try {
+    const { object } = await generateObject(args as never);
+    return object as z.infer<T>;
+  } catch (e) {
+    const texto = (e as { text?: string })?.text;
+    if (typeof texto === "string" && texto.trim()) {
+      const limpo = texto
+        .replace(/^\s*```(?:json)?/i, "")
+        .replace(/```\s*$/, "")
+        .trim();
+      const inicio = limpo.search(/[[{]/);
+      if (inicio >= 0) {
+        const fim = Math.max(limpo.lastIndexOf("}"), limpo.lastIndexOf("]"));
+        try {
+          const bruto = JSON.parse(limpo.slice(inicio, fim + 1)) as unknown;
+          const alvo = Array.isArray(bruto) ? { equipe: bruto } : bruto;
+          const parsed = (args.schema as z.ZodTypeAny).safeParse(alvo);
+          if (parsed.success) return parsed.data as z.infer<T>;
+        } catch {
+          // segue para o throw abaixo
+        }
+      }
+    }
+    throw e;
+  }
+}
+
+
 
 type Extracted = {
   secretario: string | null;
@@ -286,7 +360,7 @@ async function geminiSearch(
   try {
     const { createLovableAiGatewayProvider, LOVABLE_DEFAULT_MODEL } = await import("./ai-gateway.server");
     const model = createLovableAiGatewayProvider(key)(LOVABLE_DEFAULT_MODEL);
-    const { object } = await generateObject({
+    const object = await generateObjectResiliente({
       model,
       schema: z.object({
         resultados: z.array(
@@ -726,7 +800,7 @@ ${conteudo}
 Responda APENAS com JSON válido seguindo o schema.`;
   emit("info", "nome", "IA extraindo NOME atual (sem contatos)...");
   try {
-    const { object } = await generateObject({
+    const object = await generateObjectResiliente({
       model: ai.model,
       schema: NomeSchema,
       prompt,
@@ -822,7 +896,7 @@ ${conteudo}
 Responda APENAS com JSON válido seguindo o schema.`;
   emit("info", etapa, `IA ${modo === "snippets" ? "(snippets)" : "(página)"} extraindo contatos${nomeAlvo ? ` de "${nomeAlvo}"` : ""}...`, { pistas: hints });
   try {
-    const { object } = await generateObject({
+    const object = await generateObjectResiliente({
       model: ai.model,
       schema: ExtractSchema,
       prompt,
@@ -910,7 +984,7 @@ ${conteudo}
 
 Responda APENAS com JSON válido seguindo o schema.`;
   try {
-    const { object } = await generateObject({
+    const object = await generateObjectResiliente({
       model: ai.model,
       schema: EnrichSchema,
       prompt,
