@@ -76,12 +76,20 @@ export const listMunicipios = createServerFn({ method: "POST" })
     }
 
     // ordering
+    // Desempate secundário por ibge_id: sem isso, o Postgres não garante
+    // ordem estável entre linhas empatadas (ex.: muitos municípios com
+    // matriculas_total = 0) ao longo de páginas .range() diferentes,
+    // podendo repetir ou pular municípios ao navegar entre páginas.
     if (data.orderBy === "score") {
-      q = q.order("score", { ascending: data.orderDir === "asc" });
+      q = q.order("score", { ascending: data.orderDir === "asc" }).order("ibge_id", { ascending: true });
     } else if (data.orderBy === "nome") {
-      q = q.order("nome", { referencedTable: "municipios", ascending: data.orderDir === "asc" });
+      q = q
+        .order("nome", { referencedTable: "municipios", ascending: data.orderDir === "asc" })
+        .order("ibge_id", { ascending: true });
     } else {
-      q = q.order(data.orderBy, { referencedTable: "municipios", ascending: data.orderDir === "asc" });
+      q = q
+        .order(data.orderBy, { referencedTable: "municipios", ascending: data.orderDir === "asc" })
+        .order("ibge_id", { ascending: true });
     }
 
     const from = data.page * data.pageSize;
@@ -107,6 +115,118 @@ export const listMunicipios = createServerFn({ method: "POST" })
     }));
 
     return { items, total: count ?? 0 };
+  });
+
+// ============ EXPORT ============
+// Teto server-side: independe do que o cliente pedir, o Zod nunca deixa
+// passar "quantidade" acima disso.
+export const EXPORT_MAX = 5000;
+
+export type ExportMunicipioRow = {
+  ibge_id: number;
+  nome: string;
+  uf: string;
+  populacao: number;
+  matriculas_total: number;
+  fnde_anual: number;
+  score: number;
+  faixa: string;
+  status: string;
+  secretario: string | null;
+  cargo: string | null;
+  emails: string[];
+  telefones: string[];
+  horario: string | null;
+  equipe: Array<{ nome: string; cargo: string | null; email?: string | null; telefone?: string | null }>;
+  atualizado_em: string | null;
+};
+
+const ExportInput = z.object({
+  uf: z.string().length(2).optional(),
+  faixa: z.enum(["alto", "medio", "baixo"]).optional(),
+  scoreMin: z.number().int().min(0).max(100).optional(),
+  scoreMax: z.number().int().min(0).max(100).optional(),
+  status: z.enum(["validado", "pendente", "sem_dados"]).optional(),
+  q: z.string().optional(),
+  contato: z.enum(["secretario", "equipe", "ambos"]).default("ambos"),
+  quantidade: z.number().int().min(1).max(EXPORT_MAX).default(EXPORT_MAX),
+  orderBy: z.enum(["score", "populacao", "nome", "matriculas_total"]).default("score"),
+  orderDir: z.enum(["asc", "desc"]).default("desc"),
+});
+
+export const exportMunicipios = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => ExportInput.parse(data))
+  .handler(async ({ data }): Promise<{ items: ExportMunicipioRow[] }> => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    // Monta uma query nova a cada página (em vez de reaproveitar a mesma
+    // instância entre chamadas) — mesmo padrão usado em fetchAllByRange.
+    function buildQuery(from: number, to: number) {
+      let q = supabaseAdmin
+        .from("municipios_educacao")
+        .select(
+          "ibge_id, score, faixa, status, secretario, cargo, emails, telefones, horario, equipe, atualizado_em, " +
+            "municipios!inner(nome, uf, slug, populacao, matriculas_total, escolas, fnde_anual)",
+        );
+
+      if (data.uf) q = q.eq("municipios.uf", data.uf);
+      if (data.faixa) q = q.eq("faixa", data.faixa);
+      if (data.status) q = q.eq("status", data.status);
+      if (data.scoreMin != null) q = q.gte("score", data.scoreMin);
+      if (data.scoreMax != null) q = q.lte("score", data.scoreMax);
+      if (data.q && data.q.trim()) q = q.ilike("municipios.nome", `%${data.q.trim()}%`);
+      if (data.contato === "secretario") q = q.not("secretario", "is", null);
+      if (data.contato === "equipe") q = q.not("equipe", "eq", "[]");
+      // "ambos" => sem filtro extra (inclui municípios com pelo menos um dos dois tipos de contato)
+
+      if (data.orderBy === "score") {
+        q = q.order("score", { ascending: data.orderDir === "asc" }).order("ibge_id", { ascending: true });
+      } else if (data.orderBy === "nome") {
+        q = q
+          .order("nome", { referencedTable: "municipios", ascending: data.orderDir === "asc" })
+          .order("ibge_id", { ascending: true });
+      } else {
+        q = q
+          .order(data.orderBy, { referencedTable: "municipios", ascending: data.orderDir === "asc" })
+          .order("ibge_id", { ascending: true });
+      }
+
+      return q.range(from, to);
+    }
+
+    // Busca em páginas de até 1.000 linhas (limite do PostgREST) até atingir
+    // a quantidade pedida, sem nunca puxar mais do que o necessário.
+    const PG_PAGE = 1000;
+    const rows: any[] = [];
+    for (let from = 0; rows.length < data.quantidade; from += PG_PAGE) {
+      const to = from + PG_PAGE - 1;
+      const { data: page, error } = await buildQuery(from, to);
+      if (error) throw new Error(error.message);
+      const pageRows = page ?? [];
+      rows.push(...pageRows);
+      if (pageRows.length < PG_PAGE) break;
+    }
+
+    const items: ExportMunicipioRow[] = rows.slice(0, data.quantidade).map((r: any) => ({
+      ibge_id: r.ibge_id,
+      nome: r.municipios.nome,
+      uf: r.municipios.uf,
+      populacao: r.municipios.populacao,
+      matriculas_total: r.municipios.matriculas_total,
+      fnde_anual: Number(r.municipios.fnde_anual),
+      score: r.score,
+      faixa: r.faixa,
+      status: r.status,
+      secretario: r.secretario ?? null,
+      cargo: r.cargo ?? null,
+      emails: r.emails ?? [],
+      telefones: r.telefones ?? [],
+      horario: r.horario ?? null,
+      equipe: r.equipe ?? [],
+      atualizado_em: r.atualizado_em ?? null,
+    }));
+
+    return { items };
   });
 
 // ============ GET ============
@@ -226,10 +346,11 @@ export const seedCatalog = createServerFn({ method: "POST" }).handler(async () =
 // Stats globais (para header)
 export const getCatalogStats = createServerFn({ method: "GET" }).handler(async () => {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const [{ count: total }, { count: alto }, { count: validado }] = await Promise.all([
+  const [{ count: total }, { count: alto }, { count: validado }, { count: comMatriculas }] = await Promise.all([
     supabaseAdmin.from("municipios").select("ibge_id", { count: "exact", head: true }),
     supabaseAdmin.from("municipios_educacao").select("ibge_id", { count: "exact", head: true }).eq("faixa", "alto"),
     supabaseAdmin.from("municipios_educacao").select("ibge_id", { count: "exact", head: true }).eq("status", "validado"),
+    supabaseAdmin.from("municipios").select("ibge_id", { count: "exact", head: true }).gt("matriculas_total", 0),
   ]);
-  return { total: total ?? 0, alto: alto ?? 0, validado: validado ?? 0 };
+  return { total: total ?? 0, alto: alto ?? 0, validado: validado ?? 0, comMatriculas: comMatriculas ?? 0 };
 });

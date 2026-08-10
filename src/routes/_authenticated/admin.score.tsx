@@ -102,7 +102,12 @@ function ScoreConfig() {
           {save.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
           Salvar configuração
         </Button>
-        {save.data && <span className="text-sm text-emerald-700">✓ Salvo</span>}
+        {save.isPending && <span className="text-sm text-muted-foreground">Salvando e recalculando scores da base inteira...</span>}
+        {save.data && (
+          <span className="text-sm text-emerald-700">
+            ✓ Salvo — {save.data.recalc.total.toLocaleString("pt-BR")} município(s) recalculado(s)
+          </span>
+        )}
       </div>
     </div>
   );

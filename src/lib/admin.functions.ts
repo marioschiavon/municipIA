@@ -59,6 +59,7 @@ export const adminGetStats = createServerFn({ method: "GET" })
       { count: comContatos },
       { count: validados },
       { count: comMatriculas },
+      { count: scoreNaoCalculado },
     ] = await Promise.all([
       supabaseAdmin.from("municipios").select("ibge_id", { count: "exact", head: true }),
       supabaseAdmin
@@ -73,12 +74,20 @@ export const adminGetStats = createServerFn({ method: "GET" })
         .from("municipios")
         .select("ibge_id", { count: "exact", head: true })
         .gt("matriculas_total", 0),
+      // breakdown = '{}' é o valor default da coluna — calcularScore() sempre
+      // grava um objeto com 5 chaves, então '{}' só ocorre quando o score
+      // nunca foi (re)calculado para essa linha (não é o mesmo que score = 0).
+      supabaseAdmin
+        .from("municipios_educacao")
+        .select("ibge_id", { count: "exact", head: true })
+        .eq("breakdown", "{}"),
     ]);
     return {
       total: total ?? 0,
       comContatos: comContatos ?? 0,
       validados: validados ?? 0,
       comMatriculas: comMatriculas ?? 0,
+      scoreNaoCalculado: scoreNaoCalculado ?? 0,
     };
   });
 
@@ -816,7 +825,12 @@ export const adminSaveScoreConfig = createServerFn({ method: "POST" })
       })
       .eq("id", 1);
     if (error) throw new Error(error.message);
-    return { ok: true };
+    // Recalcula o score de toda a base ao salvar novos pesos, para que a
+    // mudança se reflita imediatamente (antes só acontecia via botão manual
+    // ou após um import).
+    const { recalcularScoresDeTodosMunicipios } = await import("./catalog-score-recalc.server");
+    const recalc = await recalcularScoresDeTodosMunicipios(supabaseAdmin);
+    return { ok: true, recalc };
   });
 
 // ============ RESET DADOS ============
@@ -952,78 +966,8 @@ export const adminRecalcularScores = createServerFn({ method: "POST" })
   .handler(async ({ context }) => {
     await assertAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { calcularScore, contarCampos } = await import("./catalog-score");
-    const { fetchAllByRange } = await import("./pg-paginate.server");
-
-    // A Data API devolve no máximo 1.000 linhas por request — paginar é
-    // obrigatório, senão só os primeiros 1.000 municípios recebem score.
-    const munis = await fetchAllByRange<any>(
-      (from, to) =>
-        supabaseAdmin
-          .from("municipios")
-          .select("ibge_id, populacao, matriculas_total, fnde_anual")
-          .order("ibge_id", { ascending: true })
-          .range(from, to),
-      "municipios",
-    );
-
-    const edus = await fetchAllByRange<any>(
-      (from, to) =>
-        supabaseAdmin
-          .from("municipios_educacao")
-          .select("ibge_id, secretario, cargo, emails, telefones, horario, equipe, atualizado_em")
-          .order("ibge_id", { ascending: true })
-          .range(from, to),
-      "municipios_educacao",
-    );
-
-    const eduMap = new Map((edus ?? []).map((e: any) => [e.ibge_id, e]));
-    const faixas = { alto: 0, medio: 0, baixo: 0 };
-    const BATCH = 500;
-    let processed = 0;
-    const updates: any[] = [];
-
-    for (const m of munis ?? []) {
-      const e = eduMap.get(m.ibge_id);
-      const campos = contarCampos({
-        secretario: e?.secretario,
-        cargo: e?.cargo,
-        emails: e?.emails,
-        telefones: e?.telefones,
-        horario: e?.horario,
-        equipe: e?.equipe,
-      });
-      const { score, faixa, breakdown } = calcularScore({
-        populacao: m.populacao ?? 0,
-        matriculas_total: m.matriculas_total ?? 0,
-        fnde_anual: Number(m.fnde_anual ?? 0),
-        campos_preenchidos: campos,
-        atualizado_em: e?.atualizado_em ?? null,
-      });
-      faixas[faixa]++;
-      updates.push({
-        ibge_id: m.ibge_id,
-        score,
-        faixa,
-        breakdown,
-      });
-      if (updates.length >= BATCH) {
-        const { error } = await supabaseAdmin
-          .from("municipios_educacao")
-          .upsert(updates, { onConflict: "ibge_id" });
-        if (error) throw new Error(error.message);
-        processed += updates.length;
-        updates.length = 0;
-      }
-    }
-    if (updates.length) {
-      const { error } = await supabaseAdmin
-        .from("municipios_educacao")
-        .upsert(updates, { onConflict: "ibge_id" });
-      if (error) throw new Error(error.message);
-      processed += updates.length;
-    }
-    return { total: processed, faixas };
+    const { recalcularScoresDeTodosMunicipios } = await import("./catalog-score-recalc.server");
+    return recalcularScoresDeTodosMunicipios(supabaseAdmin);
   });
 
 // ============ RECONSOLIDAR ESCOLAS (a partir do que já está no banco) ============

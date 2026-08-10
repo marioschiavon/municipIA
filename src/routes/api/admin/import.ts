@@ -1027,48 +1027,6 @@ function parseMoney(value: string): number {
 }
 
 async function recalcScores(supabaseAdmin: any) {
-  const { calcularScore, contarCampos } = await import("@/lib/catalog-score");
-  const { data: munis, error: mErr } = await supabaseAdmin
-    .from("municipios")
-    .select("ibge_id, populacao, matriculas_total, fnde_anual");
-  if (mErr) throw new Error(mErr.message);
-  const { data: edus, error: eErr } = await supabaseAdmin
-    .from("municipios_educacao")
-    .select("ibge_id, secretario, cargo, emails, telefones, horario, equipe, atualizado_em");
-  if (eErr) throw new Error(eErr.message);
-
-  const eduMap = new Map<number, any>((edus ?? []).map((e: any) => [e.ibge_id, e]));
-  const faixas = { alto: 0, medio: 0, baixo: 0 };
-  const BATCH = 500;
-  let processed = 0;
-  const updates: any[] = [];
-
-  for (const m of munis ?? []) {
-    const e = eduMap.get(m.ibge_id);
-    const campos = contarCampos({
-      secretario: e?.secretario, cargo: e?.cargo, emails: e?.emails,
-      telefones: e?.telefones, horario: e?.horario, equipe: e?.equipe,
-    });
-    const { score, faixa, breakdown } = calcularScore({
-      populacao: m.populacao ?? 0,
-      matriculas_total: m.matriculas_total ?? 0,
-      fnde_anual: Number(m.fnde_anual ?? 0),
-      campos_preenchidos: campos,
-      atualizado_em: e?.atualizado_em ?? null,
-    });
-    faixas[faixa]++;
-    updates.push({ ibge_id: m.ibge_id, score, faixa, breakdown });
-    if (updates.length >= BATCH) {
-      const { error } = await supabaseAdmin.from("municipios_educacao").upsert(updates, { onConflict: "ibge_id" });
-      if (error) throw new Error(error.message);
-      processed += updates.length;
-      updates.length = 0;
-    }
-  }
-  if (updates.length) {
-    const { error } = await supabaseAdmin.from("municipios_educacao").upsert(updates, { onConflict: "ibge_id" });
-    if (error) throw new Error(error.message);
-    processed += updates.length;
-  }
-  return { total: processed, faixas };
+  const { recalcularScoresDeTodosMunicipios } = await import("@/lib/catalog-score-recalc.server");
+  return recalcularScoresDeTodosMunicipios(supabaseAdmin);
 }

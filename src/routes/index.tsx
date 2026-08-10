@@ -1,10 +1,11 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, useMemo } from "react";
-import { Search, Loader2, Database, TrendingUp, MapPin } from "lucide-react";
+import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -12,8 +13,13 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { APP_VERSION } from "@/lib/version";
-import { listMunicipios, getCatalogStats } from "@/lib/catalog.functions";
+import { listMunicipios, getCatalogStats, exportMunicipios, EXPORT_MAX } from "@/lib/catalog.functions";
+import { exportMunicipiosCSV, exportMunicipiosXLSX } from "@/lib/export";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -41,6 +47,7 @@ function CatalogPage() {
   const navigate = useNavigate();
   const listFn = useServerFn(listMunicipios);
   const statsFn = useServerFn(getCatalogStats);
+  const exportFn = useServerFn(exportMunicipios);
 
   const [uf, setUf] = useState<string>("all");
   const [faixa, setFaixa] = useState<string>("all");
@@ -49,6 +56,37 @@ function CatalogPage() {
   const [qInput, setQInput] = useState<string>("");
   const [page, setPage] = useState(0);
   const [orderBy, setOrderBy] = useState<"score" | "populacao" | "nome" | "matriculas_total">("score");
+
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportQtd, setExportQtd] = useState(500);
+  const [exportFaixa, setExportFaixa] = useState<string>("all");
+  const [exportScoreMin, setExportScoreMin] = useState<string>("");
+  const [exportScoreMax, setExportScoreMax] = useState<string>("");
+  const [exportContato, setExportContato] = useState<"secretario" | "equipe" | "ambos">("ambos");
+  const [exportCount, setExportCount] = useState<number | null>(null);
+
+  const exportMut = useMutation({
+    mutationFn: async (formato: "csv" | "xlsx") => {
+      const { items } = await exportFn({
+        data: {
+          uf: uf === "all" ? undefined : uf,
+          status: status === "all" ? undefined : (status as any),
+          q: q || undefined,
+          faixa: exportFaixa === "all" ? undefined : (exportFaixa as any),
+          scoreMin: exportScoreMin ? Number(exportScoreMin) : undefined,
+          scoreMax: exportScoreMax ? Number(exportScoreMax) : undefined,
+          contato: exportContato,
+          quantidade: exportQtd,
+          orderBy,
+          orderDir: "desc",
+        },
+      });
+      if (formato === "csv") exportMunicipiosCSV(items);
+      else exportMunicipiosXLSX(items);
+      return items.length;
+    },
+    onSuccess: (count) => setExportCount(count),
+  });
 
   const stats = useQuery({
     queryKey: ["stats"],
@@ -73,6 +111,8 @@ function CatalogPage() {
 
 
   const empty = (stats.data?.total ?? 0) === 0 && !stats.isLoading;
+  const matriculasCoberturaBaixa =
+    (stats.data?.total ?? 0) > 0 && (stats.data?.comMatriculas ?? 0) / (stats.data?.total ?? 1) < 0.5;
   const totalPages = Math.ceil((list.data?.total ?? 0) / PAGE_SIZE);
 
   return (
@@ -162,7 +202,136 @@ function CatalogPage() {
               { v: "matriculas_total", l: "Matrículas" },
               { v: "nome", l: "Nome" },
             ]} />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9"
+            onClick={() => { setExportCount(null); setExportOpen(true); }}
+          >
+            <Download className="mr-1.5 h-4 w-4" /> Exportar
+          </Button>
         </div>
+
+        <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Exportar leads</DialogTitle>
+              <DialogDescription>
+                Escolha a quantidade e os filtros. Os filtros de UF, status e busca já ativos na tela também são aplicados.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="export-qtd">Quantidade</Label>
+                <Input
+                  id="export-qtd"
+                  type="number"
+                  min={1}
+                  max={EXPORT_MAX}
+                  value={exportQtd}
+                  onChange={(e) => setExportQtd(Math.max(1, Math.min(EXPORT_MAX, +e.target.value || 1)))}
+                />
+                <p className="text-xs text-muted-foreground">Máx. {EXPORT_MAX.toLocaleString("pt-BR")}</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Faixa de score</Label>
+                <Select value={exportFaixa} onValueChange={setExportFaixa}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas</SelectItem>
+                    <SelectItem value="alto">Alto (≥70)</SelectItem>
+                    <SelectItem value="medio">Médio (40-69)</SelectItem>
+                    <SelectItem value="baixo">Baixo (&lt;40)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="export-score-min">Score mín. (opcional)</Label>
+                  <Input
+                    id="export-score-min"
+                    type="number"
+                    min={0}
+                    max={100}
+                    placeholder="0"
+                    value={exportScoreMin}
+                    onChange={(e) => setExportScoreMin(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="export-score-max">Score máx. (opcional)</Label>
+                  <Input
+                    id="export-score-max"
+                    type="number"
+                    min={0}
+                    max={100}
+                    placeholder="100"
+                    value={exportScoreMax}
+                    onChange={(e) => setExportScoreMax(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Tipo de contato</Label>
+                <RadioGroup value={exportContato} onValueChange={(v) => setExportContato(v as any)}>
+                  <label className="flex items-center gap-2 text-sm">
+                    <RadioGroupItem value="secretario" id="contato-secretario" />
+                    Somente secretário(a)
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <RadioGroupItem value="equipe" id="contato-equipe" />
+                    Somente pessoas relacionadas (equipe)
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <RadioGroupItem value="ambos" id="contato-ambos" />
+                    Ambos
+                  </label>
+                </RadioGroup>
+              </div>
+
+              {exportMut.isError && (
+                <p className="text-sm text-red-600">
+                  Erro ao exportar: {(exportMut.error as Error).message}
+                </p>
+              )}
+              {exportCount != null && !exportMut.isPending && (
+                <p className="text-sm text-emerald-700">✓ {exportCount.toLocaleString("pt-BR")} município(s) exportado(s)</p>
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button
+                variant="outline"
+                disabled={exportMut.isPending}
+                onClick={() => exportMut.mutate("csv")}
+              >
+                {exportMut.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Exportar CSV
+              </Button>
+              <Button
+                disabled={exportMut.isPending}
+                onClick={() => exportMut.mutate("xlsx")}
+              >
+                {exportMut.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Exportar Excel (.xlsx)
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {orderBy === "matriculas_total" && matriculasCoberturaBaixa && (
+          <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              Apenas {(stats.data?.comMatriculas ?? 0).toLocaleString("pt-BR")} de {(stats.data?.total ?? 0).toLocaleString("pt-BR")} municípios
+              têm matrículas importadas — a ordenação por Matrículas pode não refletir todos os dados ainda.
+            </span>
+          </div>
+        )}
 
         <div className="rounded-lg border border-border bg-white">
           <Table>

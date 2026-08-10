@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { adminGetStats, adminResetDados, adminSyncIBGE } from "@/lib/admin.functions";
 import { Button } from "@/components/ui/button";
-import { Database, Users, Mail, GraduationCap, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { Database, Users, Mail, GraduationCap, Gauge, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 export const Route = createFileRoute("/_authenticated/admin/")({
@@ -40,6 +40,7 @@ function AdminDashboard() {
         <StatCard icon={<Users />} label="Com contatos" value={stats.data?.comContatos ?? 0} />
         <StatCard icon={<Mail />} label="Validados" value={stats.data?.validados ?? 0} accent="emerald" />
         <StatCard icon={<GraduationCap />} label="Com matrículas" value={stats.data?.comMatriculas ?? 0} accent="blue" />
+        <StatCard icon={<Gauge />} label="Score nunca calculado" value={stats.data?.scoreNaoCalculado ?? 0} accent="amber" />
       </div>
 
       <div className="rounded-lg border border-border bg-white p-6">
@@ -82,8 +83,8 @@ function AdminDashboard() {
   );
 }
 
-function StatCard({ icon, label, value, accent }: { icon: React.ReactNode; label: string; value: number; accent?: "emerald" | "blue" }) {
-  const color = accent === "emerald" ? "text-emerald-700 bg-emerald-50" : accent === "blue" ? "text-blue-700 bg-blue-50" : "text-slate-700 bg-slate-100";
+function StatCard({ icon, label, value, accent }: { icon: React.ReactNode; label: string; value: number; accent?: "emerald" | "blue" | "amber" }) {
+  const color = accent === "emerald" ? "text-emerald-700 bg-emerald-50" : accent === "blue" ? "text-blue-700 bg-blue-50" : accent === "amber" ? "text-amber-700 bg-amber-50" : "text-slate-700 bg-slate-100";
   return (
     <div className="rounded-lg border border-border bg-white p-4">
       <div className={`inline-flex rounded-md p-2 ${color}`}>{icon}</div>

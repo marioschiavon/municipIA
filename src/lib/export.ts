@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import type { ProspectResult } from "./prospect.types";
+import type { ExportMunicipioRow } from "./catalog.functions";
 
 export type ExportRow = {
   municipio: string;
@@ -87,6 +88,107 @@ export function exportCSV(rows: ExportRow[]) {
     type: "text/csv;charset=utf-8",
   });
   download(blob, `municipia_contatos_${today()}.csv`);
+}
+
+// ============ Export do catálogo de municípios (leads) ============
+
+const municipioHeaders = [
+  "Município",
+  "UF",
+  "Score",
+  "Faixa",
+  "Status",
+  "Secretário(a)",
+  "Cargo",
+  "E-mail(s)",
+  "Telefone(s)",
+  "Horário",
+  "Equipe",
+  "População",
+  "Matrículas",
+  "FNDE anual",
+  "Atualizado em",
+];
+
+const FAIXA_LABEL_PT: Record<string, string> = {
+  alto: "Alto",
+  medio: "Médio",
+  baixo: "Baixo",
+};
+
+function municipioEquipeToStr(r: ExportMunicipioRow): string {
+  const eq = r.equipe ?? [];
+  if (eq.length === 0) return "";
+  return eq
+    .map((m) => {
+      const parts = [m.nome];
+      if (m.cargo) parts.push(`(${m.cargo})`);
+      const contatos = [m.email, m.telefone].filter(Boolean).join(" / ");
+      if (contatos) parts.push(`— ${contatos}`);
+      return parts.join(" ");
+    })
+    .join(" | ");
+}
+
+function municipioRowFor(r: ExportMunicipioRow) {
+  return [
+    r.nome,
+    r.uf,
+    r.score,
+    FAIXA_LABEL_PT[r.faixa] ?? r.faixa,
+    r.status,
+    r.secretario ?? "",
+    r.cargo ?? "",
+    r.emails.join("; "),
+    r.telefones.join("; "),
+    r.horario ?? "",
+    municipioEquipeToStr(r),
+    r.populacao,
+    r.matriculas_total,
+    r.fnde_anual,
+    r.atualizado_em ?? "",
+  ];
+}
+
+export function exportMunicipiosCSV(rows: ExportMunicipioRow[]) {
+  const lines = [municipioHeaders.map(csvEscape).join(";")];
+  for (const r of rows) {
+    lines.push(municipioRowFor(r).map((v) => csvEscape(String(v))).join(";"));
+  }
+  const blob = new Blob(["﻿" + lines.join("\r\n")], {
+    type: "text/csv;charset=utf-8",
+  });
+  download(blob, `municipia_leads_${today()}.csv`);
+}
+
+export function exportMunicipiosXLSX(rows: ExportMunicipioRow[]) {
+  const aoa = [municipioHeaders, ...rows.map(municipioRowFor)];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const colWidths = municipioHeaders.map((h, i) => {
+    const maxLen = Math.max(
+      h.length,
+      ...rows.map((r) => String(municipioRowFor(r)[i] ?? "").length),
+    );
+    return { wch: Math.min(Math.max(maxLen + 2, 12), 50) };
+  });
+  ws["!cols"] = colWidths;
+  for (let c = 0; c < municipioHeaders.length; c++) {
+    const addr = XLSX.utils.encode_cell({ r: 0, c });
+    const cell = ws[addr];
+    if (cell) {
+      cell.s = {
+        font: { bold: true },
+        fill: { fgColor: { rgb: "EEEEEE" } },
+      };
+    }
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Leads");
+  const out = XLSX.write(wb, { bookType: "xlsx", type: "array", cellStyles: true });
+  const blob = new Blob([out], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  download(blob, `municipia_leads_${today()}.xlsx`);
 }
 
 export function exportXLSX(rows: ExportRow[]) {
