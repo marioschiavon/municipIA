@@ -5,7 +5,7 @@ const Input = z.object({
   municipio: z.string().min(1),
   uf: z.string().length(2),
   ibgeId: z.number().int().positive().optional(),
-  fase: z.enum(["completo", "dominio", "secretario", "contato"]).default("completo"),
+  fase: z.enum(["completo", "dominio", "secretario", "contato", "rapido"]).default("completo"),
 });
 
 export const Route = createFileRoute("/api/prospect")({
@@ -74,7 +74,7 @@ export const Route = createFileRoute("/api/prospect")({
         }
 
 
-        const { prospectar, prospectarDominio, prospectarSecretario, prospectarContato } = await import("@/lib/prospect.server");
+        const { prospectar, prospectarDominio, prospectarSecretario, prospectarContato, prospectarRapido } = await import("@/lib/prospect.server");
         const encoder = new TextEncoder();
 
         const stream = new ReadableStream<Uint8Array>({
@@ -82,6 +82,10 @@ export const Route = createFileRoute("/api/prospect")({
             const send = (obj: unknown) => {
               controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
             };
+            // "rapido" grava como um resultado completo (nome+contato numa
+            // linha só) e conta como tentativa completa para o cursor do
+            // rodízio — não existe fase isolada "rapido" no banco.
+            const persistFase = fase === "rapido" ? "completo" : fase;
             try {
               let result;
               if (fase === "dominio") {
@@ -93,15 +97,18 @@ export const Route = createFileRoute("/api/prospect")({
               } else if (fase === "contato") {
                 result = await prospectarContato(municipio, uf, dominioConfirmado!, (evt) => send(evt), paginaEducacaoConhecida);
                 send({ kind: "final", result, ts: Date.now() });
+              } else if (fase === "rapido") {
+                result = await prospectarRapido(municipio, uf, (evt) => send(evt));
+                send({ kind: "final", result, ts: Date.now() });
               } else {
                 // prospectar() já emite seu próprio evento "kind: final" internamente (sendFinal).
                 result = await prospectar(municipio, uf, (evt) => send(evt), ibgeId, dominioConfirmado, paginaEducacaoConhecida);
               }
-              // Persistir se temos ibgeId
+              // Persistir se temos ibgeId.
               if (ibgeId && result) {
                 try {
                   const { persistProspectResult } = await import("@/lib/catalog-update.server");
-                  await persistProspectResult(ibgeId, result, fase);
+                  await persistProspectResult(ibgeId, result, persistFase);
                   send({
                     kind: "progress",
                     level: "success",
@@ -150,7 +157,7 @@ export const Route = createFileRoute("/api/prospect")({
               if (ibgeId) {
                 try {
                   const { marcarTentativaProspeccao } = await import("@/lib/catalog-update.server");
-                  await marcarTentativaProspeccao(ibgeId, fase);
+                  await marcarTentativaProspeccao(ibgeId, persistFase);
                 } catch { /* noop */ }
               }
               controller.close();

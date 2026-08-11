@@ -4,8 +4,10 @@ import { useServerFn } from "@tanstack/react-start";
 import { getMyRole } from "@/lib/admin.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { APP_VERSION } from "@/lib/version";
 import { Database, Home, Sliders, LogOut, Loader2, ShieldAlert, Upload, ListChecks } from "lucide-react";
+import { ProspeccaoLoteProvider, useProspeccaoLote } from "@/lib/prospeccao-lote-context";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   component: AdminLayout,
@@ -40,37 +42,60 @@ function AdminLayout() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-foreground">
-      <header className="border-b border-border bg-white">
-        <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 py-3">
-          <div className="flex items-center gap-4">
-            <Link to="/admin" className="flex items-center gap-2">
-              <div className="rounded-md bg-primary/10 p-2"><Database className="h-4 w-4 text-primary" /></div>
-              <div>
-                <h1 className="text-base font-bold tracking-tight">MunicipIA · Admin</h1>
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{APP_VERSION}</p>
-              </div>
-            </Link>
-            <nav className="ml-6 flex items-center gap-1 text-sm">
-              <NavLink to="/admin" icon={<Home className="h-4 w-4" />}>Dashboard</NavLink>
-              <NavLink to="/admin/municipios" icon={<Database className="h-4 w-4" />}>Municípios</NavLink>
-              <NavLink to="/admin/prospeccao" icon={<ListChecks className="h-4 w-4" />}>Prospecção em lotes</NavLink>
-              <NavLink to="/admin/import" icon={<Upload className="h-4 w-4" />}>Importar</NavLink>
-              <NavLink to="/admin/score" icon={<Sliders className="h-4 w-4" />}>Pesos do score</NavLink>
-            </nav>
+    <ProspeccaoLoteProvider>
+      <div className="min-h-screen bg-slate-50 text-foreground">
+        <header className="border-b border-border bg-white">
+          <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 py-3">
+            <div className="flex items-center gap-4">
+              <Link to="/admin" className="flex items-center gap-2">
+                <div className="rounded-md bg-primary/10 p-2"><Database className="h-4 w-4 text-primary" /></div>
+                <div>
+                  <h1 className="text-base font-bold tracking-tight">MunicipIA · Admin</h1>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{APP_VERSION}</p>
+                </div>
+              </Link>
+              <nav className="ml-6 flex items-center gap-1 text-sm">
+                <NavLink to="/admin" icon={<Home className="h-4 w-4" />}>Dashboard</NavLink>
+                <NavLink to="/admin/municipios" icon={<Database className="h-4 w-4" />}>Municípios</NavLink>
+                <NavLink to="/admin/prospeccao" icon={<ListChecks className="h-4 w-4" />}>Prospecção em lotes</NavLink>
+                <NavLink to="/admin/import" icon={<Upload className="h-4 w-4" />}>Importar</NavLink>
+                <NavLink to="/admin/score" icon={<Sliders className="h-4 w-4" />}>Pesos do score</NavLink>
+              </nav>
+            </div>
+            <div className="flex items-center gap-3">
+              <LoteEmAndamentoBadge />
+              <Link to="/" className="text-xs text-muted-foreground hover:underline">Ver site público</Link>
+              <Button variant="outline" size="sm" onClick={logout}>
+                <LogOut className="mr-1.5 h-3.5 w-3.5" /> Sair
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Link to="/" className="text-xs text-muted-foreground hover:underline">Ver site público</Link>
-            <Button variant="outline" size="sm" onClick={logout}>
-              <LogOut className="mr-1.5 h-3.5 w-3.5" /> Sair
-            </Button>
-          </div>
-        </div>
-      </header>
-      <main className="mx-auto max-w-[1400px] px-6 py-6">
-        <Outlet />
-      </main>
-    </div>
+        </header>
+        <main className="mx-auto max-w-[1400px] px-6 py-6">
+          <Outlet />
+        </main>
+      </div>
+    </ProspeccaoLoteProvider>
+  );
+}
+
+/** Indicador compacto visível em qualquer página do admin enquanto um lote de
+ * prospecção estiver rodando — evita a impressão de que o lote "sumiu" ao
+ * navegar para outra aba, já que o estado agora vive acima do <Outlet/>. */
+function LoteEmAndamentoBadge() {
+  const { queue } = useProspeccaoLote();
+  if (!queue.running) return null;
+  return (
+    <Link
+      to="/admin/prospeccao"
+      className="flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10"
+    >
+      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      Lote em andamento
+      <Badge variant="outline" className="border-primary/30 bg-white text-[10px] text-primary">
+        {queue.done}/{queue.total}
+      </Badge>
+    </Link>
   );
 }
 

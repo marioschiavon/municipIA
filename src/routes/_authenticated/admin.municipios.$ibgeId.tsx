@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Loader2, Plus, Trash2, Save, Search, RefreshCw, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, Trash2, Save, Search, RefreshCw, AlertTriangle, Zap } from "lucide-react";
 import type { ProgressEvent } from "@/lib/prospect.types";
 import type { ProspectFase } from "@/lib/use-prospect-queue";
 
@@ -95,11 +95,11 @@ function AdminEditMunicipio() {
 
   // ===== Prospecção ao vivo (Firecrawl ou Apify, completa ou por fase) — só admin, sempre salva =====
   const [prospRunning, setProspRunning] = useState(false);
-  const [activeButton, setActiveButton] = useState<"atualizar" | ProspectFase | null>(null);
+  const [activeButton, setActiveButton] = useState<"atualizar" | "rapido" | ProspectFase | null>(null);
   const [prospEvents, setProspEvents] = useState<ProgressEvent[]>([]);
   const prospAbortRef = useRef<AbortController | null>(null);
 
-  async function rodarProspeccao(opts: { fase?: ProspectFase; button: "atualizar" | ProspectFase }) {
+  async function rodarProspeccao(opts: { fase?: ProspectFase | "rapido"; button: "atualizar" | "rapido" | ProspectFase }) {
     if (!data.data?.municipio) return;
     const { nome, uf } = data.data.municipio;
     setProspEvents([]);
@@ -216,8 +216,16 @@ function AdminEditMunicipio() {
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-lg font-semibold">Prospecção ao vivo</h3>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" onClick={() => rodarProspeccao({ fase: "completo", button: "atualizar" })} disabled={prospRunning}>
-              {prospRunning && activeButton === "atualizar" ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Buscando…</> : <><RefreshCw className="mr-1.5 h-4 w-4" /> Atualizar agora</>}
+            <Button
+              size="sm"
+              onClick={() => rodarProspeccao({ fase: "rapido", button: "rapido" })}
+              disabled={prospRunning}
+              title='Busca rápida: pesquisa só "nome e contato do secretário(a) de educação de {município} {UF}" e extrai direto — mais rápida, mas cobre menos terreno que "Atualizar agora"'
+            >
+              {prospRunning && activeButton === "rapido" ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Buscando…</> : <><Zap className="mr-1.5 h-4 w-4" /> Busca rápida</>}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => rodarProspeccao({ fase: "completo", button: "atualizar" })} disabled={prospRunning}>
+              {prospRunning && activeButton === "atualizar" ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Buscando…</> : <><RefreshCw className="mr-1.5 h-4 w-4" /> Atualizar agora (completo)</>}
             </Button>
             <span className="mx-1 h-5 w-px bg-border" />
             <Button size="sm" variant="ghost" onClick={() => rodarProspeccao({ fase: "dominio", button: "dominio" })} disabled={prospRunning} title="Roda só a Fase 1 (descobrir domínio oficial)">

@@ -5,7 +5,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import {
   adminListMunicipioIds,
   adminCountElegiveis,
@@ -14,7 +14,8 @@ import {
   adminResetCicloProspeccao,
 } from "@/lib/admin.functions";
 
-import { useProspectQueue, type QueueLogEntry } from "@/lib/use-prospect-queue";
+import { useProspeccaoLote, type FaseIsolada, type RevisaoItem } from "@/lib/prospeccao-lote-context";
+import type { QueueLogEntry } from "@/lib/use-prospect-queue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -60,11 +61,6 @@ const UFS = [
   "TO",
 ];
 
-type FaseIsolada = "dominio" | "secretario" | "contato";
-
-/** Item da fila lateral de revisão — guarda a fase de origem, já que a fila sobrevive a novos lotes. */
-type RevisaoItem = QueueLogEntry & { fase: FaseIsolada };
-
 /** Rótulos em português para o status técnico da fila (valor interno segue igual). */
 const STATUS_LABEL: Record<QueueLogEntry["status"], string> = {
   found: "OK",
@@ -83,14 +79,6 @@ const FASE_CURTA: Record<FaseIsolada, string> = {
   secretario: "Secretário",
   contato: "Contato",
 };
-// Fase 1/3 são baratas (sem IA ou regex-primeiro) — pausa curta. Fase 2 usa IA por
-// candidato — pausa maior, pra não estourar rate limit do provider. A busca em si
-// (SERP do Apify) já leva 10–40s por município, então a pausa da Fase 1 é curta.
-const FASE_INTERVALO_MS: Record<FaseIsolada, number> = {
-  dominio: 2_000,
-  secretario: 30_000,
-  contato: 15_000,
-};
 
 export const Route = createFileRoute("/_authenticated/admin/prospeccao")({
   component: AdminProspeccao,
@@ -103,17 +91,12 @@ function AdminProspeccao() {
   const resetFn = useServerFn(adminResetCicloProspeccao);
   const qc = useQueryClient();
 
-  const [fase, setFase] = useState<FaseIsolada>("dominio");
-  const [uf, setUf] = useState("all");
-  const [loteSize, setLoteSize] = useState(500);
-  const [modo, setModo] = useState<"continuar" | "repescagem">("continuar");
-  const [revisoes, setRevisoes] = useState<RevisaoItem[]>([]);
-  // Municípios já tratados manualmente (chave `ibge:fase`). Sem isso, o efeito
-  // abaixo reinsere o item na fila assim que `queue.log` muda de referência.
-  const resolvidosRef = useRef<Set<string>>(new Set());
+  // Estado do lote (fase/uf/loteSize/modo/queue/revisões) vive no contexto
+  // montado em admin.tsx, acima do <Outlet/> — sobrevive a navegar para outra
+  // aba do admin e voltar, ao contrário de useState local nesta página.
+  const { fase, setFase, uf, setUf, loteSize, setLoteSize, modo, setModo, revisoes, marcarResolvido: marcarResolvidoCtx, lote, setLote, queue } = useProspeccaoLote();
   const [destaque, setDestaque] = useState<number | null>(null);
   const [detalheId, setDetalheId] = useState<number | null>(null);
-  const [lote, setLote] = useState<{ inicio: string; fim: string } | null>(null);
   const [resetando, setResetando] = useState(false);
 
   const filtros = { uf: uf === "all" ? undefined : uf };
@@ -127,25 +110,6 @@ function AdminProspeccao() {
     queryKey: ["admin-prospeccao-ciclo", fase, filtros],
     queryFn: () => cicloFn({ data: { fase, ...filtros } }),
   });
-
-  const queue = useProspectQueue(FASE_INTERVALO_MS[fase]);
-
-  // Toda entrada do log marcada como "revisar" entra (uma vez) na fila lateral.
-  // Ela permanece lá mesmo depois de novos lotes até o admin tratar o município.
-  useEffect(() => {
-    const pendentes = queue.log.filter((e) => e.result?.revisar);
-    if (pendentes.length === 0) return;
-    setRevisoes((prev) => {
-      const vistos = new Set(prev.map((r) => `${r.ibge_id}:${r.fase}`));
-      const novos = pendentes
-        .filter((e) => {
-          const chave = `${e.ibge_id}:${fase}`;
-          return !vistos.has(chave) && !resolvidosRef.current.has(chave);
-        })
-        .map((e) => ({ ...e, fase }) as RevisaoItem);
-      return novos.length > 0 ? [...novos, ...prev] : prev;
-    });
-  }, [queue.log, fase]);
 
   async function iniciarLote() {
     queue.setLoadingIds(true);
@@ -183,8 +147,7 @@ function AdminProspeccao() {
   }
 
   function marcarResolvido(ibgeId: number, faseItem: FaseIsolada) {
-    resolvidosRef.current.add(`${ibgeId}:${faseItem}`);
-    setRevisoes((prev) => prev.filter((r) => !(r.ibge_id === ibgeId && r.fase === faseItem)));
+    marcarResolvidoCtx(ibgeId, faseItem);
     qc.invalidateQueries({ queryKey: ["admin-prospeccao-count"] });
     qc.invalidateQueries({ queryKey: ["admin-municipios"] });
   }

@@ -1385,6 +1385,101 @@ export async function prospectarContato(
   return empty(motivoContato);
 }
 
+// ============================================================
+// BUSCA RÁPIDA — nome + contato numa única consulta, sem descoberta de
+// domínio nem escalonamento entre múltiplas queries. Pensada para uma
+// checagem pontual a partir da tela do município ("Busca rápida"): mais
+// veloz que prospectar(), mas cobre menos terreno em municípios difíceis.
+// Reaproveita a mesma extração/filtros anti-alucinação do pipeline completo.
+// ============================================================
+export async function prospectarRapido(
+  municipio: string,
+  uf: string,
+  onEvent?: (evt: ProgressEvent) => void,
+): Promise<ProspectResult> {
+  const t0 = Date.now();
+  const emit: Emit = (level, etapa, message, data) => {
+    onEvent?.({ kind: "progress", level, etapa, message, data, ts: Date.now(), elapsedMs: Date.now() - t0 });
+  };
+
+  const search = makeSearchDispatcher(emit);
+  const slug = slugify(municipio);
+  const query = `nome e contato do secretário(a) de educação de ${municipio} ${uf}`;
+  emit("info", "nome", `Busca rápida: "${query}"`);
+
+  const cands = await search(query, "nome", { limit: 8, timeoutMs: 8000, uf });
+  const filtrados = filterForeignMunicipio(dedupeByUrl(cands), slug, emit, "nome");
+  const ranked = preferGov(filtrados, (u) => /(educa|secretari)/i.test(u), uf.toLowerCase());
+
+  if (ranked.length === 0) {
+    emit("warn", "nome", "Busca rápida não retornou resultados");
+    return empty("Busca rápida não encontrou resultados para esta consulta.");
+  }
+
+  const top = ranked[0];
+  const snippets = snippetsBlock(ranked);
+
+  // Primeiro tenta extrair só dos snippets (rápido, sem baixar página nenhuma);
+  // se não achar nome nem contato, baixa a página do melhor resultado e tenta de novo.
+  let ext = snippets
+    ? await extractWithAI(snippets, top.url, "educacao", municipio, uf, emit, { modo: "snippets", topHost: shortHost(top.url) })
+    : null;
+  let fonteUrl = top.url;
+  let fonteLbl = "Busca rápida (snippets)";
+
+  if (!ext || (!ext.secretario && ext.emails.length === 0 && ext.telefones.length === 0)) {
+    const md = await gScrape(top.url, emit, "educacao", { hardTimeoutMs: 15_000 });
+    if (md) {
+      ext = await extractWithAI(md, top.url, "educacao", municipio, uf, emit, { topHost: shortHost(top.url) });
+      fonteUrl = top.url;
+      fonteLbl = "Busca rápida (página)";
+    }
+  }
+
+  if (!ext) {
+    emit("warn", "nome", "Busca rápida não conseguiu extrair dados desta consulta");
+    return empty("Busca rápida não conseguiu extrair nome/contato confiáveis desta consulta.");
+  }
+
+  const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
+  const status: ProspectResult["status"] =
+    ext.secretario && (hasGoodEmail || ext.telefones.length > 0)
+      ? "found"
+      : ext.secretario || hasGoodEmail || ext.telefones.length > 0
+        ? "partial"
+        : "not_found";
+
+  if (status === "not_found") {
+    emit("warn", "nome", "Busca rápida não achou nome nem contato aproveitável");
+    return empty(ext.contexto ?? "Busca rápida não encontrou nome nem contato aproveitável.");
+  }
+
+  const revisar = ext.confianca !== "alta" || (ext.emails.length > 0 && !hasGoodEmail);
+  const motivoRevisao = revisar
+    ? `busca rápida: confiança ${ext.confianca}${ext.emails.length > 0 && !hasGoodEmail ? " · apenas e-mail genérico" : ""}`
+    : null;
+
+  emit("success", "nome", `Busca rápida concluída — ${ext.secretario ?? "sem nome"} · ${ext.emails.length} e-mail(s) · ${ext.telefones.length} tel`);
+
+  return {
+    status,
+    hierarquia: "educacao",
+    secretario: ext.secretario,
+    cargo: ext.cargo,
+    emails: ext.emails,
+    telefones: ext.telefones,
+    fonte: fonteLbl,
+    fonteUrl,
+    contexto: ext.contexto,
+    confianca: ext.confianca,
+    dataReferencia: ext.dataReferencia,
+    horarioAtendimento: ext.horarioAtendimento,
+    equipe: ext.equipe,
+    revisar,
+    motivoRevisao,
+  };
+}
+
 export async function prospectar(
   municipio: string,
   uf: string,
