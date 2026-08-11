@@ -59,12 +59,15 @@ const ListInput = z.object({
 export const listMunicipios = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => ListInput.parse(data))
   .handler(async ({ data }) => {
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // O catálogo é público e já possui RLS + GRANT SELECT para anon.
+    // Usar o cliente publicável evita depender da chave privilegiada, que não
+    // fica disponível no runtime do Lovable Cloud.
+    const { supabase } = await import("@/integrations/supabase/client");
     // Faz uma view manual via join. Usamos duas queries por simplicidade e para
     // funcionar mesmo em municípios sem row em municipios_educacao (LEFT JOIN
     // não é trivial no supabase-js sem função). Como já criamos row para todos
     // no seed, um inner select basta:
-    let q = supabaseAdmin
+    let q = supabase
       .from("municipios_educacao")
       .select("ibge_id, score, faixa, status, atualizado_em, municipios!inner(nome, uf, slug, populacao, matriculas_total, escolas, fnde_anual)", { count: "exact" });
 
@@ -157,12 +160,12 @@ const ExportInput = z.object({
 export const exportMunicipios = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => ExportInput.parse(data))
   .handler(async ({ data }): Promise<{ items: ExportMunicipioRow[] }> => {
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { supabase } = await import("@/integrations/supabase/client");
 
     // Monta uma query nova a cada página (em vez de reaproveitar a mesma
     // instância entre chamadas) — mesmo padrão usado em fetchAllByRange.
     function buildQuery(from: number, to: number) {
-      let q = supabaseAdmin
+      let q = supabase
         .from("municipios_educacao")
         .select(
           "ibge_id, score, faixa, status, secretario, cargo, emails, telefones, horario, equipe, atualizado_em, " +
@@ -233,8 +236,8 @@ export const exportMunicipios = createServerFn({ method: "POST" })
 export const getMunicipio = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => z.object({ ibge_id: z.number().int() }).parse(data))
   .handler(async ({ data }): Promise<MunicipioFicha | null> => {
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: m, error } = await supabaseAdmin
+    const { supabase } = await import("@/integrations/supabase/client");
+    const { data: m, error } = await supabase
       .from("municipios")
       .select("*, municipios_educacao(*)")
       .eq("ibge_id", data.ibge_id)
@@ -345,12 +348,12 @@ export const seedCatalog = createServerFn({ method: "POST" }).handler(async () =
 
 // Stats globais (para header)
 export const getCatalogStats = createServerFn({ method: "GET" }).handler(async () => {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { supabase } = await import("@/integrations/supabase/client");
   const [{ count: total }, { count: alto }, { count: validado }, { count: comMatriculas }] = await Promise.all([
-    supabaseAdmin.from("municipios").select("ibge_id", { count: "exact", head: true }),
-    supabaseAdmin.from("municipios_educacao").select("ibge_id", { count: "exact", head: true }).eq("faixa", "alto"),
-    supabaseAdmin.from("municipios_educacao").select("ibge_id", { count: "exact", head: true }).eq("status", "validado"),
-    supabaseAdmin.from("municipios").select("ibge_id", { count: "exact", head: true }).gt("matriculas_total", 0),
+    supabase.from("municipios").select("ibge_id", { count: "exact", head: true }),
+    supabase.from("municipios_educacao").select("ibge_id", { count: "exact", head: true }).eq("faixa", "alto"),
+    supabase.from("municipios_educacao").select("ibge_id", { count: "exact", head: true }).eq("status", "validado"),
+    supabase.from("municipios").select("ibge_id", { count: "exact", head: true }).gt("matriculas_total", 0),
   ]);
   return { total: total ?? 0, alto: alto ?? 0, validado: validado ?? 0, comMatriculas: comMatriculas ?? 0 };
 });
