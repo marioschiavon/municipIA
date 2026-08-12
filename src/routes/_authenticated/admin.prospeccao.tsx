@@ -526,6 +526,25 @@ function RevisaoCard({
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         {r?.motivoRevisao ?? item.motivo ?? "Confiança baixa — revise antes de confiar neste dado."}
       </p>
+      {(r?.fontesAiOverview?.length ?? 0) > 0 && (
+        <div className="space-y-0.5 rounded bg-muted/50 p-1.5 text-[10px] leading-snug">
+          <span className="font-medium text-muted-foreground">
+            Fontes da Visão Geral por IA{r?.dataReferencia ? ` — referência: ${r.dataReferencia}` : ""}
+          </span>
+          {(r?.fontesAiOverview ?? []).slice(0, 4).map((f, i) => (
+            <a
+              key={`${f.url ?? i}`}
+              href={f.url ?? "#"}
+              target="_blank"
+              rel="noreferrer"
+              className="block truncate text-blue-700 underline underline-offset-2"
+              title={f.url ?? f.title ?? ""}
+            >
+              {f.title || f.url}
+            </a>
+          ))}
+        </div>
+      )}
       {(fase === "dominio" || fase === "completo") && (
         <Input
           value={dominio}
