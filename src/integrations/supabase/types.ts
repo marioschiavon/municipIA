@@ -223,6 +223,30 @@ export type Database = {
         }
         Relationships: []
       }
+      prospect_query_config: {
+        Row: {
+          created_at: string
+          id: number
+          query_ai_overview: string
+          updated_at: string
+          variantes: Json
+        }
+        Insert: {
+          created_at?: string
+          id?: number
+          query_ai_overview?: string
+          updated_at?: string
+          variantes?: Json
+        }
+        Update: {
+          created_at?: string
+          id?: number
+          query_ai_overview?: string
+          updated_at?: string
+          variantes?: Json
+        }
+        Relationships: []
+      }
       score_config: {
         Row: {
           id: number
