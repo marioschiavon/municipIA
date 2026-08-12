@@ -154,7 +154,7 @@ const ListAllIdsInput = z.object({
   uf: z.string().length(2).optional(),
   status: z.string().optional(),
   q: z.string().optional(),
-  fase: z.enum(["dominio", "secretario", "contato"]).optional(),
+  fase: z.enum(["dominio", "secretario", "contato", "completo"]).optional(),
   /** Tamanho do lote — o servidor já devolve só o necessário, na ordem do rodízio. */
   limit: z.number().int().min(1).max(5000).optional(),
   /** "continuar" = nunca tentados primeiro; "repescagem" = só os já tentados (mais antigos primeiro). */
@@ -166,6 +166,7 @@ const TENTATIVA_COL = {
   dominio: "tentativa_dominio_em",
   secretario: "tentativa_secretario_em",
   contato: "tentativa_contato_em",
+  completo: "tentativa_completo_em",
 } as const;
 
 // Filtro de elegibilidade quando a consulta parte de `municipios_educacao`
@@ -174,6 +175,7 @@ const TENTATIVA_COL = {
 function applyFaseFilterEdu(q: any, fase: ProspectFaseFiltro) {
   if (fase === "dominio") return q.is("dominio_oficial", null);
   if (fase === "secretario") return q.not("dominio_oficial", "is", null).is("secretario", null);
+  if (fase === "completo") return q.or("secretario.is.null,and(emails.eq.{},telefones.eq.{})");
   return q
     .not("dominio_oficial", "is", null)
     .eq("emails", "{}")
@@ -234,7 +236,7 @@ export const adminListMunicipioIds = createServerFn({ method: "POST" })
 
 // ============ CICLO DE PROSPECÇÃO (quanto do rodízio já foi percorrido) ============
 const CicloInput = z.object({
-  fase: z.enum(["dominio", "secretario", "contato"]),
+  fase: z.enum(["dominio", "secretario", "contato", "completo"]),
   uf: z.string().length(2).optional(),
   q: z.string().optional(),
   status: z.string().optional(),
@@ -285,7 +287,7 @@ export const adminResetCicloProspeccao = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
     z.object({
-      fase: z.enum(["dominio", "secretario", "contato"]),
+      fase: z.enum(["dominio", "secretario", "contato", "completo"]),
       uf: z.string().length(2).optional(),
     }).parse(d),
   )
@@ -323,7 +325,7 @@ export const adminResetCicloProspeccao = createServerFn({ method: "POST" })
 
 // ============ COUNT ELEGÍVEIS (badge "N elegíveis" na tela de lote) ============
 const CountElegiveisInput = z.object({
-  fase: z.enum(["dominio", "secretario", "contato"]),
+  fase: z.enum(["dominio", "secretario", "contato", "completo"]),
   uf: z.string().length(2).optional(),
   status: z.string().optional(),
   q: z.string().optional(),
@@ -424,7 +426,7 @@ const SaveInput = z.object({
   // Fases da fila de revisão a considerar resolvidas por este save (o admin
   // corrigiu ou confirmou manualmente) — remove as entradas correspondentes
   // de revisao_motivos em vez de esperar a próxima run automática.
-  limparRevisaoFases: z.array(z.enum(["dominio", "secretario", "contato"])).optional(),
+  limparRevisaoFases: z.array(z.enum(["dominio", "secretario", "contato", "completo"])).optional(),
 });
 
 export const adminSaveMunicipio = createServerFn({ method: "POST" })
@@ -602,7 +604,7 @@ export const adminFetchFndeAtual = createServerFn({ method: "POST" })
 // a sinalização (admin conferiu e aceitou o dado como está).
 const ResolveRevisaoInput = z.object({
   ibge_id: z.number().int(),
-  fase: z.enum(["dominio", "secretario", "contato"]),
+  fase: z.enum(["dominio", "secretario", "contato", "completo"]),
   patch: z
     .object({
       dominio_oficial: z.string().nullable().optional(),
