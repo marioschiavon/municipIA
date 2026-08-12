@@ -9,6 +9,7 @@ export function renderQueryTemplate(template: string, municipio: string, uf: str
   return template
     .replace(/\{municipio\}/gi, municipio)
     .replace(/\{uf\}/gi, uf)
+    .replace(/\{ano\}/gi, String(new Date().getFullYear()))
     .trim();
 }
 

@@ -33,6 +33,8 @@ export type ProspectResult = {
   confianca?: "alta" | "media" | "baixa" | null;
   /** true quando o resultado é fraco/incerto e deve entrar na fila de revisão manual do admin. */
   revisar?: boolean;
+  /** Fontes citadas pela Visão Geral por IA do Google nesta run (para julgar atualidade). */
+  fontesAiOverview?: Array<{ url?: string; title?: string }> | null;
   /** Motivo curto do `revisar`, ex.: "confiança baixa", "apenas e-mail genérico (ouvidoria)". */
   motivoRevisao?: string | null;
 };
