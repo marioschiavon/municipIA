@@ -1518,7 +1518,7 @@ export async function prospectarRapido(
 
   const search = makeSearchDispatcher(emit);
   const slug = slugify(municipio);
-  const query = `nome e contato do secretário(a) de educação de ${municipio} ${uf}`;
+  const query = await getQueryAiOverview(municipio, uf);
   emit("info", "nome", `Busca rápida: "${query}"`);
 
   // --- PASSO 1: Visão Geral por IA (SERP renderizada) — antes dos snippets ---
@@ -1768,7 +1768,7 @@ export async function prospectar(
   // confirmado): é rápido, costuma trazer nome + contato com fontes citadas e
   // evita rastrear o site quando já resolve. O bloco capturado é reaproveitado
   // mais abaixo no Estágio 1, sem custo extra.
-  const queryAiOverview = `nome e contato do secretário(a) de educação de ${municipio} ${uf}`;
+  const queryAiOverview = await getQueryAiOverview(municipio, uf);
   const dominioParaFonte = dominioConfirmado ?? dominioOficial ?? null;
   let aiOverviewPre = await buscarAiOverviewRenderizado(queryAiOverview, emit, "nome", { timeoutMs: 120_000 });
   let aiOverviewPreExt: Extracted | null = null;
