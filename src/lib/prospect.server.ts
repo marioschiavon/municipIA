@@ -1866,23 +1866,19 @@ export async function prospectar(
       return melhor;
     };
 
-    emit("info", "educacao", `Estágio 0 — domínio oficial já confirmado (${dominioConfirmado}); pulando Google/Apify`);
+    emit("info", "educacao", `Estágio 0 — domínio oficial já confirmado (${dominioConfirmado}); tentando páginas do próprio site`);
     const stage0 = await withTimeout(runConfirmedDomainFlow(), 45_000, "runConfirmedDomainFlow", emit, "educacao");
-    if (stage0) return sendFinal(stage0);
-    emit("warn", "educacao", "Domínio confirmado não teve página localizável — not_found (sem fallback ao Google, por decisão de produto)");
-    return sendFinal({
-      status: "not_found",
-      hierarquia: null,
-      secretario: null,
-      cargo: null,
-      emails: [],
-      telefones: [],
-      fonte: null,
-      fonteUrl: null,
-      contexto: `Domínio confirmado (${dominioConfirmado}) sem página de contato localizável via sitemap/links.`,
-      horarioAtendimento: null,
-    });
+    if (stage0) {
+      if (!stage0.secretario && aiOverviewPreExt?.secretario) {
+        stage0.secretario = aiOverviewPreExt.secretario;
+        stage0.cargo = stage0.cargo || aiOverviewPreExt.cargo || "Secretário(a) Municipal de Educação";
+        stage0.nomeFonte = "ai-overview";
+      }
+      return sendFinal(stage0);
+    }
+    emit("warn", "educacao", "Estágio 0 sem página localizável — seguindo para a busca ampla (snippets + site oficial)");
   }
+
 
   // Pool global de snippets — reaproveitado entre estágios.
   const snippetPool: SearchCandidate[] = [];
