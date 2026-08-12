@@ -7,7 +7,7 @@ import { z } from "zod";
 import { getExtractionModel } from "./ai-gateway.server";
 import { fetchHtml, htmlToMarkdown, extractContactsRegex } from "./scraper.server";
 
-import { googleSerp, ragBrowse, type ApifyPage } from "./apify.server";
+import { googleSerp, googleAiOverview, ragBrowse, type ApifyPage } from "./apify.server";
 import type { SerpExtras } from "./apify.server";
 import type {
   EtapaTag,
@@ -567,6 +567,34 @@ function aiOverviewHasOfficialSource(overview: SerpExtras["aiOverview"], dominio
     return sources.some((u) => stripWww(shortHost(u)) === dom || u.includes(`.${dom}/`) || u.endsWith(`.${dom}`));
   }
   return sources.some((u) => /\.gov\.br/.test(u));
+}
+
+/** Busca o bloco "Visão Geral por IA" com o ator que RENDERIZA a SERP.
+ * É a primeira tentativa do pipeline — o SERP clássico (snippets) só entra depois.
+ * Nunca lança: qualquer falha vira null e o fluxo normal continua. */
+async function buscarAiOverviewRenderizado(
+  query: string,
+  emit: Emit,
+  etapa: EtapaTag,
+  opts: { timeoutMs?: number } = {},
+): Promise<SerpExtras["aiOverview"]> {
+  try {
+    emit("info", etapa, `Visão Geral por IA (Google) — abrindo SERP renderizada: "${query}"`);
+    const r = await googleAiOverview(query, { timeoutMs: opts.timeoutMs ?? 120_000 });
+    if (!r.ok) {
+      emit("warn", etapa, `Visão Geral por IA indisponível (${r.reason}) — seguindo pelos snippets`);
+      return null;
+    }
+    if (!r.aiOverview?.text) {
+      emit("info", etapa, "Google não exibiu Visão Geral por IA para esta consulta — seguindo pelos snippets");
+      return null;
+    }
+    emit("success", etapa, `Visão Geral por IA capturada (${r.aiOverview.text.length} caracteres, ${r.aiOverview.sources?.length ?? 0} fonte(s))`);
+    return r.aiOverview;
+  } catch (e) {
+    emit("warn", etapa, `Visão Geral por IA falhou: ${String(e)} — seguindo pelos snippets`);
+    return null;
+  }
 }
 
 /** Tenta extrair nome e contatos diretamente da Visão Geral por IA do Google.
@@ -1493,14 +1521,16 @@ export async function prospectarRapido(
   const query = `nome e contato do secretário(a) de educação de ${municipio} ${uf}`;
   emit("info", "nome", `Busca rápida: "${query}"`);
 
-  const out = await search(query, "nome", { limit: 8, timeoutMs: 8000, uf });
-  const cands = out.cands;
-  const filtrados = filterForeignMunicipio(dedupeByUrl(cands), slug, emit, "nome");
-  const ranked = preferGov(filtrados, (u) => /(educa|secretari)/i.test(u), uf.toLowerCase());
-
-  // --- AI Overview do Google (Visão Geral por IA) — tentativa de atalho de alta confiança ---
-  if (out.serpExtras.aiOverview?.text) {
-    const aiExt = await extractFromAiOverview(out.serpExtras.aiOverview, municipio, uf, emit, {});
+  // --- PASSO 1: Visão Geral por IA (SERP renderizada) — antes dos snippets ---
+  const aiOverviewRapido = await buscarAiOverviewRenderizado(query, emit, "nome", { timeoutMs: 120_000 });
+  let nomeDoAiOverview: string | null = null;
+  let cargoDoAiOverview: string | null = null;
+  if (aiOverviewRapido?.text) {
+    const aiExt = await extractFromAiOverview(aiOverviewRapido, municipio, uf, emit, {});
+    if (aiExt?.secretario) {
+      nomeDoAiOverview = aiExt.secretario;
+      cargoDoAiOverview = aiExt.cargo ?? null;
+    }
     if (aiExt && (aiExt.secretario || aiExt.emails.length > 0 || aiExt.telefones.length > 0)) {
       const hasGoodEmail = aiExt.emails.some((e) => !GENERIC_LOCAL.test(e));
       if (aiExt.secretario && (hasGoodEmail || aiExt.telefones.length > 0)) {
@@ -1513,21 +1543,46 @@ export async function prospectarRapido(
           emails: aiExt.emails,
           telefones: aiExt.telefones,
           fonte: "Visão Geral por IA do Google (Apify SERP)",
-          fonteUrl: out.serpExtras.aiOverview.sources?.[0]?.url ?? null,
+          fonteUrl: aiOverviewRapido.sources?.[0]?.url ?? null,
           contexto: aiExt.contexto,
-          confianca: aiOverviewHasOfficialSource(out.serpExtras.aiOverview, null) ? "alta" : "media",
+          confianca: aiOverviewHasOfficialSource(aiOverviewRapido, null) ? "alta" : "media",
           dataReferencia: aiExt.dataReferencia,
           horarioAtendimento: aiExt.horarioAtendimento,
           equipe: aiExt.equipe,
-          revisar: !aiOverviewHasOfficialSource(out.serpExtras.aiOverview, null),
-          motivoRevisao: aiOverviewHasOfficialSource(out.serpExtras.aiOverview, null) ? null : "ai-overview: fonte citada não é do domínio oficial",
+          revisar: !aiOverviewHasOfficialSource(aiOverviewRapido, null),
+          motivoRevisao: aiOverviewHasOfficialSource(aiOverviewRapido, null) ? null : "ai-overview: fonte citada não é do domínio oficial",
           nomeFonte: "ai-overview",
         };
       }
     }
   }
 
+  // --- PASSO 2: snippets do SERP clássico ---
+  const out = await search(query, "nome", { limit: 8, timeoutMs: 8000, uf });
+  const cands = out.cands;
+  const filtrados = filterForeignMunicipio(dedupeByUrl(cands), slug, emit, "nome");
+  const ranked = preferGov(filtrados, (u) => /(educa|secretari)/i.test(u), uf.toLowerCase());
+
   if (ranked.length === 0) {
+    // Snippets falharam, mas a Visão Geral por IA já tinha dado o nome — não jogamos fora.
+    if (nomeDoAiOverview) {
+      emit("warn", "nome", "Snippets sem resultado — devolvendo apenas o nome da Visão Geral por IA");
+      return {
+        status: "partial",
+        hierarquia: "educacao",
+        secretario: nomeDoAiOverview,
+        cargo: cargoDoAiOverview ?? "Secretário(a) Municipal de Educação",
+        emails: [],
+        telefones: [],
+        fonte: "Visão Geral por IA do Google (Apify SERP)",
+        fonteUrl: aiOverviewRapido?.sources?.[0]?.url ?? null,
+        contexto: "Nome extraído da Visão Geral por IA; contatos não confirmados.",
+        confianca: aiOverviewHasOfficialSource(aiOverviewRapido, null) ? "media" : "baixa",
+        nomeFonte: "ai-overview",
+        revisar: true,
+        motivoRevisao: "ai-overview: nome sem contato confirmado",
+      };
+    }
     emit("warn", "nome", "Busca rápida não retornou resultados");
     return empty("Busca rápida não encontrou resultados para esta consulta.");
   }
@@ -1555,6 +1610,13 @@ export async function prospectarRapido(
   if (!ext) {
     emit("warn", "nome", "Busca rápida não conseguiu extrair dados desta consulta");
     return empty("Busca rápida não conseguiu extrair nome/contato confiáveis desta consulta.");
+  }
+
+  // Nome vindo da Visão Geral por IA aproveita os contatos achados nos snippets.
+  if (!ext.secretario && nomeDoAiOverview) {
+    ext.secretario = nomeDoAiOverview;
+    ext.cargo = ext.cargo || cargoDoAiOverview || "Secretário(a) Municipal de Educação";
+    emit("info", "nome", `Nome da Visão Geral por IA aproveitado: ${nomeDoAiOverview}`);
   }
 
   const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
@@ -1896,6 +1958,12 @@ export async function prospectar(
   const queryNomeA = `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual`;
   const queryNomeB = `secretário OR secretária de educação ${municipio} ${uf} ${anoAtual} atual`;
   const queryNomeC = `site:${dominioOficial ?? `${slug}.${ufLow}.gov.br`} secretaria educação secretário`;
+  // --- PASSO 1: Visão Geral por IA do Google (SERP renderizada) ---
+  // Roda ANTES dos snippets: um ator com navegador real abre a SERP e captura o
+  // bloco "Visão Geral por IA", que o SERP clássico (HTML estático) nunca traz.
+  let aiOverviewBloco = await buscarAiOverviewRenderizado(queryNome0, emit, "nome", { timeoutMs: 120_000 });
+
+  // --- PASSO 2: snippets do SERP clássico ---
   const [outNome0, outNomeA, outNomeB, outNomeC] = await Promise.all([
     search(queryNome0, "nome", { limit: 8, timeoutMs: 8000, uf }),
     search(queryNomeA, "nome", { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf }),
@@ -1909,11 +1977,15 @@ export async function prospectar(
     outNomeC.cands,
   ];
 
-  // --- AI Overview do Google (Visão Geral por IA) — atalho no Estágio 1 ---
-  // QueryNome0 é a consulta mais ampla e tem mais chance de disparar o bloco.
+  // Se o ator renderizado não trouxe nada, ainda aproveitamos o bloco que
+  // eventualmente venha no SERP clássico.
+  if (!aiOverviewBloco?.text && outNome0.serpExtras.aiOverview?.text) {
+    aiOverviewBloco = outNome0.serpExtras.aiOverview;
+  }
+
   let aiOverviewShort: Extracted | null = null;
-  if (outNome0.serpExtras.aiOverview?.text) {
-    const aiExt = await extractFromAiOverview(outNome0.serpExtras.aiOverview, municipio, uf, emit, {
+  if (aiOverviewBloco?.text) {
+    const aiExt = await extractFromAiOverview(aiOverviewBloco, municipio, uf, emit, {
       dominioOficial: dominioOficial ?? null,
     });
     if (aiExt && (aiExt.secretario || aiExt.emails.length > 0 || aiExt.telefones.length > 0)) {
@@ -2047,7 +2119,7 @@ export async function prospectar(
     const hasAiContact = ai.emails.some((e) => !GENERIC_LOCAL.test(e)) || ai.telefones.length > 0;
     if ((aiNameMatches || !nomeSecretario) && hasAiContact) {
       emit("success", "nome", `✨ Atalho da Visão Geral por IA do Google — nome + contato em um único bloco`);
-      const official = aiOverviewHasOfficialSource(outNome0.serpExtras.aiOverview, null);
+      const official = aiOverviewHasOfficialSource(aiOverviewBloco, null);
       return sendFinal({
         status: "found",
         hierarquia: "educacao",

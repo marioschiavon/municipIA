@@ -282,3 +282,45 @@ export async function googleSerp(
 }
 
 
+// ---------- Google AI Overviews (ator que renderiza a página) ----------
+// apify/google-ai-overviews-scraper roda um navegador real na SERP e devolve o
+// bloco "Visão Geral por IA" (que o google-search-scraper clássico não captura,
+// pois o Google não serve esse bloco no HTML estático).
+
+/** Corta o rodapé de UI do Google (feedback, compartilhar, avisos de IA) do texto do bloco. */
+function limparTextoAiOverview(text: string): string {
+  const marcadores = [
+    /Odpowiedzi wygenerowane przez AI/i,
+    /As respostas geradas por IA/i,
+    /AI responses may include mistakes/i,
+    /Informacje o tej odpowiedzi/i,
+    /Zapisz na Dysku Google/i,
+    /Sobre esta resposta/i,
+  ];
+  let cut = text.length;
+  for (const m of marcadores) {
+    const idx = text.search(m);
+    if (idx >= 0 && idx < cut) cut = idx;
+  }
+  return text.slice(0, cut).trim();
+}
+
+export async function googleAiOverview(
+  query: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<
+  | { ok: true; aiOverview: NonNullable<SerpExtras["aiOverview"]> | null; elapsedMs: number }
+  | { ok: false; reason: string; elapsedMs: number }
+> {
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+  const r = await runActorSync("apify~google-ai-overviews-scraper", { queries: query }, timeoutMs);
+  if (!r.ok) return r;
+  const item = r.items.find((it) => typeof it.text === "string" && (it.text as string).trim().length > 0);
+  if (!item) return { ok: true, aiOverview: null, elapsedMs: r.elapsedMs };
+  const text = limparTextoAiOverview(String(item.text));
+  if (!text) return { ok: true, aiOverview: null, elapsedMs: r.elapsedMs };
+  const sources = ((item.sources as Array<{ url?: string; title?: string }> | undefined) ?? []).filter(
+    (s) => s?.url || s?.title,
+  );
+  return { ok: true, aiOverview: { text, sources }, elapsedMs: r.elapsedMs };
+}
