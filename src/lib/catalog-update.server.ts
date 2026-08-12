@@ -66,6 +66,7 @@ export const TENTATIVA_COL = {
   dominio: "tentativa_dominio_em",
   secretario: "tentativa_secretario_em",
   contato: "tentativa_contato_em",
+  completo: "tentativa_completo_em",
 } as const;
 
 /**
@@ -78,7 +79,12 @@ export async function marcarTentativaProspeccao(ibgeId: number, fase: ProspectFa
   const now = new Date().toISOString();
   const patch =
     fase === "completo"
-      ? { tentativa_dominio_em: now, tentativa_secretario_em: now, tentativa_contato_em: now }
+      ? {
+          tentativa_completo_em: now,
+          tentativa_dominio_em: now,
+          tentativa_secretario_em: now,
+          tentativa_contato_em: now,
+        }
       : { [TENTATIVA_COL[fase]]: now };
   await supabaseAdmin
     .from("municipios_educacao")
