@@ -73,11 +73,13 @@ const FASE_LABEL: Record<FaseIsolada, string> = {
   dominio: "Fase 1 — Domínio",
   secretario: "Fase 2 — Secretário",
   contato: "Fase 3 — Contato",
+  completo: "Lote completo (3 em 1)",
 };
 const FASE_CURTA: Record<FaseIsolada, string> = {
   dominio: "Domínio",
   secretario: "Secretário",
   contato: "Contato",
+  completo: "Completo",
 };
 
 export const Route = createFileRoute("/_authenticated/admin/prospeccao")({
@@ -169,14 +171,16 @@ function AdminProspeccao() {
         <p className="text-sm text-muted-foreground">
           Cada fase roda separadamente sobre um lote de municípios — domínio primeiro, depois
           secretário e contato (que já usam o domínio confirmado, sem buscar no Google/Apify de
-          novo). Resultados fracos vão para a fila de revisão ao lado e só saem de lá quando você
-          atualizar o município.
+          novo). No <strong>Lote completo</strong> as três etapas rodam de uma vez por município,
+          começando pela Visão Geral por IA do Google (navegador real na SERP, com as fontes) e só
+          depois pelos snippets e pelo site oficial. Resultados fracos vão para a fila de revisão ao
+          lado e só saem de lá quando você atualizar o município.
         </p>
       </div>
 
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-white p-4">
         <div className="flex gap-1 rounded-md border border-border p-1">
-          {(["dominio", "secretario", "contato"] as const).map((f) => (
+          {(["dominio", "secretario", "contato", "completo"] as const).map((f) => (
             <Button
               key={f}
               size="sm"
@@ -454,21 +458,29 @@ function RevisaoCard({
   async function salvar() {
     setSaving(true);
     try {
+      const listas = {
+        emails: emailsText
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        telefones: telefonesText
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      };
       const patch =
         fase === "dominio"
           ? { dominio_oficial: dominio || null }
           : fase === "secretario"
             ? { secretario: secretario || null, cargo: cargo || null }
-            : {
-                emails: emailsText
-                  .split("\n")
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-                telefones: telefonesText
-                  .split("\n")
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-              };
+            : fase === "contato"
+              ? listas
+              : {
+                  dominio_oficial: dominio || null,
+                  secretario: secretario || null,
+                  cargo: cargo || null,
+                  ...listas,
+                };
       await resolveFn({ data: { ibge_id: item.ibge_id, fase, patch } });
       onResolvido();
     } finally {
@@ -514,14 +526,14 @@ function RevisaoCard({
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         {r?.motivoRevisao ?? item.motivo ?? "Confiança baixa — revise antes de confiar neste dado."}
       </p>
-      {fase === "dominio" && (
+      {(fase === "dominio" || fase === "completo") && (
         <Input
           value={dominio}
           onChange={(e) => setDominio(e.target.value)}
           placeholder="domínio oficial (ex.: abadiadegoias.go.gov.br)"
         />
       )}
-      {fase === "secretario" && (
+      {(fase === "secretario" || fase === "completo") && (
         <div className="space-y-2">
           <Input
             value={secretario}
@@ -531,7 +543,7 @@ function RevisaoCard({
           <Input value={cargo} onChange={(e) => setCargo(e.target.value)} placeholder="Cargo" />
         </div>
       )}
-      {fase === "contato" && (
+      {(fase === "contato" || fase === "completo") && (
         <div className="space-y-2">
           <Textarea
             rows={2}

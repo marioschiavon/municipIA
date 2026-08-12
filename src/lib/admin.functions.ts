@@ -18,7 +18,7 @@ async function assertAdmin(context: any) {
 // vasculhar sem recorrer ao Google/Apify) e ainda não achou o próprio campo.
 // (Sem checagem de "dado desatualizado há N dias" nesta v1 — reprocessar
 // dado antigo pode ser adicionado depois; por ora elegibilidade = "nunca achado".)
-type ProspectFaseFiltro = "dominio" | "secretario" | "contato";
+type ProspectFaseFiltro = "dominio" | "secretario" | "contato" | "completo";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function applyFaseFilter(q: any, fase?: ProspectFaseFiltro) {
   if (fase === "dominio") return q.is("municipios_educacao.dominio_oficial", null);
@@ -32,6 +32,14 @@ function applyFaseFilter(q: any, fase?: ProspectFaseFiltro) {
       .not("municipios_educacao.dominio_oficial", "is", null)
       .eq("municipios_educacao.emails", "{}")
       .eq("municipios_educacao.telefones", "{}");
+  }
+  // "completo" roda a pipeline inteira (descobre o domínio sozinho): elegível é
+  // quem ainda não tem secretário OU não tem nenhum contato.
+  if (fase === "completo") {
+    return q.or(
+      "secretario.is.null,and(emails.eq.{},telefones.eq.{})",
+      { referencedTable: "municipios_educacao" },
+    );
   }
   return q;
 }
@@ -146,7 +154,7 @@ const ListAllIdsInput = z.object({
   uf: z.string().length(2).optional(),
   status: z.string().optional(),
   q: z.string().optional(),
-  fase: z.enum(["dominio", "secretario", "contato"]).optional(),
+  fase: z.enum(["dominio", "secretario", "contato", "completo"]).optional(),
   /** Tamanho do lote — o servidor já devolve só o necessário, na ordem do rodízio. */
   limit: z.number().int().min(1).max(5000).optional(),
   /** "continuar" = nunca tentados primeiro; "repescagem" = só os já tentados (mais antigos primeiro). */
@@ -158,6 +166,7 @@ const TENTATIVA_COL = {
   dominio: "tentativa_dominio_em",
   secretario: "tentativa_secretario_em",
   contato: "tentativa_contato_em",
+  completo: "tentativa_completo_em",
 } as const;
 
 // Filtro de elegibilidade quando a consulta parte de `municipios_educacao`
@@ -166,6 +175,7 @@ const TENTATIVA_COL = {
 function applyFaseFilterEdu(q: any, fase: ProspectFaseFiltro) {
   if (fase === "dominio") return q.is("dominio_oficial", null);
   if (fase === "secretario") return q.not("dominio_oficial", "is", null).is("secretario", null);
+  if (fase === "completo") return q.or("secretario.is.null,and(emails.eq.{},telefones.eq.{})");
   return q
     .not("dominio_oficial", "is", null)
     .eq("emails", "{}")
@@ -226,7 +236,7 @@ export const adminListMunicipioIds = createServerFn({ method: "POST" })
 
 // ============ CICLO DE PROSPECÇÃO (quanto do rodízio já foi percorrido) ============
 const CicloInput = z.object({
-  fase: z.enum(["dominio", "secretario", "contato"]),
+  fase: z.enum(["dominio", "secretario", "contato", "completo"]),
   uf: z.string().length(2).optional(),
   q: z.string().optional(),
   status: z.string().optional(),
@@ -277,7 +287,7 @@ export const adminResetCicloProspeccao = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
     z.object({
-      fase: z.enum(["dominio", "secretario", "contato"]),
+      fase: z.enum(["dominio", "secretario", "contato", "completo"]),
       uf: z.string().length(2).optional(),
     }).parse(d),
   )
@@ -315,7 +325,7 @@ export const adminResetCicloProspeccao = createServerFn({ method: "POST" })
 
 // ============ COUNT ELEGÍVEIS (badge "N elegíveis" na tela de lote) ============
 const CountElegiveisInput = z.object({
-  fase: z.enum(["dominio", "secretario", "contato"]),
+  fase: z.enum(["dominio", "secretario", "contato", "completo"]),
   uf: z.string().length(2).optional(),
   status: z.string().optional(),
   q: z.string().optional(),
@@ -416,7 +426,7 @@ const SaveInput = z.object({
   // Fases da fila de revisão a considerar resolvidas por este save (o admin
   // corrigiu ou confirmou manualmente) — remove as entradas correspondentes
   // de revisao_motivos em vez de esperar a próxima run automática.
-  limparRevisaoFases: z.array(z.enum(["dominio", "secretario", "contato"])).optional(),
+  limparRevisaoFases: z.array(z.enum(["dominio", "secretario", "contato", "completo"])).optional(),
 });
 
 export const adminSaveMunicipio = createServerFn({ method: "POST" })
@@ -594,7 +604,7 @@ export const adminFetchFndeAtual = createServerFn({ method: "POST" })
 // a sinalização (admin conferiu e aceitou o dado como está).
 const ResolveRevisaoInput = z.object({
   ibge_id: z.number().int(),
-  fase: z.enum(["dominio", "secretario", "contato"]),
+  fase: z.enum(["dominio", "secretario", "contato", "completo"]),
   patch: z
     .object({
       dominio_oficial: z.string().nullable().optional(),
@@ -618,9 +628,13 @@ export const adminResolveRevisao = createServerFn({ method: "POST" })
       .eq("ibge_id", data.ibge_id)
       .maybeSingle()) as any;
 
-    const prefix = `${data.fase}:`;
+    // "completo" cobre as três fases de uma vez — limpa todos os motivos.
+    const prefixes =
+      data.fase === "completo"
+        ? ["dominio:", "secretario:", "contato:", "completo:"]
+        : [`${data.fase}:`];
     const revisao_motivos = (existente?.revisao_motivos ?? []).filter(
-      (m: string) => !m.startsWith(prefix),
+      (m: string) => !prefixes.some((p) => m.startsWith(p)),
     );
     const patch: Record<string, unknown> = {
       revisao_motivos,
@@ -634,17 +648,23 @@ export const adminResolveRevisao = createServerFn({ method: "POST" })
       let emails: string[] = existente?.emails ?? [];
       let telefones: string[] = existente?.telefones ?? [];
 
-      if (data.fase === "dominio") {
+      const tocaDominio = data.fase === "dominio" || data.fase === "completo";
+      const tocaSecretario = data.fase === "secretario" || data.fase === "completo";
+      const tocaContato = data.fase === "contato" || data.fase === "completo";
+
+      if (tocaDominio && data.patch.dominio_oficial !== undefined) {
         const { normalizeHost } = await import("./scraper.server");
         patch.dominio_oficial = normalizeHost(data.patch.dominio_oficial ?? null);
         patch.dominio_confirmado_em = now;
-      } else if (data.fase === "secretario") {
+      }
+      if (tocaSecretario && (data.patch.secretario !== undefined || data.patch.cargo !== undefined)) {
         secretario = data.patch.secretario ?? null;
         cargo = data.patch.cargo ?? null;
         patch.secretario = secretario;
         patch.cargo = cargo;
         patch.secretario_confirmado_em = now;
-      } else {
+      }
+      if (tocaContato && (data.patch.emails !== undefined || data.patch.telefones !== undefined)) {
         emails = data.patch.emails ?? [];
         telefones = data.patch.telefones ?? [];
         patch.emails = emails;
