@@ -1926,6 +1926,12 @@ export async function prospectar(
   const queryNomeA = `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual`;
   const queryNomeB = `secretário OR secretária de educação ${municipio} ${uf} ${anoAtual} atual`;
   const queryNomeC = `site:${dominioOficial ?? `${slug}.${ufLow}.gov.br`} secretaria educação secretário`;
+  // --- PASSO 1: Visão Geral por IA do Google (SERP renderizada) ---
+  // Roda ANTES dos snippets: um ator com navegador real abre a SERP e captura o
+  // bloco "Visão Geral por IA", que o SERP clássico (HTML estático) nunca traz.
+  let aiOverviewBloco = await buscarAiOverviewRenderizado(queryNome0, emit, "nome", { timeoutMs: 120_000 });
+
+  // --- PASSO 2: snippets do SERP clássico ---
   const [outNome0, outNomeA, outNomeB, outNomeC] = await Promise.all([
     search(queryNome0, "nome", { limit: 8, timeoutMs: 8000, uf }),
     search(queryNomeA, "nome", { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf }),
@@ -1939,11 +1945,15 @@ export async function prospectar(
     outNomeC.cands,
   ];
 
-  // --- AI Overview do Google (Visão Geral por IA) — atalho no Estágio 1 ---
-  // QueryNome0 é a consulta mais ampla e tem mais chance de disparar o bloco.
+  // Se o ator renderizado não trouxe nada, ainda aproveitamos o bloco que
+  // eventualmente venha no SERP clássico.
+  if (!aiOverviewBloco?.text && outNome0.serpExtras.aiOverview?.text) {
+    aiOverviewBloco = outNome0.serpExtras.aiOverview;
+  }
+
   let aiOverviewShort: Extracted | null = null;
-  if (outNome0.serpExtras.aiOverview?.text) {
-    const aiExt = await extractFromAiOverview(outNome0.serpExtras.aiOverview, municipio, uf, emit, {
+  if (aiOverviewBloco?.text) {
+    const aiExt = await extractFromAiOverview(aiOverviewBloco, municipio, uf, emit, {
       dominioOficial: dominioOficial ?? null,
     });
     if (aiExt && (aiExt.secretario || aiExt.emails.length > 0 || aiExt.telefones.length > 0)) {
