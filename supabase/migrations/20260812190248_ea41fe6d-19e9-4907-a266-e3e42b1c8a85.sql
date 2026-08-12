@@ -1,0 +1,1 @@
+ALTER TABLE public.municipios_educacao ADD COLUMN IF NOT EXISTS tentativa_completo_em timestamptz;

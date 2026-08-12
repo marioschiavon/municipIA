@@ -113,6 +113,7 @@ export type Database = {
           secretario_confirmado_por: string | null
           status: string
           telefones: string[]
+          tentativa_completo_em: string | null
           tentativa_contato_em: string | null
           tentativa_dominio_em: string | null
           tentativa_secretario_em: string | null
@@ -144,6 +145,7 @@ export type Database = {
           secretario_confirmado_por?: string | null
           status?: string
           telefones?: string[]
+          tentativa_completo_em?: string | null
           tentativa_contato_em?: string | null
           tentativa_dominio_em?: string | null
           tentativa_secretario_em?: string | null
@@ -175,6 +177,7 @@ export type Database = {
           secretario_confirmado_por?: string | null
           status?: string
           telefones?: string[]
+          tentativa_completo_em?: string | null
           tentativa_contato_em?: string | null
           tentativa_dominio_em?: string | null
           tentativa_secretario_em?: string | null
