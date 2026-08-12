@@ -8,6 +8,7 @@ import { getExtractionModel } from "./ai-gateway.server";
 import { fetchHtml, htmlToMarkdown, extractContactsRegex } from "./scraper.server";
 
 import { googleSerp, ragBrowse, type ApifyPage } from "./apify.server";
+import type { SerpExtras } from "./apify.server";
 import type {
   EtapaTag,
   EquipeMembro,
