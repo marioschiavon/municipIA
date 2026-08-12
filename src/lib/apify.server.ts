@@ -7,9 +7,26 @@ export type ApifyPage = {
   markdown: string;
 };
 
+export type SerpSource = { url?: string; title?: string };
+
+export type SerpExtras = {
+  aiOverview?: {
+    text?: string;
+    sources?: SerpSource[];
+  } | null;
+  peopleAlsoAsk?: Array<{ question?: string; answer?: string; url?: string }> | null;
+  knowledgePanel?: {
+    title?: string;
+    description?: string;
+    url?: string;
+    items?: Record<string, string>;
+  } | null;
+};
+
 export type ApifyCrawlResult = {
   ok: true;
   pages: ApifyPage[];
+  serpExtras: SerpExtras;
   elapsedMs: number;
   requestsUsed: number;
 } | {
@@ -17,6 +34,7 @@ export type ApifyCrawlResult = {
   reason: string;
   elapsedMs: number;
 };
+
 
 const ACTOR_ID = "apify~website-content-crawler";
 
