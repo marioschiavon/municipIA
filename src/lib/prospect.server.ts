@@ -1564,6 +1564,25 @@ export async function prospectarRapido(
   const ranked = preferGov(filtrados, (u) => /(educa|secretari)/i.test(u), uf.toLowerCase());
 
   if (ranked.length === 0) {
+    // Snippets falharam, mas a Visão Geral por IA já tinha dado o nome — não jogamos fora.
+    if (nomeDoAiOverview) {
+      emit("warn", "nome", "Snippets sem resultado — devolvendo apenas o nome da Visão Geral por IA");
+      return {
+        status: "partial",
+        hierarquia: "educacao",
+        secretario: nomeDoAiOverview,
+        cargo: cargoDoAiOverview ?? "Secretário(a) Municipal de Educação",
+        emails: [],
+        telefones: [],
+        fonte: "Visão Geral por IA do Google (Apify SERP)",
+        fonteUrl: aiOverviewRapido?.sources?.[0]?.url ?? null,
+        contexto: "Nome extraído da Visão Geral por IA; contatos não confirmados.",
+        confianca: aiOverviewHasOfficialSource(aiOverviewRapido, null) ? "media" : "baixa",
+        nomeFonte: "ai-overview",
+        revisar: true,
+        motivoRevisao: "ai-overview: nome sem contato confirmado",
+      };
+    }
     emit("warn", "nome", "Busca rápida não retornou resultados");
     return empty("Busca rápida não encontrou resultados para esta consulta.");
   }
