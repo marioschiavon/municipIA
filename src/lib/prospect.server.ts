@@ -1212,8 +1212,10 @@ export async function prospectarDominio(
   const queryB = `"${municipio}" prefeitura ${uf} site oficial`;
   // 45s: o SERP do Apify leva de 10s a 40s por consulta — com o timeout antigo de 8s
   // a resposta era cortada e a fase voltava vazia como se nada existisse.
-  const candsA = await search(queryA, "init", { limit: 5, timeoutMs: 45_000, uf });
-  const candsB = candsA.length === 0 ? await search(queryB, "init", { limit: 5, timeoutMs: 45_000, uf }) : [];
+  const outA = await search(queryA, "init", { limit: 5, timeoutMs: 45_000, uf });
+  const candsA = outA.cands;
+  const outB = candsA.length === 0 ? await search(queryB, "init", { limit: 5, timeoutMs: 45_000, uf }) : { cands: [] as SearchCandidate[], serpExtras: {} };
+  const candsB = outB.cands;
 
   const fortesHosts = new Set(
     candsA
