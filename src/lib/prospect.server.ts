@@ -2047,6 +2047,7 @@ export async function prospectar(
     const hasAiContact = ai.emails.some((e) => !GENERIC_LOCAL.test(e)) || ai.telefones.length > 0;
     if ((aiNameMatches || !nomeSecretario) && hasAiContact) {
       emit("success", "nome", `✨ Atalho da Visão Geral por IA do Google — nome + contato em um único bloco`);
+      const official = aiOverviewHasOfficialSource(outNome0.serpExtras.aiOverview, null);
       return sendFinal({
         status: "found",
         hierarquia: "educacao",
@@ -2055,14 +2056,14 @@ export async function prospectar(
         emails: ai.emails,
         telefones: ai.telefones,
         fonte: "Visão Geral por IA do Google (Apify SERP)",
-        fonteUrl: ai.fonteUrl ?? null,
+        fonteUrl: null,
         contexto: ai.contexto,
-        confianca: ai.confianca === "alta" ? "alta" : "media",
+        confianca: official ? "alta" : "media",
         dataReferencia: ai.dataReferencia,
         horarioAtendimento: ai.horarioAtendimento,
         equipe: ai.equipe,
-        revisar: ai.confianca !== "alta" || ai.revisar === true,
-        motivoRevisao: ai.revisar ? ai.motivoRevisao : "ai-overview: revisar confiança da fonte",
+        revisar: !official,
+        motivoRevisao: official ? null : "ai-overview: revisar confiança da fonte",
         nomeFonte: "ai-overview",
       });
     }
