@@ -1521,14 +1521,10 @@ export async function prospectarRapido(
   const query = `nome e contato do secretário(a) de educação de ${municipio} ${uf}`;
   emit("info", "nome", `Busca rápida: "${query}"`);
 
-  const out = await search(query, "nome", { limit: 8, timeoutMs: 8000, uf });
-  const cands = out.cands;
-  const filtrados = filterForeignMunicipio(dedupeByUrl(cands), slug, emit, "nome");
-  const ranked = preferGov(filtrados, (u) => /(educa|secretari)/i.test(u), uf.toLowerCase());
-
-  // --- AI Overview do Google (Visão Geral por IA) — tentativa de atalho de alta confiança ---
-  if (out.serpExtras.aiOverview?.text) {
-    const aiExt = await extractFromAiOverview(out.serpExtras.aiOverview, municipio, uf, emit, {});
+  // --- PASSO 1: Visão Geral por IA (SERP renderizada) — antes dos snippets ---
+  const aiOverviewRapido = await buscarAiOverviewRenderizado(query, emit, "nome", { timeoutMs: 120_000 });
+  if (aiOverviewRapido?.text) {
+    const aiExt = await extractFromAiOverview(aiOverviewRapido, municipio, uf, emit, {});
     if (aiExt && (aiExt.secretario || aiExt.emails.length > 0 || aiExt.telefones.length > 0)) {
       const hasGoodEmail = aiExt.emails.some((e) => !GENERIC_LOCAL.test(e));
       if (aiExt.secretario && (hasGoodEmail || aiExt.telefones.length > 0)) {
