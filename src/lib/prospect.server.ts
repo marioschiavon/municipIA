@@ -1537,19 +1537,25 @@ export async function prospectarRapido(
           emails: aiExt.emails,
           telefones: aiExt.telefones,
           fonte: "Visão Geral por IA do Google (Apify SERP)",
-          fonteUrl: out.serpExtras.aiOverview.sources?.[0]?.url ?? null,
+          fonteUrl: aiOverviewRapido.sources?.[0]?.url ?? null,
           contexto: aiExt.contexto,
-          confianca: aiOverviewHasOfficialSource(out.serpExtras.aiOverview, null) ? "alta" : "media",
+          confianca: aiOverviewHasOfficialSource(aiOverviewRapido, null) ? "alta" : "media",
           dataReferencia: aiExt.dataReferencia,
           horarioAtendimento: aiExt.horarioAtendimento,
           equipe: aiExt.equipe,
-          revisar: !aiOverviewHasOfficialSource(out.serpExtras.aiOverview, null),
-          motivoRevisao: aiOverviewHasOfficialSource(out.serpExtras.aiOverview, null) ? null : "ai-overview: fonte citada não é do domínio oficial",
+          revisar: !aiOverviewHasOfficialSource(aiOverviewRapido, null),
+          motivoRevisao: aiOverviewHasOfficialSource(aiOverviewRapido, null) ? null : "ai-overview: fonte citada não é do domínio oficial",
           nomeFonte: "ai-overview",
         };
       }
     }
   }
+
+  // --- PASSO 2: snippets do SERP clássico ---
+  const out = await search(query, "nome", { limit: 8, timeoutMs: 8000, uf });
+  const cands = out.cands;
+  const filtrados = filterForeignMunicipio(dedupeByUrl(cands), slug, emit, "nome");
+  const ranked = preferGov(filtrados, (u) => /(educa|secretari)/i.test(u), uf.toLowerCase());
 
   if (ranked.length === 0) {
     emit("warn", "nome", "Busca rápida não retornou resultados");
