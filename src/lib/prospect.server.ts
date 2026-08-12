@@ -569,6 +569,34 @@ function aiOverviewHasOfficialSource(overview: SerpExtras["aiOverview"], dominio
   return sources.some((u) => /\.gov\.br/.test(u));
 }
 
+/** Busca o bloco "Visão Geral por IA" com o ator que RENDERIZA a SERP.
+ * É a primeira tentativa do pipeline — o SERP clássico (snippets) só entra depois.
+ * Nunca lança: qualquer falha vira null e o fluxo normal continua. */
+async function buscarAiOverviewRenderizado(
+  query: string,
+  emit: Emit,
+  etapa: EtapaTag,
+  opts: { timeoutMs?: number } = {},
+): Promise<SerpExtras["aiOverview"]> {
+  try {
+    emit("info", etapa, `Visão Geral por IA (Google) — abrindo SERP renderizada: "${query}"`);
+    const r = await googleAiOverview(query, { timeoutMs: opts.timeoutMs ?? 120_000 });
+    if (!r.ok) {
+      emit("warn", etapa, `Visão Geral por IA indisponível (${r.reason}) — seguindo pelos snippets`);
+      return null;
+    }
+    if (!r.aiOverview?.text) {
+      emit("info", etapa, "Google não exibiu Visão Geral por IA para esta consulta — seguindo pelos snippets");
+      return null;
+    }
+    emit("success", etapa, `Visão Geral por IA capturada (${r.aiOverview.text.length} caracteres, ${r.aiOverview.sources?.length ?? 0} fonte(s))`);
+    return r.aiOverview;
+  } catch (e) {
+    emit("warn", etapa, `Visão Geral por IA falhou: ${String(e)} — seguindo pelos snippets`);
+    return null;
+  }
+}
+
 /** Tenta extrair nome e contatos diretamente da Visão Geral por IA do Google.
  * Retorna null se o bloco não existir ou se a extração não achar dados úteis. */
 async function extractFromAiOverview(
