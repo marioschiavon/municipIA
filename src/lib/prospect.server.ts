@@ -1523,8 +1523,14 @@ export async function prospectarRapido(
 
   // --- PASSO 1: Visão Geral por IA (SERP renderizada) — antes dos snippets ---
   const aiOverviewRapido = await buscarAiOverviewRenderizado(query, emit, "nome", { timeoutMs: 120_000 });
+  let nomeDoAiOverview: string | null = null;
+  let cargoDoAiOverview: string | null = null;
   if (aiOverviewRapido?.text) {
     const aiExt = await extractFromAiOverview(aiOverviewRapido, municipio, uf, emit, {});
+    if (aiExt?.secretario) {
+      nomeDoAiOverview = aiExt.secretario;
+      cargoDoAiOverview = aiExt.cargo ?? null;
+    }
     if (aiExt && (aiExt.secretario || aiExt.emails.length > 0 || aiExt.telefones.length > 0)) {
       const hasGoodEmail = aiExt.emails.some((e) => !GENERIC_LOCAL.test(e));
       if (aiExt.secretario && (hasGoodEmail || aiExt.telefones.length > 0)) {
