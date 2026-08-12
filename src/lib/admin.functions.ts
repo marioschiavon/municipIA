@@ -1050,7 +1050,7 @@ export const adminSaveQueryConfig = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await assertAdmin(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const patch: Record<string, unknown> = {};
+    const patch: { query_ai_overview?: string; variantes?: string[] } = {};
     if (data.query) patch.query_ai_overview = data.query.trim();
     if (data.variantes) patch.variantes = data.variantes;
     if (Object.keys(patch).length === 0) return { ok: true };
