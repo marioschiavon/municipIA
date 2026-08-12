@@ -2335,7 +2335,7 @@ export async function prospectar(
   if (top3) {
     const top3Host = shortHost(top3.url);
     const contactQuery = `site:${top3Host} contato OR "fale conosco" OR "e-mail" secretaria educação`;
-    const contactCands = await search(contactQuery, "educacao", { limit: 3, timeoutMs: 8000, uf });
+    const { cands: contactCands } = await search(contactQuery, "educacao", { limit: 3, timeoutMs: 8000, uf });
     addToPool(contactCands);
     const contactRe = /(\/contato|\/fale[-_]?conosco|\/fale[-_]?com[-_]?nos|\/secretarias?\/educa|\/educacao\/contato|\/atendimento|estrutura-organizacional|estrutura-administrativa|organograma|quem-e-quem)/i;
     const contactUrls = contactCands
