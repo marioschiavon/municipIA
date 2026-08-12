@@ -116,7 +116,7 @@ export async function crawlSite(
         "",
     })).filter((p) => p.url && p.markdown);
 
-    return { ok: true, pages, elapsedMs, requestsUsed: pages.length };
+    return { ok: true, pages, elapsedMs, requestsUsed: pages.length, serpExtras: {} };
   } catch (e) {
     const aborted = e instanceof DOMException && e.name === "AbortError";
     return {
