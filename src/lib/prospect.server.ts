@@ -575,10 +575,10 @@ async function extractFromAiOverview(
   emit("info", "nome", `Visão Geral por IA do Google encontrada${official ? " (fonte oficial citada)" : " (fonte não-oficial)"} — extraindo...`);
 
   // Para o nome, usamos o extractor de nome.
-  const nomeRes = await runExtractNome(text, firstUrl, municipio, uf, emit, {});
+  const nomeRes = await extractNomeWithAI(text, firstUrl, municipio, uf, emit, {});
   if (nomeRes?.secretario) {
     // Se já temos nome, extrai contatos completos vinculados ao nome/Secretaria.
-    const contato = await runExtract(text, firstUrl, "educacao", municipio, uf, emit, {
+    const contato = await extractWithAI(text, firstUrl, "educacao", municipio, uf, emit, {
       nomeAlvo: nomeRes.secretario,
       modo: "ai-overview",
       topHost: opts.dominioOficial ? stripWww(opts.dominioOficial) : undefined,
@@ -594,13 +594,14 @@ async function extractFromAiOverview(
   }
 
   // Se não achou nome, tenta extrair contatos institucionais mesmo assim.
-  const contato = await runExtract(text, firstUrl, "educacao", municipio, uf, emit, {
+  const contato = await extractWithAI(text, firstUrl, "educacao", municipio, uf, emit, {
     nomeAlvo: opts.nomeAlvo ?? null,
     modo: "ai-overview",
     topHost: opts.dominioOficial ? stripWww(opts.dominioOficial) : undefined,
   });
   if (contato && !official && contato.confianca === "alta") contato.confianca = "media";
   return contato;
+
 }
 
 
