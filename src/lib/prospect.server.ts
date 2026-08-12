@@ -2166,7 +2166,8 @@ export async function prospectar(
     etapaTag: EtapaTag,
     hierarquia: Hierarquia,
   ): Promise<ProspectResult | null> => {
-    const cands = filterForeignMunicipio(await search(query, etapaTag, { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf }), slug, emit, etapaTag);
+    const { cands } = await search(query, etapaTag, { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf });
+    const filtrados = filterForeignMunicipio(cands, slug, emit, etapaTag);
     addToPool(cands);
     if (cands.length === 0) return null;
     const ranked = preferGov(cands, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
