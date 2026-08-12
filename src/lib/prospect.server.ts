@@ -2026,6 +2026,38 @@ export async function prospectar(
     emit("warn", "nome", "Estágio 1 não fechou o nome — seguirei para contato institucional");
   }
 
+  // --- Atalho Visão Geral por IA (Google) ---
+  // Se a busca principal disparou o bloco "AI Overview" do Google e ele já trouxe
+  // nome + contato confiável, devolvemos imediatamente, economizando as etapas de
+  // busca de contato e scrape. A confiança é rebaixada para "média" quando o bloco
+  // não cita fontes oficiais (.gov.br), deixando o município na fila de revisão.
+  if (aiOverviewShort) {
+    const ai = aiOverviewShort;
+    const aiNameMatches = ai.secretario && (!nomeSecretario || normalizeName(ai.secretario) === normalizeName(nomeSecretario));
+    const hasAiContact = ai.emails.some((e) => !GENERIC_LOCAL.test(e)) || ai.telefones.length > 0;
+    if ((aiNameMatches || !nomeSecretario) && hasAiContact) {
+      emit("success", "nome", `✨ Atalho da Visão Geral por IA do Google — nome + contato em um único bloco`);
+      return sendFinal({
+        status: "found",
+        hierarquia: "educacao",
+        secretario: ai.secretario ?? nomeSecretario,
+        cargo: ai.cargo ?? cargoSecretario ?? "Secretário(a) Municipal de Educação",
+        emails: ai.emails,
+        telefones: ai.telefones,
+        fonte: "Visão Geral por IA do Google (Apify SERP)",
+        fonteUrl: ai.fonteUrl ?? null,
+        contexto: ai.contexto,
+        confianca: ai.confianca === "alta" ? "alta" : "media",
+        dataReferencia: ai.dataReferencia,
+        horarioAtendimento: ai.horarioAtendimento,
+        equipe: ai.equipe,
+        revisar: ai.confianca !== "alta" || ai.revisar === true,
+        motivoRevisao: ai.revisar ? ai.motivoRevisao : "ai-overview: revisar confiança da fonte",
+        nomeFonte: "ai-overview",
+      });
+    }
+  }
+
   let melhorParcial: { ext: Extracted; url: string | null; via: string } | null = null;
 
   // ============================================================
