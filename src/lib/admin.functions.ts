@@ -18,7 +18,7 @@ async function assertAdmin(context: any) {
 // vasculhar sem recorrer ao Google/Apify) e ainda não achou o próprio campo.
 // (Sem checagem de "dado desatualizado há N dias" nesta v1 — reprocessar
 // dado antigo pode ser adicionado depois; por ora elegibilidade = "nunca achado".)
-type ProspectFaseFiltro = "dominio" | "secretario" | "contato";
+type ProspectFaseFiltro = "dominio" | "secretario" | "contato" | "completo";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function applyFaseFilter(q: any, fase?: ProspectFaseFiltro) {
   if (fase === "dominio") return q.is("municipios_educacao.dominio_oficial", null);
@@ -32,6 +32,14 @@ function applyFaseFilter(q: any, fase?: ProspectFaseFiltro) {
       .not("municipios_educacao.dominio_oficial", "is", null)
       .eq("municipios_educacao.emails", "{}")
       .eq("municipios_educacao.telefones", "{}");
+  }
+  // "completo" roda a pipeline inteira (descobre o domínio sozinho): elegível é
+  // quem ainda não tem secretário OU não tem nenhum contato.
+  if (fase === "completo") {
+    return q.or(
+      "secretario.is.null,and(emails.eq.{},telefones.eq.{})",
+      { referencedTable: "municipios_educacao" },
+    );
   }
   return q;
 }
