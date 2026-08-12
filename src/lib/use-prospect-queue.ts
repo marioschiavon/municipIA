@@ -85,7 +85,11 @@ async function processarUm(
         ? null
         : [result?.contexto ?? null, ultimoAviso].filter(Boolean).join(" · ").slice(0, 300) || null;
     const detalhe =
-      fase === "dominio"
+      fase === "completo"
+        ? [result?.secretario ?? null, contatos > 0 ? `${contatos} contato(s)` : null]
+            .filter(Boolean)
+            .join(" · ")
+        : fase === "dominio"
         ? (result?.dominioOficialConfirmado ?? (finalStatus === "found" ? "domínio confirmado" : ""))
         : fase === "secretario"
           ? (result?.secretario ?? "")
