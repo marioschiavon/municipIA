@@ -1762,14 +1762,58 @@ export async function prospectar(
   if (dominioOficial) emit("info", "nome", `Domínio oficial conhecido para ${municipio}: ${dominioOficial} (não segue o padrão {slug}.{uf}.gov.br)`);
 
   // ============================================================
+  // ESTÁGIO IA — Visão Geral por IA do Google (SERP renderizada), SEMPRE primeiro
+  // ============================================================
+  // Roda antes de qualquer outra coisa (inclusive do Estágio 0 de domínio
+  // confirmado): é rápido, costuma trazer nome + contato com fontes citadas e
+  // evita rastrear o site quando já resolve. O bloco capturado é reaproveitado
+  // mais abaixo no Estágio 1, sem custo extra.
+  const queryAiOverview = `nome e contato do secretário(a) de educação de ${municipio} ${uf}`;
+  const dominioParaFonte = dominioConfirmado ?? dominioOficial ?? null;
+  let aiOverviewPre = await buscarAiOverviewRenderizado(queryAiOverview, emit, "nome", { timeoutMs: 120_000 });
+  let aiOverviewPreExt: Extracted | null = null;
+  if (aiOverviewPre?.text) {
+    const aiExt = await extractFromAiOverview(aiOverviewPre, municipio, uf, emit, {
+      dominioOficial: dominioParaFonte,
+    });
+    if (aiExt && (aiExt.secretario || aiExt.emails.length > 0 || aiExt.telefones.length > 0)) {
+      aiOverviewPreExt = aiExt;
+      const hasGoodEmail = aiExt.emails.some((e) => !GENERIC_LOCAL.test(e));
+      const oficial = aiOverviewHasOfficialSource(aiOverviewPre, dominioParaFonte);
+      if (aiExt.secretario && (hasGoodEmail || aiExt.telefones.length > 0)) {
+        emit("success", "nome", "✨ Resolvido pela Visão Geral por IA do Google (antes do Estágio 0/busca ampla)");
+        return sendFinal({
+          status: "found",
+          hierarquia: "educacao",
+          secretario: aiExt.secretario,
+          cargo: aiExt.cargo,
+          emails: aiExt.emails,
+          telefones: aiExt.telefones,
+          fonte: "Visão Geral por IA do Google (Apify SERP renderizada)",
+          fonteUrl: aiOverviewPre.sources?.[0]?.url ?? null,
+          contexto: aiExt.contexto,
+          confianca: oficial ? "alta" : "media",
+          dataReferencia: aiExt.dataReferencia,
+          horarioAtendimento: aiExt.horarioAtendimento,
+          equipe: aiExt.equipe,
+          nomeFonte: "ai-overview",
+          revisar: !oficial,
+          motivoRevisao: oficial ? null : "ai-overview: fonte citada não é do domínio oficial",
+        });
+      }
+      if (aiExt.secretario) {
+        emit("info", "nome", `Visão Geral por IA trouxe o nome (${aiExt.secretario}) sem contato — seguindo para buscar contatos`);
+      }
+    }
+  }
+
+  // ============================================================
   // ESTÁGIO 0 — domínio oficial JÁ CONFIRMADO em run anterior (ou pelo admin)
   // ============================================================
-  // Quando presente, essa é a fonte EXCLUSIVA — não busca no Google/Apify
-  // (por decisão de produto: menos custo, sem risco de contaminação entre
-  // municípios). Precisa rodar ANTES da IIFE do RAG em background (mais
-  // abaixo), senão as chamadas Apify já teriam disparado mesmo com o
-  // short-circuit, anulando o ganho de custo desta feature.
+  // Segunda tentativa: usa o domínio confirmado (página conhecida + sitemap/links).
+  // Se não achar nada, o fluxo NÃO encerra mais — segue para a busca ampla.
   if (dominioConfirmado) {
+
     const runConfirmedDomainFlow = async (): Promise<ProspectResult | null> => {
       if (paginaEducacaoConhecida) {
         const md = await gScrape(paginaEducacaoConhecida, emit, "educacao", { hardTimeoutMs: 8000 });
@@ -1822,23 +1866,19 @@ export async function prospectar(
       return melhor;
     };
 
-    emit("info", "educacao", `Estágio 0 — domínio oficial já confirmado (${dominioConfirmado}); pulando Google/Apify`);
+    emit("info", "educacao", `Estágio 0 — domínio oficial já confirmado (${dominioConfirmado}); tentando páginas do próprio site`);
     const stage0 = await withTimeout(runConfirmedDomainFlow(), 45_000, "runConfirmedDomainFlow", emit, "educacao");
-    if (stage0) return sendFinal(stage0);
-    emit("warn", "educacao", "Domínio confirmado não teve página localizável — not_found (sem fallback ao Google, por decisão de produto)");
-    return sendFinal({
-      status: "not_found",
-      hierarquia: null,
-      secretario: null,
-      cargo: null,
-      emails: [],
-      telefones: [],
-      fonte: null,
-      fonteUrl: null,
-      contexto: `Domínio confirmado (${dominioConfirmado}) sem página de contato localizável via sitemap/links.`,
-      horarioAtendimento: null,
-    });
+    if (stage0) {
+      if (!stage0.secretario && aiOverviewPreExt?.secretario) {
+        stage0.secretario = aiOverviewPreExt.secretario;
+        stage0.cargo = stage0.cargo || aiOverviewPreExt.cargo || "Secretário(a) Municipal de Educação";
+        stage0.nomeFonte = "ai-overview";
+      }
+      return sendFinal(stage0);
+    }
+    emit("warn", "educacao", "Estágio 0 sem página localizável — seguindo para a busca ampla (snippets + site oficial)");
   }
+
 
   // Pool global de snippets — reaproveitado entre estágios.
   const snippetPool: SearchCandidate[] = [];
@@ -1959,9 +1999,10 @@ export async function prospectar(
   const queryNomeB = `secretário OR secretária de educação ${municipio} ${uf} ${anoAtual} atual`;
   const queryNomeC = `site:${dominioOficial ?? `${slug}.${ufLow}.gov.br`} secretaria educação secretário`;
   // --- PASSO 1: Visão Geral por IA do Google (SERP renderizada) ---
-  // Roda ANTES dos snippets: um ator com navegador real abre a SERP e captura o
-  // bloco "Visão Geral por IA", que o SERP clássico (HTML estático) nunca traz.
-  let aiOverviewBloco = await buscarAiOverviewRenderizado(queryNome0, emit, "nome", { timeoutMs: 120_000 });
+  // Já foi capturada no Estágio IA, no topo da função — aqui só reaproveitamos
+  // (sem custo extra). Se lá não veio nada, ainda tentamos o bloco que o SERP
+  // clássico eventualmente traga.
+  let aiOverviewBloco = aiOverviewPre;
 
   // --- PASSO 2: snippets do SERP clássico ---
   const [outNome0, outNomeA, outNomeB, outNomeC] = await Promise.all([
@@ -1977,14 +2018,13 @@ export async function prospectar(
     outNomeC.cands,
   ];
 
-  // Se o ator renderizado não trouxe nada, ainda aproveitamos o bloco que
-  // eventualmente venha no SERP clássico.
   if (!aiOverviewBloco?.text && outNome0.serpExtras.aiOverview?.text) {
     aiOverviewBloco = outNome0.serpExtras.aiOverview;
+    aiOverviewPre = aiOverviewBloco;
   }
 
-  let aiOverviewShort: Extracted | null = null;
-  if (aiOverviewBloco?.text) {
+  let aiOverviewShort: Extracted | null = aiOverviewPreExt;
+  if (!aiOverviewShort && aiOverviewBloco?.text) {
     const aiExt = await extractFromAiOverview(aiOverviewBloco, municipio, uf, emit, {
       dominioOficial: dominioOficial ?? null,
     });
@@ -1994,6 +2034,7 @@ export async function prospectar(
       // continuamos o pipeline normal; o melhor resultado será escolhido no final.
     }
   }
+
 
   // Fallback de domínio: se o domínio padrão {slug}.{uf}.gov.br não retornou nada e não
   // conhecemos o domínio real do município, tenta {uf}.gov.br com o nome do município.
