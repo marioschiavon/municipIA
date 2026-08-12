@@ -590,8 +590,15 @@ async function extractFromAiOverview(
       if (!official && contato.confianca === "alta") contato.confianca = "media";
       return contato;
     }
-    return { ...nomeRes, contexto: "Nome e cargo extraídos da Visão Geral por IA do Google." };
+    return {
+      ...nomeRes,
+      emails: [],
+      telefones: [],
+      horarioAtendimento: null,
+      contexto: "Nome e cargo extraídos da Visão Geral por IA do Google.",
+    } as Extracted;
   }
+
 
   // Se não achou nome, tenta extrair contatos institucionais mesmo assim.
   const contato = await extractWithAI(text, firstUrl, "educacao", municipio, uf, emit, {
