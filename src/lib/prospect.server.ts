@@ -1269,7 +1269,7 @@ async function descobrirPaginasEducacao(
   if (disc.candidates.length > 0) return { candidates: disc.candidates, via: disc.via };
 
   emit("warn", etapa, `Sem candidatos por sitemap/home em ${dominioOficial} — tentando SERP restrita ao domínio`);
-  const cands = await apifySearch(`site:${dominioOficial} secretaria municipal de educação`, emit, etapa, {
+  const { cands } = await apifySearch(`site:${dominioOficial} secretaria municipal de educação`, emit, etapa, {
     limit: 10,
     timeoutMs: 45_000,
   });
