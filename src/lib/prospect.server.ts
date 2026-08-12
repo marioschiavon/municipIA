@@ -2168,9 +2168,9 @@ export async function prospectar(
   ): Promise<ProspectResult | null> => {
     const { cands } = await search(query, etapaTag, { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf });
     const filtrados = filterForeignMunicipio(cands, slug, emit, etapaTag);
-    addToPool(cands);
-    if (cands.length === 0) return null;
-    const ranked = preferGov(cands, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
+    addToPool(filtrados);
+    if (filtrados.length === 0) return null;
+    const ranked = preferGov(filtrados, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
     const snippets = snippetsBlock(ranked);
     const ext = await runExtract(snippets, ranked[0]?.url ?? "(snippets)", hierarquia, municipio, uf, emit, {
       nomeAlvo: nomeSecretario,
