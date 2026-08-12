@@ -1,31 +1,28 @@
-# Destravar o "sem fallback ao Google" quando o domínio já está confirmado
+# Visão Geral por IA primeiro, Estágio 0 como segunda tentativa
 
-## O que está acontecendo hoje
+## Por que o "sem fallback ao Google" aparecia
 
-Quando o município já tem um domínio oficial confirmado (ex.: `guajaramirim.ro.gov.br`), a prospecção entra no **Estágio 0** e usa esse domínio como fonte **exclusiva**: tenta a página conhecida da Secretaria e, se não houver, descobre candidatos por sitemap/robots/links da home. Se nada útil aparecer, a run encerra imediatamente como `not_found` — sem tentar Google/Apify.
+Quando o município já tinha domínio confirmado (ex.: `guajaramirim.ro.gov.br`), a prospecção entrava no **Estágio 0** e usava esse domínio como fonte **exclusiva**: página conhecida da Secretaria, senão candidatos por sitemap/robots/links da home. Se nada útil aparecesse, a run encerrava como `not_found` sem tentar Google/Apify. Isso foi uma escolha de custo feita antes da Visão Geral por IA existir — daí o texto "por decisão de produto" no log. Não é bug nem falha do Apify.
 
-Isso foi uma escolha deliberada de custo feita quando o Estágio 0 foi criado (menos chamadas pagas e zero risco de contaminação com dados de outro município). O texto "por decisão de produto" é literalmente essa regra, escrita no log. Não é erro nem falha do Apify.
+## Nova ordem
 
-O efeito colateral é o caso de Guajará-Mirim: prefeituras cujo site não expõe sitemap nem links de educação na home viram `not_found`, mesmo com o domínio certo em mãos e mesmo com a nova Visão Geral por IA disponível.
+1. **Visão Geral por IA do Google** (`apify/google-ai-overviews-scraper`, navegador real) passa a ser sempre o primeiro passo, inclusive para municípios com domínio confirmado. É rápido e costuma trazer nome + contatos já com fontes citadas.
+2. Se a IA devolver resultado forte (nome do secretário e/ou contato com fonte oficial do município), a run encerra ali — mais rápido e mais barato que rastrear o site.
+3. Se não vier nada aproveitável, cai no **Estágio 0** de hoje: página conhecida da Secretaria e descoberta por sitemap/links dentro do domínio confirmado.
+4. Se o Estágio 0 também falhar, a run **continua** para o pipeline normal (snippets orgânicos, scrape do site, buscas escalonadas) em vez de encerrar como `not_found`. O `not_found` só é emitido no fim, com o motivo real.
+5. Em todas as etapas o domínio confirmado continua atuando como **filtro anticontaminação**: hosts do próprio município são aceitos, hosts de outros municípios seguem rejeitados como hoje.
 
-## Proposta
-
-Trocar "fonte exclusiva" por "fonte prioritária com fallback":
-
-1. Estágio 0 continua igual e continua sendo a primeira tentativa (barato, sem custo de SERP).
-2. Se o Estágio 0 não achar contato útil, em vez de encerrar, a run **continua** para o pipeline normal — começando pela Visão Geral por IA (`apify/google-ai-overviews-scraper`) e depois snippets orgânicos.
-3. Nessa continuação, o domínio confirmado vira um **filtro de segurança**, não um bloqueio: resultados de hosts oficiais do município (o domínio confirmado, `*.slug.uf.gov.br`) são aceitos; hosts de outros municípios continuam rejeitados como hoje. Isso preserva o motivo original da regra (anticontaminação) e devolve só o alcance perdido.
-4. O log passa a dizer "Estágio 0 sem página localizável — seguindo para Visão Geral por IA + busca", e o `not_found` só é emitido no fim do pipeline completo, com o motivo real.
-
-Custo: só municípios em que o Estágio 0 falha passam a gastar SERP — hoje esses são exatamente os que voltam vazios.
+O log passa a mostrar claramente a sequência: "Visão Geral por IA → Estágio 0 (domínio confirmado) → busca ampla".
 
 ## Detalhes técnicos
 
-- `src/lib/prospect.server.ts`, bloco `if (dominioConfirmado) { ... }` (~linhas 1772–1841): remover o `return sendFinal({ status: "not_found", ... })` do caminho de falha; manter o `return sendFinal(stage0)` no caminho de sucesso e apenas emitir um `warn` antes de cair no restante da função.
-- Guardar `dominioConfirmado` numa variável já disponível ao restante do pipeline para reforçar o gate de host (as helpers `isConfirmableOfficialHost` / `shortHost` já recebem `dominioOficial`; passar o confirmado no mesmo lugar).
-- Nenhuma mudança de schema, de fases do lote ou de UI.
-- Bump de versão em `src/lib/version.ts` (Alpha v0.63).
+- `src/lib/prospect.server.ts`: mover a chamada de `buscarAiOverviewRenderizado` para antes do bloco `if (dominioConfirmado)` (hoje o bloco do Estágio 0 roda por volta das linhas 1772–1841 e faz `return` antes de qualquer SERP).
+- Critério de encerramento antecipado pela IA: reaproveitar o que já existe hoje no pipeline completo (nome + contato com fonte de host oficial ⇒ `found`; só nome ⇒ guarda como fallback e segue).
+- Remover o `return sendFinal({ status: "not_found", ... })` do caminho de falha do Estágio 0; trocar por um `warn` e deixar o fluxo seguir para o restante da função.
+- Passar `dominioConfirmado` adiante para o gate de host já usado por `isConfirmableOfficialHost` / `shortHost`, para manter o bloqueio anticontaminação nas etapas seguintes.
+- O nome do secretário obtido pela IA continua preservado como fallback caso as etapas seguintes não achem nada melhor.
+- Sem mudança de schema, de fases do lote ou de UI. Bump em `src/lib/version.ts` (Alpha v0.63).
 
-## Alternativa, se você preferir controle manual
+## Impacto de custo
 
-Manter o comportamento atual como padrão e expor um toggle "permitir fallback ao Google quando o domínio confirmado falhar" na tela de Prospecção, aplicado à run/lote. Mais controle, mais um botão para lembrar de ligar.
+Todo município passa a gastar uma chamada do ator de Visão Geral por IA logo de cara — inclusive os que hoje resolviam de graça no Estágio 0. Em troca, os que hoje voltam `not_found` passam a ter chance real de resultado e a run média tende a ficar mais curta. Se preferir economizar, dá para manter o Estágio 0 na frente só quando existe `paginaEducacaoUrl` conhecida (caminho barato e quase sempre certeiro) e usar a IA primeiro em todo o resto — diga se quer essa variação.
