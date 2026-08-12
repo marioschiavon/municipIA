@@ -2222,9 +2222,8 @@ export async function prospectar(
     );
     if (r2b) return sendFinal(r2b);
 
-    const all = filterForeignMunicipio(dedupeByUrl([
-      ...(await search(`"${nomeSecretario}" secretaria educação ${municipio} ${uf}`, "contato-secretario", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf })),
-    ]), slug, emit, "contato-secretario");
+    const { cands: candsAll } = await search(`"${nomeSecretario}" secretaria educação ${municipio} ${uf}`, "contato-secretario", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf });
+    const all = filterForeignMunicipio(dedupeByUrl(candsAll), slug, emit, "contato-secretario");
     addToPool(all);
     const rankedAll = preferGov(all, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
     const topGov = rankedAll.find((c) => /\.gov\.br/i.test(c.url));
