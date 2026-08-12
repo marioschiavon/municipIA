@@ -7,9 +7,26 @@ export type ApifyPage = {
   markdown: string;
 };
 
+export type SerpSource = { url?: string; title?: string };
+
+export type SerpExtras = {
+  aiOverview?: {
+    text?: string;
+    sources?: SerpSource[];
+  } | null;
+  peopleAlsoAsk?: Array<{ question?: string; answer?: string; url?: string }> | null;
+  knowledgePanel?: {
+    title?: string;
+    description?: string;
+    url?: string;
+    items?: Record<string, string>;
+  } | null;
+};
+
 export type ApifyCrawlResult = {
   ok: true;
   pages: ApifyPage[];
+  serpExtras: SerpExtras;
   elapsedMs: number;
   requestsUsed: number;
 } | {
@@ -17,6 +34,7 @@ export type ApifyCrawlResult = {
   reason: string;
   elapsedMs: number;
 };
+
 
 const ACTOR_ID = "apify~website-content-crawler";
 
@@ -98,7 +116,7 @@ export async function crawlSite(
         "",
     })).filter((p) => p.url && p.markdown);
 
-    return { ok: true, pages, elapsedMs, requestsUsed: pages.length };
+    return { ok: true, pages, elapsedMs, requestsUsed: pages.length, serpExtras: {} };
   } catch (e) {
     const aborted = e instanceof DOMException && e.name === "AbortError";
     return {
@@ -177,12 +195,50 @@ export async function ragBrowse(
       markdown: md || (gs.description ?? ""),
     };
   }).filter((p) => p.url);
-  return { ok: true, pages, elapsedMs: r.elapsedMs, requestsUsed: pages.length };
+  return { ok: true, pages, elapsedMs: r.elapsedMs, requestsUsed: pages.length, serpExtras: {} };
 }
 
 
 // ---------- Google Search Scraper ----------
-// apify/google-search-scraper: só SERP (title, url, snippet). Sem scrape das páginas.
+// apify/google-search-scraper: traz SERP + blocos do topo (AI Overview, People Also Ask, Knowledge Graph).
+function extractSerpExtras(item: Record<string, unknown>): SerpExtras {
+  const extras: SerpExtras = {};
+
+  const aiOverview = item.aiOverview as
+    | { text?: string; sources?: Array<{ url?: string; title?: string }> }
+    | undefined
+    | null;
+  if (aiOverview?.text) {
+    extras.aiOverview = {
+      text: aiOverview.text,
+      sources: (aiOverview.sources ?? []).filter((s) => s?.url || s?.title),
+    };
+  }
+
+  const peopleAlsoAsk = item.peopleAlsoAsk as
+    | Array<{ question?: string; answer?: string; url?: string }>
+    | undefined
+    | null;
+  if (Array.isArray(peopleAlsoAsk) && peopleAlsoAsk.length > 0) {
+    extras.peopleAlsoAsk = peopleAlsoAsk.filter((p) => p?.question || p?.answer);
+  }
+
+  const knowledgeGraph = item.knowledgeGraph as
+    | { title?: string; description?: string; url?: string; items?: Record<string, string> }
+    | undefined
+    | null;
+  if (knowledgeGraph?.title || knowledgeGraph?.description) {
+    extras.knowledgePanel = {
+      title: knowledgeGraph.title,
+      description: knowledgeGraph.description,
+      url: knowledgeGraph.url,
+      items: knowledgeGraph.items,
+    };
+  }
+
+  return extras;
+}
+
 export async function googleSerp(
   query: string,
   opts: { resultsPerPage?: number; timeoutMs?: number; countryCode?: string; languageCode?: string } = {},
@@ -200,6 +256,7 @@ export async function googleSerp(
   const r = await runActorSync("apify~google-search-scraper", input, timeoutMs);
   if (!r.ok) return r;
   const pages: ApifyPage[] = [];
+  const mergedExtras: SerpExtras = {};
   for (const it of r.items) {
     const organic = (it.organicResults as Array<{ url?: string; title?: string; description?: string; emails?: string[]; phones?: string[] }> | undefined) ?? [];
     for (const o of organic) {
@@ -210,7 +267,18 @@ export async function googleSerp(
         markdown: parts,
       });
     }
+    const extras = extractSerpExtras(it);
+    if (extras.aiOverview?.text && !mergedExtras.aiOverview?.text) {
+      mergedExtras.aiOverview = extras.aiOverview;
+    }
+    if (extras.peopleAlsoAsk && !mergedExtras.peopleAlsoAsk) {
+      mergedExtras.peopleAlsoAsk = extras.peopleAlsoAsk;
+    }
+    if (extras.knowledgePanel && !mergedExtras.knowledgePanel) {
+      mergedExtras.knowledgePanel = extras.knowledgePanel;
+    }
   }
-  return { ok: true, pages: pages.filter((p) => p.url), elapsedMs: r.elapsedMs, requestsUsed: pages.length };
+  return { ok: true, pages: pages.filter((p) => p.url), elapsedMs: r.elapsedMs, requestsUsed: pages.length, serpExtras: mergedExtras };
 }
+
 

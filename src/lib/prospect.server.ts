@@ -8,6 +8,7 @@ import { getExtractionModel } from "./ai-gateway.server";
 import { fetchHtml, htmlToMarkdown, extractContactsRegex } from "./scraper.server";
 
 import { googleSerp, ragBrowse, type ApifyPage } from "./apify.server";
+import type { SerpExtras } from "./apify.server";
 import type {
   EtapaTag,
   EquipeMembro,
@@ -268,6 +269,16 @@ function slugify(s: string): string {
     .replace(/[^a-z0-9]+/g, "");
 }
 
+function normalizeName(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Timeout duro genérico — resolve null se estourar o limite.
 async function withTimeout<T>(
   promise: Promise<T>,
@@ -390,20 +401,25 @@ class ProviderSearchError extends Error {
 
 const QUOTA_RE = /(insufficient credits|payment required|quota|rate limit|402|401|403|unauthorized|forbidden)/i;
 
+export type SearchOutcome = {
+  cands: SearchCandidate[];
+  serpExtras: SerpExtras;
+};
+
 /** Motor de busca da OpenAI (Responses API + web_search) — usado quando o Apify
- * fica indisponível (cota/crédito/token). Devolve [] se a OpenAI também falhar. */
+ * fica indisponível (cota/crédito/token). Devolve cands vazio se a OpenAI também falhar. */
 async function openaiSearch(
   query: string,
   emit: Emit,
   etapa: EtapaTag,
   opts: { limit?: number; timeoutMs?: number; uf?: string } = {},
-): Promise<SearchCandidate[]> {
+): Promise<SearchOutcome> {
   const { openaiWebSearch } = await import("./openai.server");
   emit("info", etapa, `OpenAI web search: "${query}"`);
   const r = await openaiWebSearch(query, { limit: opts.limit ?? 10, timeoutMs: opts.timeoutMs ?? 60_000 });
   if (!r.ok) {
     emit("warn", etapa, `OpenAI web search indisponível (${r.reason.slice(0, 160)})`);
-    return [];
+    return { cands: [], serpExtras: {} };
   }
   const ufLow = opts.uf?.toLowerCase();
   const cands: SearchCandidate[] = r.hits
@@ -412,7 +428,7 @@ async function openaiSearch(
   emit("info", etapa, `OpenAI trouxe ${cands.length} resultado(s) em ${(r.elapsedMs / 1000).toFixed(1)}s`, {
     candidatos: cands.slice(0, 5).map((c) => ({ url: c.url, snippet: `${c.title} — ${c.description}`.slice(0, 260) })),
   });
-  return cands;
+  return { cands, serpExtras: {} };
 }
 
 
@@ -424,11 +440,11 @@ async function geminiSearch(
   emit: Emit,
   etapa: EtapaTag,
   opts: { limit?: number; uf?: string } = {},
-): Promise<SearchCandidate[]> {
+): Promise<SearchOutcome> {
   const key = process.env.LOVABLE_API_KEY;
   if (!key) {
     emit("warn", etapa, "Gemini indisponível (LOVABLE_API_KEY ausente)");
-    return [];
+    return { cands: [], serpExtras: {} };
   }
   emit("info", etapa, `Gemini (Lovable AI) sugerindo fontes para: "${query}"`);
   try {
@@ -460,10 +476,10 @@ Responda apenas com JSON válido no schema.`,
       `Gemini sugeriu ${cands.length} fonte(s) (baixa confiança — sem busca real na web)`,
       { candidatos: cands.slice(0, 5).map((c) => c.url) },
     );
-    return cands;
+    return { cands, serpExtras: {} };
   } catch (e) {
     emit("warn", etapa, "Gemini falhou ao sugerir fontes", String(e));
-    return [];
+    return { cands: [], serpExtras: {} };
   }
 }
 
@@ -473,21 +489,22 @@ async function fallbackSearch(
   emit: Emit,
   etapa: EtapaTag,
   opts: { limit?: number; timeoutMs?: number; uf?: string } = {},
-): Promise<SearchCandidate[]> {
+): Promise<SearchOutcome> {
   const viaOpenai = await openaiSearch(query, emit, etapa, opts);
-  if (viaOpenai.length > 0) return viaOpenai;
+  if (viaOpenai.cands.length > 0) return viaOpenai;
   emit("warn", etapa, "OpenAI não trouxe resultados — última tentativa pelo Gemini");
   return geminiSearch(query, emit, etapa, { limit: opts.limit, uf: opts.uf });
 }
 
 /** Google SERP Scraper do Apify — motor principal de busca.
- * Se falhar ou vier vazio, cai para OpenAI (web_search) e, por último, Gemini. */
+ * Se falhar ou vier vazio, cai para OpenAI (web_search) e, por último, Gemini.
+ * Também devolve os "extras" do SERP (AI Overview, People Also Ask, etc.). */
 async function apifySearch(
   query: string,
   emit: Emit,
   etapa: EtapaTag,
   opts: { limit?: number; timeoutMs?: number; uf?: string } = {},
-): Promise<SearchCandidate[]> {
+): Promise<SearchOutcome> {
   const limit = opts.limit ?? 10;
   emit("info", etapa, `Apify Google SERP: "${query}"`);
   const r = await googleSerp(query, { resultsPerPage: limit, timeoutMs: opts.timeoutMs ?? 45_000 });
@@ -513,12 +530,13 @@ async function apifySearch(
       url: c.url,
       snippet: `${c.title} — ${c.description}`.slice(0, 260),
     })),
+    aiOverview: r.serpExtras.aiOverview?.text ? "presente" : "ausente",
   });
   if (cands.length === 0) {
     emit("warn", etapa, "Apify retornou SERP vazio — tentando OpenAI web search");
     return fallbackSearch(query, emit, etapa, opts);
   }
-  return cands;
+  return { cands, serpExtras: r.serpExtras };
 }
 
 
@@ -526,7 +544,7 @@ type SearchFn = (
   query: string,
   etapa: EtapaTag,
   opts?: { limit?: number; tbs?: string; withScrape?: boolean; timeoutMs?: number; uf?: string },
-) => Promise<SearchCandidate[]>;
+) => Promise<SearchOutcome>;
 
 /** Fábrica do dispatcher de busca — cadeia única em todos os fluxos:
  * Apify (SERP) → OpenAI (web_search) → Gemini (Lovable AI, baixa confiança). */
@@ -538,6 +556,72 @@ function makeSearchDispatcher(emit: Emit): SearchFn {
       uf: opts.uf,
     });
 }
+
+/** Verifica se a Visão Geral por IA do Google cita fontes do domínio oficial.
+ * Se sim, ela pode ser usada com alta confiança; senão, baixa/média. */
+function aiOverviewHasOfficialSource(overview: SerpExtras["aiOverview"], dominioOficial?: string | null): boolean {
+  if (!overview?.sources || overview.sources.length === 0) return false;
+  const sources = overview.sources.map((s) => (s.url ?? "").toLowerCase());
+  if (dominioOficial) {
+    const dom = stripWww(dominioOficial).toLowerCase();
+    return sources.some((u) => stripWww(shortHost(u)) === dom || u.includes(`.${dom}/`) || u.endsWith(`.${dom}`));
+  }
+  return sources.some((u) => /\.gov\.br/.test(u));
+}
+
+/** Tenta extrair nome e contatos diretamente da Visão Geral por IA do Google.
+ * Retorna null se o bloco não existir ou se a extração não achar dados úteis. */
+async function extractFromAiOverview(
+  overview: SerpExtras["aiOverview"],
+  municipio: string,
+  uf: string,
+  emit: Emit,
+  opts: { dominioOficial?: string | null; nomeAlvo?: string | null } = {},
+): Promise<Extracted | null> {
+  if (!overview?.text) return null;
+  const text = overview.text;
+  const firstUrl = overview.sources?.[0]?.url ?? "(visão-geral-ia-google)";
+  const official = aiOverviewHasOfficialSource(overview, opts.dominioOficial);
+  emit("info", "nome", `Visão Geral por IA do Google encontrada${official ? " (fonte oficial citada)" : " (fonte não-oficial)"} — extraindo...`);
+
+  // Para o nome, usamos o extractor de nome.
+  const nomeRes = await extractNomeWithAI(text, firstUrl, municipio, uf, emit, {});
+  if (nomeRes?.secretario) {
+    // Se já temos nome, extrai contatos completos vinculados ao nome/Secretaria.
+    const contato = await extractWithAI(text, firstUrl, "educacao", municipio, uf, emit, {
+      nomeAlvo: nomeRes.secretario,
+      modo: "ai-overview",
+      topHost: opts.dominioOficial ? stripWww(opts.dominioOficial) : undefined,
+    });
+    if (contato) {
+      contato.secretario = nomeRes.secretario;
+      contato.cargo = contato.cargo || nomeRes.cargo || "Secretário(a) Municipal de Educação";
+      // Sobrecreve confiança: só alta se fonte oficial citada.
+      if (!official && contato.confianca === "alta") contato.confianca = "media";
+      return contato;
+    }
+    return {
+      ...nomeRes,
+      emails: [],
+      telefones: [],
+      horarioAtendimento: null,
+      contexto: "Nome e cargo extraídos da Visão Geral por IA do Google.",
+    } as Extracted;
+  }
+
+
+  // Se não achou nome, tenta extrair contatos institucionais mesmo assim.
+  const contato = await extractWithAI(text, firstUrl, "educacao", municipio, uf, emit, {
+    nomeAlvo: opts.nomeAlvo ?? null,
+    modo: "ai-overview",
+    topHost: opts.dominioOficial ? stripWww(opts.dominioOficial) : undefined,
+  });
+  if (contato && !official && contato.confianca === "alta") contato.confianca = "media";
+  return contato;
+
+}
+
+
 
 /** Leitura de página com timeout duro — devolve null se estourar.
  * Ordem: fetch nativo → Apify (navegador real). */
@@ -918,7 +1002,7 @@ async function extractWithAI(
   opts: {
     nomeAlvo?: string | null;
     diarioBlock?: string;
-    modo?: "snippets" | "site";
+    modo?: "snippets" | "site" | "ai-overview";
     topHost?: string;
   } = {},
 ): Promise<Extracted | null> {
@@ -939,9 +1023,9 @@ async function extractWithAI(
       ? `\nPISTAS pré-extraídas por regex (só use se também aparecerem no texto):\n  e-mails: ${hints.emails.join(", ") || "—"}\n  telefones: ${hints.telefones.join(", ") || "—"}\n`
       : "";
 
-  const fonteLbl = modo === "snippets" ? "snippets do Google" : "página oficial";
+  const fonteLbl = modo === "snippets" ? "snippets do Google" : modo === "ai-overview" ? "Visão Geral por IA do Google" : "página oficial";
   const prompt = `Você extrai CONTATOS institucionais da Secretaria de Educação de ${municipio}/${uf} a partir de ${fonteLbl}.
-
+${modo === "ai-overview" ? "\nATENÇÃO: A Visão Geral por IA é uma síntese do Google. Ela pode conter erros. Só devolva confiança 'alta' se as fontes citadas forem do domínio oficial do município (.gov.br) ou domínio já confirmado; caso contrário, use 'media' ou 'baixa'.\n" : ""}
 ${nomeAlvo ? `NOME CONFIRMADO: "${nomeAlvo}". Priorize contatos vinculados a essa pessoa/secretaria.\n` : ""}FOCO (${etapa}): ${focoEtapa}
 
 REGRAS GERAIS:
@@ -1138,8 +1222,10 @@ export async function prospectarDominio(
   const queryB = `"${municipio}" prefeitura ${uf} site oficial`;
   // 45s: o SERP do Apify leva de 10s a 40s por consulta — com o timeout antigo de 8s
   // a resposta era cortada e a fase voltava vazia como se nada existisse.
-  const candsA = await search(queryA, "init", { limit: 5, timeoutMs: 45_000, uf });
-  const candsB = candsA.length === 0 ? await search(queryB, "init", { limit: 5, timeoutMs: 45_000, uf }) : [];
+  const outA = await search(queryA, "init", { limit: 5, timeoutMs: 45_000, uf });
+  const candsA = outA.cands;
+  const outB = candsA.length === 0 ? await search(queryB, "init", { limit: 5, timeoutMs: 45_000, uf }) : { cands: [] as SearchCandidate[], serpExtras: {} };
+  const candsB = outB.cands;
 
   const fortesHosts = new Set(
     candsA
@@ -1193,7 +1279,7 @@ async function descobrirPaginasEducacao(
   if (disc.candidates.length > 0) return { candidates: disc.candidates, via: disc.via };
 
   emit("warn", etapa, `Sem candidatos por sitemap/home em ${dominioOficial} — tentando SERP restrita ao domínio`);
-  const cands = await apifySearch(`site:${dominioOficial} secretaria municipal de educação`, emit, etapa, {
+  const { cands } = await apifySearch(`site:${dominioOficial} secretaria municipal de educação`, emit, etapa, {
     limit: 10,
     timeoutMs: 45_000,
   });
@@ -1407,9 +1493,39 @@ export async function prospectarRapido(
   const query = `nome e contato do secretário(a) de educação de ${municipio} ${uf}`;
   emit("info", "nome", `Busca rápida: "${query}"`);
 
-  const cands = await search(query, "nome", { limit: 8, timeoutMs: 8000, uf });
+  const out = await search(query, "nome", { limit: 8, timeoutMs: 8000, uf });
+  const cands = out.cands;
   const filtrados = filterForeignMunicipio(dedupeByUrl(cands), slug, emit, "nome");
   const ranked = preferGov(filtrados, (u) => /(educa|secretari)/i.test(u), uf.toLowerCase());
+
+  // --- AI Overview do Google (Visão Geral por IA) — tentativa de atalho de alta confiança ---
+  if (out.serpExtras.aiOverview?.text) {
+    const aiExt = await extractFromAiOverview(out.serpExtras.aiOverview, municipio, uf, emit, {});
+    if (aiExt && (aiExt.secretario || aiExt.emails.length > 0 || aiExt.telefones.length > 0)) {
+      const hasGoodEmail = aiExt.emails.some((e) => !GENERIC_LOCAL.test(e));
+      if (aiExt.secretario && (hasGoodEmail || aiExt.telefones.length > 0)) {
+        emit("success", "nome", `✨ Busca rápida resolvida pela Visão Geral por IA do Google`);
+        return {
+          status: "found",
+          hierarquia: "educacao",
+          secretario: aiExt.secretario,
+          cargo: aiExt.cargo,
+          emails: aiExt.emails,
+          telefones: aiExt.telefones,
+          fonte: "Visão Geral por IA do Google (Apify SERP)",
+          fonteUrl: out.serpExtras.aiOverview.sources?.[0]?.url ?? null,
+          contexto: aiExt.contexto,
+          confianca: aiOverviewHasOfficialSource(out.serpExtras.aiOverview, null) ? "alta" : "media",
+          dataReferencia: aiExt.dataReferencia,
+          horarioAtendimento: aiExt.horarioAtendimento,
+          equipe: aiExt.equipe,
+          revisar: !aiOverviewHasOfficialSource(out.serpExtras.aiOverview, null),
+          motivoRevisao: aiOverviewHasOfficialSource(out.serpExtras.aiOverview, null) ? null : "ai-overview: fonte citada não é do domínio oficial",
+          nomeFonte: "ai-overview",
+        };
+      }
+    }
+  }
 
   if (ranked.length === 0) {
     emit("warn", "nome", "Busca rápida não retornou resultados");
@@ -1780,12 +1896,32 @@ export async function prospectar(
   const queryNomeA = `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual`;
   const queryNomeB = `secretário OR secretária de educação ${municipio} ${uf} ${anoAtual} atual`;
   const queryNomeC = `site:${dominioOficial ?? `${slug}.${ufLow}.gov.br`} secretaria educação secretário`;
-  const [candsNome0, candsNomeA, candsNomeB, candsNomeC] = await Promise.all([
+  const [outNome0, outNomeA, outNomeB, outNomeC] = await Promise.all([
     search(queryNome0, "nome", { limit: 8, timeoutMs: 8000, uf }),
     search(queryNomeA, "nome", { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf }),
     search(queryNomeB, "nome", { limit: 6, tbs: "qdr:y", timeoutMs: 8000, uf }),
     search(queryNomeC, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf }),
   ]);
+  const [candsNome0, candsNomeA, candsNomeB, candsNomeC] = [
+    outNome0.cands,
+    outNomeA.cands,
+    outNomeB.cands,
+    outNomeC.cands,
+  ];
+
+  // --- AI Overview do Google (Visão Geral por IA) — atalho no Estágio 1 ---
+  // QueryNome0 é a consulta mais ampla e tem mais chance de disparar o bloco.
+  let aiOverviewShort: Extracted | null = null;
+  if (outNome0.serpExtras.aiOverview?.text) {
+    const aiExt = await extractFromAiOverview(outNome0.serpExtras.aiOverview, municipio, uf, emit, {
+      dominioOficial: dominioOficial ?? null,
+    });
+    if (aiExt && (aiExt.secretario || aiExt.emails.length > 0 || aiExt.telefones.length > 0)) {
+      aiOverviewShort = aiExt;
+      // Se o AI Overview já trouxe nome + contato, guardamos para uso final e
+      // continuamos o pipeline normal; o melhor resultado será escolhido no final.
+    }
+  }
 
   // Fallback de domínio: se o domínio padrão {slug}.{uf}.gov.br não retornou nada e não
   // conhecemos o domínio real do município, tenta {uf}.gov.br com o nome do município.
@@ -1794,11 +1930,12 @@ export async function prospectar(
   // resultado com o secretário ESTADUAL de educação em vez do municipal — por isso só
   // usamos esse fallback quando não há domínio oficial conhecido, e os resultados vindos
   // do portal estadual "puro" são descartados logo abaixo (preferGov penaliza isBareStateHost).
-  let candsNomeCfb: SearchCandidate[] = [];
+  let outNomeCfb: SearchOutcome = { cands: [], serpExtras: {} };
   if (candsNomeC.length === 0 && !dominioOficial) {
     const queryNomeCfb = `site:${ufLow}.gov.br "${municipio}" secretaria educação secretário`;
-    candsNomeCfb = await search(queryNomeCfb, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf });
+    outNomeCfb = await search(queryNomeCfb, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf });
   }
+  const candsNomeCfb = outNomeCfb.cands;
   // Priorizar resultados do domínio oficial do município (queryNomeC/fb) ANTES de A/B.
   const candsNome = filterForeignMunicipio(dedupeByUrl([...candsNomeC, ...candsNomeCfb, ...candsNome0, ...candsNomeA, ...candsNomeB]), slug, emit, "nome");
   addToPool(candsNome);
@@ -1899,6 +2036,39 @@ export async function prospectar(
     emit("warn", "nome", "Estágio 1 não fechou o nome — seguirei para contato institucional");
   }
 
+  // --- Atalho Visão Geral por IA (Google) ---
+  // Se a busca principal disparou o bloco "AI Overview" do Google e ele já trouxe
+  // nome + contato confiável, devolvemos imediatamente, economizando as etapas de
+  // busca de contato e scrape. A confiança é rebaixada para "média" quando o bloco
+  // não cita fontes oficiais (.gov.br), deixando o município na fila de revisão.
+  if (aiOverviewShort) {
+    const ai = aiOverviewShort;
+    const aiNameMatches = ai.secretario && (!nomeSecretario || normalizeName(ai.secretario) === normalizeName(nomeSecretario));
+    const hasAiContact = ai.emails.some((e) => !GENERIC_LOCAL.test(e)) || ai.telefones.length > 0;
+    if ((aiNameMatches || !nomeSecretario) && hasAiContact) {
+      emit("success", "nome", `✨ Atalho da Visão Geral por IA do Google — nome + contato em um único bloco`);
+      const official = aiOverviewHasOfficialSource(outNome0.serpExtras.aiOverview, null);
+      return sendFinal({
+        status: "found",
+        hierarquia: "educacao",
+        secretario: ai.secretario ?? nomeSecretario,
+        cargo: ai.cargo ?? cargoSecretario ?? "Secretário(a) Municipal de Educação",
+        emails: ai.emails,
+        telefones: ai.telefones,
+        fonte: "Visão Geral por IA do Google (Apify SERP)",
+        fonteUrl: null,
+        contexto: ai.contexto,
+        confianca: official ? "alta" : "media",
+        dataReferencia: ai.dataReferencia,
+        horarioAtendimento: ai.horarioAtendimento,
+        equipe: ai.equipe,
+        revisar: !official,
+        motivoRevisao: official ? null : "ai-overview: revisar confiança da fonte",
+        nomeFonte: "ai-overview",
+      });
+    }
+  }
+
   let melhorParcial: { ext: Extracted; url: string | null; via: string } | null = null;
 
   // ============================================================
@@ -1963,13 +2133,13 @@ export async function prospectar(
   // no snippet da página oficial.
   {
     emit("info", "educacao", "Estágio 1.6 — enriquecendo por Apify Google SERP (snippets ricos)");
-    const apifyNome = await apifySearch(
+    const apifyNomeOut = await apifySearch(
       `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual contato email telefone`,
       emit,
       "educacao",
       { limit: 10, timeoutMs: 45_000, uf },
     );
-    const apifyPagina = await apifySearch(
+    const apifyPaginaOut = await apifySearch(
       dominioOficial
         ? `site:${dominioOficial} ${municipio} Secretaria de Educação email telefone horário`
         : `site:www.${slug}.${ufLow}.gov.br/secretarias/secretaria-educacao/ ${municipio} Secretaria de Educação email telefone horário`,
@@ -1977,6 +2147,8 @@ export async function prospectar(
       "educacao",
       { limit: 10, timeoutMs: 45_000, uf },
     );
+    const apifyNome = apifyNomeOut.cands;
+    const apifyPagina = apifyPaginaOut.cands;
     const apifyCands = filterForeignMunicipio(dedupeByUrl([...apifyNome, ...apifyPagina]), slug, emit, "educacao");
     addToPool(apifyCands);
     const official = preferGov(apifyCands.filter((c) => looksLikeOfficialEducationPage(c, slug, ufLow)), (u) => /(educa|seduc|sme)/i.test(u), ufLow);
@@ -2037,10 +2209,11 @@ export async function prospectar(
     etapaTag: EtapaTag,
     hierarquia: Hierarquia,
   ): Promise<ProspectResult | null> => {
-    const cands = filterForeignMunicipio(await search(query, etapaTag, { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf }), slug, emit, etapaTag);
-    addToPool(cands);
-    if (cands.length === 0) return null;
-    const ranked = preferGov(cands, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
+    const { cands } = await search(query, etapaTag, { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf });
+    const filtrados = filterForeignMunicipio(cands, slug, emit, etapaTag);
+    addToPool(filtrados);
+    if (filtrados.length === 0) return null;
+    const ranked = preferGov(filtrados, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
     const snippets = snippetsBlock(ranked);
     const ext = await runExtract(snippets, ranked[0]?.url ?? "(snippets)", hierarquia, municipio, uf, emit, {
       nomeAlvo: nomeSecretario,
@@ -2092,9 +2265,8 @@ export async function prospectar(
     );
     if (r2b) return sendFinal(r2b);
 
-    const all = filterForeignMunicipio(dedupeByUrl([
-      ...(await search(`"${nomeSecretario}" secretaria educação ${municipio} ${uf}`, "contato-secretario", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf })),
-    ]), slug, emit, "contato-secretario");
+    const { cands: candsAll } = await search(`"${nomeSecretario}" secretaria educação ${municipio} ${uf}`, "contato-secretario", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf });
+    const all = filterForeignMunicipio(dedupeByUrl(candsAll), slug, emit, "contato-secretario");
     addToPool(all);
     const rankedAll = preferGov(all, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
     const topGov = rankedAll.find((c) => /\.gov\.br/i.test(c.url));
@@ -2195,9 +2367,8 @@ export async function prospectar(
   );
   if (r3b) return sendFinal(r3b);
 
-  const all3 = filterForeignMunicipio(dedupeByUrl([
-    ...(await search(`secretaria municipal de educação ${municipio} ${uf} contato`, "educacao", { limit: 6, timeoutMs: 8000, uf })),
-  ]), slug, emit, "educacao");
+  const { cands: candsAll3 } = await search(`secretaria municipal de educação ${municipio} ${uf} contato`, "educacao", { limit: 6, timeoutMs: 8000, uf });
+  const all3 = filterForeignMunicipio(dedupeByUrl(candsAll3), slug, emit, "educacao");
   addToPool(all3);
   const ranked3 = preferGov(all3, (u) => /(educa|seduc|sme)/i.test(u), ufLow);
   const top3 = ranked3.find((c) => /\.gov\.br|\.leg\.br/i.test(c.url)) ?? ranked3[0];
@@ -2207,7 +2378,7 @@ export async function prospectar(
   if (top3) {
     const top3Host = shortHost(top3.url);
     const contactQuery = `site:${top3Host} contato OR "fale conosco" OR "e-mail" secretaria educação`;
-    const contactCands = await search(contactQuery, "educacao", { limit: 3, timeoutMs: 8000, uf });
+    const { cands: contactCands } = await search(contactQuery, "educacao", { limit: 3, timeoutMs: 8000, uf });
     addToPool(contactCands);
     const contactRe = /(\/contato|\/fale[-_]?conosco|\/fale[-_]?com[-_]?nos|\/secretarias?\/educa|\/educacao\/contato|\/atendimento|estrutura-organizacional|estrutura-administrativa|organograma|quem-e-quem)/i;
     const contactUrls = contactCands
@@ -2342,7 +2513,8 @@ export async function prospectar(
   // ============================================================
   async function runFallback(etapa: Hierarquia, query: string, label: string): Promise<ProspectResult | null> {
     emit("info", etapa, `${label} — snippet-only`);
-    const cands = filterForeignMunicipio(await search(query, etapa, { limit: 8, timeoutMs: 5000, uf }), slug, emit, etapa);
+    const { cands: rawCands } = await search(query, etapa, { limit: 8, timeoutMs: 5000, uf });
+    const cands = filterForeignMunicipio(rawCands, slug, emit, etapa);
     addToPool(cands);
     const ranked = preferGov(cands, undefined, ufLow);
     if (ranked.length === 0) return null;
