@@ -73,11 +73,13 @@ const FASE_LABEL: Record<FaseIsolada, string> = {
   dominio: "Fase 1 — Domínio",
   secretario: "Fase 2 — Secretário",
   contato: "Fase 3 — Contato",
+  completo: "Lote completo (3 em 1)",
 };
 const FASE_CURTA: Record<FaseIsolada, string> = {
   dominio: "Domínio",
   secretario: "Secretário",
   contato: "Contato",
+  completo: "Completo",
 };
 
 export const Route = createFileRoute("/_authenticated/admin/prospeccao")({
@@ -176,7 +178,7 @@ function AdminProspeccao() {
 
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-white p-4">
         <div className="flex gap-1 rounded-md border border-border p-1">
-          {(["dominio", "secretario", "contato"] as const).map((f) => (
+          {(["dominio", "secretario", "contato", "completo"] as const).map((f) => (
             <Button
               key={f}
               size="sm"

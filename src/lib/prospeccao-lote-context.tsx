@@ -7,17 +7,20 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useProspectQueue, type QueueLogEntry } from "./use-prospect-queue";
 
-export type FaseIsolada = "dominio" | "secretario" | "contato";
+export type FaseIsolada = "dominio" | "secretario" | "contato" | "completo";
 
 /** Item da fila lateral de revisão — guarda a fase de origem, já que a fila sobrevive a novos lotes. */
 export type RevisaoItem = QueueLogEntry & { fase: FaseIsolada };
 
 // Fase 1/3 são baratas (sem IA ou regex-primeiro) — pausa curta. Fase 2 usa IA por
 // candidato — pausa maior, pra não estourar rate limit do provider.
+// "completo" roda as três etapas numa passada (inclui o ator de navegador real
+// da Visão Geral por IA, que sozinho pode levar ~2min) — pausa maior entre municípios.
 const FASE_INTERVALO_MS: Record<FaseIsolada, number> = {
   dominio: 2_000,
   secretario: 30_000,
   contato: 15_000,
+  completo: 40_000,
 };
 
 type ProspeccaoLoteState = ReturnType<typeof useProspeccaoLoteState>;
