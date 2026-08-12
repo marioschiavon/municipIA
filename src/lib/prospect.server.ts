@@ -2087,7 +2087,7 @@ export async function prospectar(
     const hasAiContact = ai.emails.some((e) => !GENERIC_LOCAL.test(e)) || ai.telefones.length > 0;
     if ((aiNameMatches || !nomeSecretario) && hasAiContact) {
       emit("success", "nome", `✨ Atalho da Visão Geral por IA do Google — nome + contato em um único bloco`);
-      const official = aiOverviewHasOfficialSource(outNome0.serpExtras.aiOverview, null);
+      const official = aiOverviewHasOfficialSource(aiOverviewBloco, null);
       return sendFinal({
         status: "found",
         hierarquia: "educacao",
