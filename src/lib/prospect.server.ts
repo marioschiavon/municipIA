@@ -547,6 +547,63 @@ function makeSearchDispatcher(emit: Emit): SearchFn {
     });
 }
 
+/** Verifica se a Visão Geral por IA do Google cita fontes do domínio oficial.
+ * Se sim, ela pode ser usada com alta confiança; senão, baixa/média. */
+function aiOverviewHasOfficialSource(overview: SerpExtras["aiOverview"], dominioOficial?: string | null): boolean {
+  if (!overview?.sources || overview.sources.length === 0) return false;
+  const sources = overview.sources.map((s) => (s.url ?? "").toLowerCase());
+  if (dominioOficial) {
+    const dom = stripWww(dominioOficial).toLowerCase();
+    return sources.some((u) => stripWww(shortHost(u)) === dom || u.includes(`.${dom}/`) || u.endsWith(`.${dom}`));
+  }
+  return sources.some((u) => /\.gov\.br/.test(u));
+}
+
+/** Tenta extrair nome e contatos diretamente da Visão Geral por IA do Google.
+ * Retorna null se o bloco não existir ou se a extração não achar dados úteis. */
+async function extractFromAiOverview(
+  overview: SerpExtras["aiOverview"],
+  municipio: string,
+  uf: string,
+  emit: Emit,
+  opts: { dominioOficial?: string | null; nomeAlvo?: string | null } = {},
+): Promise<Extracted | null> {
+  if (!overview?.text) return null;
+  const text = overview.text;
+  const firstUrl = overview.sources?.[0]?.url ?? "(visão-geral-ia-google)";
+  const official = aiOverviewHasOfficialSource(overview, opts.dominioOficial);
+  emit("info", "nome", `Visão Geral por IA do Google encontrada${official ? " (fonte oficial citada)" : " (fonte não-oficial)"} — extraindo...`);
+
+  // Para o nome, usamos o extractor de nome.
+  const nomeRes = await runExtractNome(text, firstUrl, municipio, uf, emit, {});
+  if (nomeRes?.secretario) {
+    // Se já temos nome, extrai contatos completos vinculados ao nome/Secretaria.
+    const contato = await runExtract(text, firstUrl, "educacao", municipio, uf, emit, {
+      nomeAlvo: nomeRes.secretario,
+      modo: "ai-overview",
+      topHost: opts.dominioOficial ? stripWww(opts.dominioOficial) : undefined,
+    });
+    if (contato) {
+      contato.secretario = nomeRes.secretario;
+      contato.cargo = contato.cargo || nomeRes.cargo || "Secretário(a) Municipal de Educação";
+      // Sobrecreve confiança: só alta se fonte oficial citada.
+      if (!official && contato.confianca === "alta") contato.confianca = "media";
+      return contato;
+    }
+    return { ...nomeRes, contexto: "Nome e cargo extraídos da Visão Geral por IA do Google." };
+  }
+
+  // Se não achou nome, tenta extrair contatos institucionais mesmo assim.
+  const contato = await runExtract(text, firstUrl, "educacao", municipio, uf, emit, {
+    nomeAlvo: opts.nomeAlvo ?? null,
+    modo: "ai-overview",
+    topHost: opts.dominioOficial ? stripWww(opts.dominioOficial) : undefined,
+  });
+  if (contato && !official && contato.confianca === "alta") contato.confianca = "media";
+  return contato;
+}
+
+
 
 /** Leitura de página com timeout duro — devolve null se estourar.
  * Ordem: fetch nativo → Apify (navegador real). */
