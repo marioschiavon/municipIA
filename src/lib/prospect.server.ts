@@ -8,6 +8,7 @@ import { getExtractionModel } from "./ai-gateway.server";
 import { fetchHtml, htmlToMarkdown, extractContactsRegex } from "./scraper.server";
 
 import { googleSerp, googleAiOverview, ragBrowse, type ApifyPage } from "./apify.server";
+import { getQueryAiOverview } from "./prospect-query.server";
 import type { SerpExtras } from "./apify.server";
 import type {
   EtapaTag,
@@ -1518,7 +1519,7 @@ export async function prospectarRapido(
 
   const search = makeSearchDispatcher(emit);
   const slug = slugify(municipio);
-  const query = `nome e contato do secretário(a) de educação de ${municipio} ${uf}`;
+  const query = await getQueryAiOverview(municipio, uf);
   emit("info", "nome", `Busca rápida: "${query}"`);
 
   // --- PASSO 1: Visão Geral por IA (SERP renderizada) — antes dos snippets ---
@@ -1768,7 +1769,7 @@ export async function prospectar(
   // confirmado): é rápido, costuma trazer nome + contato com fontes citadas e
   // evita rastrear o site quando já resolve. O bloco capturado é reaproveitado
   // mais abaixo no Estágio 1, sem custo extra.
-  const queryAiOverview = `nome e contato do secretário(a) de educação de ${municipio} ${uf}`;
+  const queryAiOverview = await getQueryAiOverview(municipio, uf);
   const dominioParaFonte = dominioConfirmado ?? dominioOficial ?? null;
   let aiOverviewPre = await buscarAiOverviewRenderizado(queryAiOverview, emit, "nome", { timeoutMs: 120_000 });
   let aiOverviewPreExt: Extracted | null = null;
@@ -2723,3 +2724,63 @@ export async function prospectar(
   });
 }
 
+
+// ============================================================
+// TESTE DE VARIAÇÕES DE QUERY (painel /admin/queries)
+// Executa APENAS a Visão Geral por IA com uma query já renderizada e devolve
+// o que foi extraído — não persiste nada no catálogo.
+// ============================================================
+export type QueryTestResultado = {
+  temAiOverview: boolean;
+  secretario: string | null;
+  cargo: string | null;
+  emails: string[];
+  telefones: string[];
+  equipe: number;
+  fonteOficial: boolean;
+  elapsedMs: number;
+  erro: string | null;
+};
+
+export async function testarQueryAiOverview(
+  query: string,
+  municipio: string,
+  uf: string,
+  onEvent?: (evt: ProgressEvent) => void,
+): Promise<QueryTestResultado> {
+  const t0 = Date.now();
+  const emit: Emit = (level, etapa, message, data) => {
+    onEvent?.({ kind: "progress", level, etapa, message, data, ts: Date.now(), elapsedMs: Date.now() - t0 });
+  };
+  const vazio = (erro: string | null, temAi = false): QueryTestResultado => ({
+    temAiOverview: temAi,
+    secretario: null,
+    cargo: null,
+    emails: [],
+    telefones: [],
+    equipe: 0,
+    fonteOficial: false,
+    elapsedMs: Date.now() - t0,
+    erro,
+  });
+
+  try {
+    const overview = await buscarAiOverviewRenderizado(query, emit, "nome", { timeoutMs: 120_000 });
+    if (!overview?.text) return vazio(null, false);
+    const ext = await extractFromAiOverview(overview, municipio, uf, emit, {});
+    if (!ext) return vazio(null, true);
+    return {
+      temAiOverview: true,
+      secretario: ext.secretario,
+      cargo: ext.cargo,
+      emails: ext.emails,
+      telefones: ext.telefones,
+      equipe: ext.equipe?.length ?? 0,
+      fonteOficial: aiOverviewHasOfficialSource(overview, null),
+      elapsedMs: Date.now() - t0,
+      erro: null,
+    };
+  } catch (e) {
+    return vazio(e instanceof Error ? e.message : String(e));
+  }
+}

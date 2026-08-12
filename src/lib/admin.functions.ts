@@ -1019,3 +1019,80 @@ export const adminReconsolidarEscolas = createServerFn({ method: "POST" })
     const { updated, notFound } = await aplicarContagemEscolas(supabaseAdmin, counts);
     return { ano: ano!, municipios: counts.size, totalEscolas, updated, notFound };
   });
+
+// ============ CONFIG DAS QUERIES (Visão Geral por IA) ============
+export const adminGetQueryConfig = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { QUERY_AI_OVERVIEW_PADRAO } = await import("./prospect-query.server");
+    const { data } = await supabaseAdmin
+      .from("prospect_query_config")
+      .select("query_ai_overview, variantes, updated_at")
+      .eq("id", 1)
+      .maybeSingle();
+    const variantes = Array.isArray(data?.variantes) ? (data!.variantes as unknown as string[]) : [];
+    return {
+      query: (data?.query_ai_overview ?? QUERY_AI_OVERVIEW_PADRAO) as string,
+      variantes: variantes.filter((v) => typeof v === "string"),
+      updatedAt: (data?.updated_at ?? null) as string | null,
+    };
+  });
+
+export const adminSaveQueryConfig = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { query?: string; variantes?: string[] }) =>
+    z
+      .object({ query: z.string().min(5).optional(), variantes: z.array(z.string().min(5)).max(6).optional() })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const patch: { query_ai_overview?: string; variantes?: string[] } = {};
+    if (data.query) patch.query_ai_overview = data.query.trim();
+    if (data.variantes) patch.variantes = data.variantes;
+    if (Object.keys(patch).length === 0) return { ok: true };
+    const { error } = await supabaseAdmin.from("prospect_query_config").update(patch).eq("id", 1);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ============ AMOSTRA DE MUNICÍPIOS PARA TESTE DE QUERY ============
+export const adminAmostraMunicipios = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { quantidade?: number; uf?: string; somenteSemDados?: boolean }) =>
+    z
+      .object({
+        quantidade: z.number().int().min(1).max(20).default(5),
+        uf: z.string().length(2).optional(),
+        somenteSemDados: z.boolean().default(true),
+      })
+      .parse(input ?? {}),
+  )
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    let q = supabaseAdmin
+      .from("municipios_educacao")
+      .select("ibge_id, secretario, municipios!inner(nome, uf)")
+      .limit(data.quantidade * 12);
+    if (data.uf) q = q.eq("municipios.uf", data.uf);
+    if (data.somenteSemDados) q = q.is("secretario", null);
+    const { data: rows, error } = await q;
+    if (error) throw new Error(error.message);
+    const all = (rows ?? []) as any[];
+    // Embaralha e corta na quantidade pedida.
+    for (let i = all.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [all[i], all[j]] = [all[j], all[i]];
+    }
+    return {
+      items: all.slice(0, data.quantidade).map((r) => ({
+        ibgeId: r.ibge_id as number,
+        nome: r.municipios.nome as string,
+        uf: r.municipios.uf as string,
+      })),
+    };
+  });

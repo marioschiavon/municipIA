@@ -91,6 +91,9 @@ export function exportCSV(rows: ExportRow[]) {
 }
 
 // ============ Export do catálogo de municípios (leads) ============
+// Regra de negócio (decisão do cliente): cada CONTATO vira uma linha/lead
+// própria — uma pessoa com um e-mail e um telefone por linha. Quando a
+// pessoa tem vários e-mails/telefones, gera uma linha por combinação.
 
 const municipioHeaders = [
   "Município",
@@ -98,12 +101,12 @@ const municipioHeaders = [
   "Score",
   "Faixa",
   "Status",
-  "Secretário(a)",
+  "Nome do contato",
   "Cargo",
-  "E-mail(s)",
-  "Telefone(s)",
+  "Tipo de contato",
+  "E-mail",
+  "Telefone",
   "Horário",
-  "Equipe",
   "População",
   "Matrículas",
   "FNDE anual",
@@ -116,59 +119,96 @@ const FAIXA_LABEL_PT: Record<string, string> = {
   baixo: "Baixo",
 };
 
-function municipioEquipeToStr(r: ExportMunicipioRow): string {
-  const eq = r.equipe ?? [];
-  if (eq.length === 0) return "";
-  return eq
-    .map((m) => {
-      const parts = [m.nome];
-      if (m.cargo) parts.push(`(${m.cargo})`);
-      const contatos = [m.email, m.telefone].filter(Boolean).join(" / ");
-      if (contatos) parts.push(`— ${contatos}`);
-      return parts.join(" ");
-    })
-    .join(" | ");
+type ContatoLead = {
+  nome: string;
+  cargo: string;
+  tipo: string;
+  email: string;
+  telefone: string;
+};
+
+function expandirContatos(r: ExportMunicipioRow): ContatoLead[] {
+  const leads: ContatoLead[] = [];
+  const usadosEmail = new Set<string>();
+  const usadosFone = new Set<string>();
+
+  const push = (nome: string, cargo: string, tipo: string, emails: string[], telefones: string[]) => {
+    const es = emails.filter(Boolean);
+    const ts = telefones.filter(Boolean);
+    es.forEach((e) => usadosEmail.add(e.toLowerCase()));
+    ts.forEach((t) => usadosFone.add(t));
+    if (es.length === 0 && ts.length === 0) {
+      if (nome) leads.push({ nome, cargo, tipo, email: "", telefone: "" });
+      return;
+    }
+    const linhas = Math.max(es.length, ts.length);
+    for (let i = 0; i < linhas; i++) {
+      leads.push({ nome, cargo, tipo, email: es[i] ?? "", telefone: ts[i] ?? "" });
+    }
+  };
+
+  // 1) Equipe — cada pessoa com seus próprios contatos.
+  for (const m of r.equipe ?? []) {
+    push(m.nome, m.cargo ?? "", "Equipe", m.email ? [m.email] : [], m.telefone ? [m.telefone] : []);
+  }
+
+  // 2) Secretário(a) — recebe os contatos gerais da secretaria.
+  const emailsGerais = (r.emails ?? []).filter((e) => !usadosEmail.has(e.toLowerCase()));
+  const fonesGerais = (r.telefones ?? []).filter((t) => !usadosFone.has(t));
+  if (r.secretario) {
+    push(r.secretario, r.cargo ?? "Secretário(a) de Educação", "Secretário(a)", emailsGerais, fonesGerais);
+  } else if (emailsGerais.length > 0 || fonesGerais.length > 0) {
+    // 3) Sem nome conhecido: contatos institucionais viram leads genéricos.
+    push("", "Secretaria Municipal de Educação", "Contato geral", emailsGerais, fonesGerais);
+  }
+
+  if (leads.length === 0) {
+    leads.push({ nome: r.secretario ?? "", cargo: r.cargo ?? "", tipo: "Sem contato", email: "", telefone: "" });
+  }
+  return leads;
 }
 
-function municipioRowFor(r: ExportMunicipioRow) {
-  return [
+function municipioLeadRows(r: ExportMunicipioRow): (string | number)[][] {
+  return expandirContatos(r).map((c) => [
     r.nome,
     r.uf,
     r.score,
     FAIXA_LABEL_PT[r.faixa] ?? r.faixa,
     r.status,
-    r.secretario ?? "",
-    r.cargo ?? "",
-    r.emails.join("; "),
-    r.telefones.join("; "),
+    c.nome,
+    c.cargo,
+    c.tipo,
+    c.email,
+    c.telefone,
     r.horario ?? "",
-    municipioEquipeToStr(r),
     r.populacao,
     r.matriculas_total,
     r.fnde_anual,
     r.atualizado_em ?? "",
-  ];
+  ]);
+}
+
+function allLeadRows(rows: ExportMunicipioRow[]): (string | number)[][] {
+  return rows.flatMap(municipioLeadRows);
 }
 
 export function exportMunicipiosCSV(rows: ExportMunicipioRow[]) {
   const lines = [municipioHeaders.map(csvEscape).join(";")];
-  for (const r of rows) {
-    lines.push(municipioRowFor(r).map((v) => csvEscape(String(v))).join(";"));
+  for (const row of allLeadRows(rows)) {
+    lines.push(row.map((v) => csvEscape(String(v))).join(";"));
   }
-  const blob = new Blob(["﻿" + lines.join("\r\n")], {
+  const blob = new Blob(["\uFEFF" + lines.join("\r\n")], {
     type: "text/csv;charset=utf-8",
   });
   download(blob, `municipia_leads_${today()}.csv`);
 }
 
 export function exportMunicipiosXLSX(rows: ExportMunicipioRow[]) {
-  const aoa = [municipioHeaders, ...rows.map(municipioRowFor)];
+  const body = allLeadRows(rows);
+  const aoa = [municipioHeaders, ...body];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const colWidths = municipioHeaders.map((h, i) => {
-    const maxLen = Math.max(
-      h.length,
-      ...rows.map((r) => String(municipioRowFor(r)[i] ?? "").length),
-    );
+    const maxLen = Math.max(h.length, ...body.map((r) => String(r[i] ?? "").length));
     return { wch: Math.min(Math.max(maxLen + 2, 12), 50) };
   });
   ws["!cols"] = colWidths;
@@ -190,6 +230,7 @@ export function exportMunicipiosXLSX(rows: ExportMunicipioRow[]) {
   });
   download(blob, `municipia_leads_${today()}.xlsx`);
 }
+
 
 export function exportXLSX(rows: ExportRow[]) {
   const aoa = [headers, ...rows.map(rowFor)];
