@@ -1886,12 +1886,32 @@ export async function prospectar(
   const queryNomeA = `prefeitura municipal ${municipio} ${uf} secretaria de educação secretário atual`;
   const queryNomeB = `secretário OR secretária de educação ${municipio} ${uf} ${anoAtual} atual`;
   const queryNomeC = `site:${dominioOficial ?? `${slug}.${ufLow}.gov.br`} secretaria educação secretário`;
-  const [candsNome0, candsNomeA, candsNomeB, candsNomeC] = await Promise.all([
+  const [outNome0, outNomeA, outNomeB, outNomeC] = await Promise.all([
     search(queryNome0, "nome", { limit: 8, timeoutMs: 8000, uf }),
     search(queryNomeA, "nome", { limit: 8, tbs: "qdr:y", timeoutMs: 8000, uf }),
     search(queryNomeB, "nome", { limit: 6, tbs: "qdr:y", timeoutMs: 8000, uf }),
     search(queryNomeC, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf }),
   ]);
+  const [candsNome0, candsNomeA, candsNomeB, candsNomeC] = [
+    outNome0.cands,
+    outNomeA.cands,
+    outNomeB.cands,
+    outNomeC.cands,
+  ];
+
+  // --- AI Overview do Google (Visão Geral por IA) — atalho no Estágio 1 ---
+  // QueryNome0 é a consulta mais ampla e tem mais chance de disparar o bloco.
+  let aiOverviewShort: Extracted | null = null;
+  if (outNome0.serpExtras.aiOverview?.text) {
+    const aiExt = await extractFromAiOverview(outNome0.serpExtras.aiOverview, municipio, uf, emit, {
+      dominioOficial: dominioOficial ?? null,
+    });
+    if (aiExt && (aiExt.secretario || aiExt.emails.length > 0 || aiExt.telefones.length > 0)) {
+      aiOverviewShort = aiExt;
+      // Se o AI Overview já trouxe nome + contato, guardamos para uso final e
+      // continuamos o pipeline normal; o melhor resultado será escolhido no final.
+    }
+  }
 
   // Fallback de domínio: se o domínio padrão {slug}.{uf}.gov.br não retornou nada e não
   // conhecemos o domínio real do município, tenta {uf}.gov.br com o nome do município.
@@ -1900,11 +1920,12 @@ export async function prospectar(
   // resultado com o secretário ESTADUAL de educação em vez do municipal — por isso só
   // usamos esse fallback quando não há domínio oficial conhecido, e os resultados vindos
   // do portal estadual "puro" são descartados logo abaixo (preferGov penaliza isBareStateHost).
-  let candsNomeCfb: SearchCandidate[] = [];
+  let outNomeCfb: SearchOutcome = { cands: [], serpExtras: {} };
   if (candsNomeC.length === 0 && !dominioOficial) {
     const queryNomeCfb = `site:${ufLow}.gov.br "${municipio}" secretaria educação secretário`;
-    candsNomeCfb = await search(queryNomeCfb, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf });
+    outNomeCfb = await search(queryNomeCfb, "nome", { limit: 5, tbs: "qdr:y", timeoutMs: 8000, uf });
   }
+  const candsNomeCfb = outNomeCfb.cands;
   // Priorizar resultados do domínio oficial do município (queryNomeC/fb) ANTES de A/B.
   const candsNome = filterForeignMunicipio(dedupeByUrl([...candsNomeC, ...candsNomeCfb, ...candsNome0, ...candsNomeA, ...candsNomeB]), slug, emit, "nome");
   addToPool(candsNome);
