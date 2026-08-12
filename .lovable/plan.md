@@ -8,6 +8,7 @@ Hoje `/admin/prospeccao` só roda fases isoladas (Fase 1 domínio, Fase 2 secret
 - Ao escolher, o contador de elegíveis, o progresso do ciclo ("X de Y já tentados") e o botão "Reiniciar ciclo" passam a refletir esse modo.
 - Elegíveis do lote completo: municípios que ainda não têm secretário **ou** não têm nenhum e-mail/telefone (não exige domínio confirmado, porque a busca completa descobre o domínio sozinha).
 - Cada município roda a pipeline inteira e grava o resultado consolidado; itens duvidosos continuam caindo na fila lateral de revisão, marcados como "Completo".
+- A run começa sempre pela **Visão Geral por IA do Google** (ator `apify/google-ai-overviews-scraper`, navegador real na SERP), com as fontes citadas; só depois entram os snippets orgânicos e o scrape do site oficial. O log em tempo real mostra quando o bloco de IA foi acionado.
 - Intervalo entre municípios maior (a run é mais cara): ~40s, ajustável.
 
 ## Detalhes técnicos
