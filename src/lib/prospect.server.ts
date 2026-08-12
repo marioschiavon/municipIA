@@ -1593,6 +1593,13 @@ export async function prospectarRapido(
     return empty("Busca rápida não conseguiu extrair nome/contato confiáveis desta consulta.");
   }
 
+  // Nome vindo da Visão Geral por IA aproveita os contatos achados nos snippets.
+  if (!ext.secretario && nomeDoAiOverview) {
+    ext.secretario = nomeDoAiOverview;
+    ext.cargo = ext.cargo || cargoDoAiOverview || "Secretário(a) Municipal de Educação";
+    emit("info", "nome", `Nome da Visão Geral por IA aproveitado: ${nomeDoAiOverview}`);
+  }
+
   const hasGoodEmail = ext.emails.some((e) => !GENERIC_LOCAL.test(e));
   const status: ProspectResult["status"] =
     ext.secretario && (hasGoodEmail || ext.telefones.length > 0)
