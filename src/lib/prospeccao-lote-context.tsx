@@ -23,6 +23,26 @@ const FASE_INTERVALO_MS: Record<FaseIsolada, number> = {
   completo: 40_000,
 };
 
+/** O que ficou faltando num resultado do lote completo (domínio, secretário, contato). */
+function camposFaltando(e: QueueLogEntry): string[] {
+  const r = e.result;
+  const faltando: string[] = [];
+  if (!r?.dominioOficialConfirmado) faltando.push("domínio");
+  if (!r?.secretario) faltando.push("secretário");
+  if ((r?.emails?.length ?? 0) + (r?.telefones?.length ?? 0) === 0) faltando.push("contato");
+  return faltando;
+}
+
+/** No lote completo, qualquer resultado incompleto (parcial/não encontrado ou sem
+ * um dos três campos) também entra na fila de revisão. Nas fases isoladas segue
+ * valendo só o que o backend marcou como duvidoso, pra não inflar a fila. */
+function precisaRevisao(e: QueueLogEntry, fase: FaseIsolada): boolean {
+  if (e.result?.revisar) return true;
+  if (fase !== "completo") return false;
+  if (e.status === "error") return false;
+  return e.status !== "found" || camposFaltando(e).length > 0;
+}
+
 type ProspeccaoLoteState = ReturnType<typeof useProspeccaoLoteState>;
 
 function useProspeccaoLoteState() {
@@ -41,7 +61,7 @@ function useProspeccaoLoteState() {
   // Toda entrada do log marcada como "revisar" entra (uma vez) na fila lateral.
   // Ela permanece lá mesmo depois de novos lotes até o admin tratar o município.
   useEffect(() => {
-    const pendentes = queue.log.filter((e) => e.result?.revisar);
+    const pendentes = queue.log.filter((e) => precisaRevisao(e, fase));
     if (pendentes.length === 0) return;
     setRevisoes((prev) => {
       const vistos = new Set(prev.map((r) => `${r.ibge_id}:${r.fase}`));
@@ -50,7 +70,14 @@ function useProspeccaoLoteState() {
           const chave = `${e.ibge_id}:${fase}`;
           return !vistos.has(chave) && !resolvidosRef.current.has(chave);
         })
-        .map((e) => ({ ...e, fase }) as RevisaoItem);
+        .map((e) => {
+          const faltando = camposFaltando(e);
+          const motivo =
+            e.result?.motivoRevisao ??
+            e.motivo ??
+            (faltando.length > 0 ? `Faltou: ${faltando.join(", ")}` : null);
+          return { ...e, fase, motivo } as RevisaoItem;
+        });
       return novos.length > 0 ? [...novos, ...prev] : prev;
     });
   }, [queue.log, fase]);
