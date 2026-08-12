@@ -1999,9 +1999,10 @@ export async function prospectar(
   const queryNomeB = `secretário OR secretária de educação ${municipio} ${uf} ${anoAtual} atual`;
   const queryNomeC = `site:${dominioOficial ?? `${slug}.${ufLow}.gov.br`} secretaria educação secretário`;
   // --- PASSO 1: Visão Geral por IA do Google (SERP renderizada) ---
-  // Roda ANTES dos snippets: um ator com navegador real abre a SERP e captura o
-  // bloco "Visão Geral por IA", que o SERP clássico (HTML estático) nunca traz.
-  let aiOverviewBloco = await buscarAiOverviewRenderizado(queryNome0, emit, "nome", { timeoutMs: 120_000 });
+  // Já foi capturada no Estágio IA, no topo da função — aqui só reaproveitamos
+  // (sem custo extra). Se lá não veio nada, ainda tentamos o bloco que o SERP
+  // clássico eventualmente traga.
+  let aiOverviewBloco = aiOverviewPre;
 
   // --- PASSO 2: snippets do SERP clássico ---
   const [outNome0, outNomeA, outNomeB, outNomeC] = await Promise.all([
@@ -2017,14 +2018,13 @@ export async function prospectar(
     outNomeC.cands,
   ];
 
-  // Se o ator renderizado não trouxe nada, ainda aproveitamos o bloco que
-  // eventualmente venha no SERP clássico.
   if (!aiOverviewBloco?.text && outNome0.serpExtras.aiOverview?.text) {
     aiOverviewBloco = outNome0.serpExtras.aiOverview;
+    aiOverviewPre = aiOverviewBloco;
   }
 
-  let aiOverviewShort: Extracted | null = null;
-  if (aiOverviewBloco?.text) {
+  let aiOverviewShort: Extracted | null = aiOverviewPreExt;
+  if (!aiOverviewShort && aiOverviewBloco?.text) {
     const aiExt = await extractFromAiOverview(aiOverviewBloco, municipio, uf, emit, {
       dominioOficial: dominioOficial ?? null,
     });
@@ -2034,6 +2034,7 @@ export async function prospectar(
       // continuamos o pipeline normal; o melhor resultado será escolhido no final.
     }
   }
+
 
   // Fallback de domínio: se o domínio padrão {slug}.{uf}.gov.br não retornou nada e não
   // conhecemos o domínio real do município, tenta {uf}.gov.br com o nome do município.
