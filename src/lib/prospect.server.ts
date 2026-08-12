@@ -927,7 +927,7 @@ async function extractWithAI(
   opts: {
     nomeAlvo?: string | null;
     diarioBlock?: string;
-    modo?: "snippets" | "site";
+    modo?: "snippets" | "site" | "ai-overview";
     topHost?: string;
   } = {},
 ): Promise<Extracted | null> {
@@ -948,9 +948,9 @@ async function extractWithAI(
       ? `\nPISTAS pré-extraídas por regex (só use se também aparecerem no texto):\n  e-mails: ${hints.emails.join(", ") || "—"}\n  telefones: ${hints.telefones.join(", ") || "—"}\n`
       : "";
 
-  const fonteLbl = modo === "snippets" ? "snippets do Google" : "página oficial";
+  const fonteLbl = modo === "snippets" ? "snippets do Google" : modo === "ai-overview" ? "Visão Geral por IA do Google" : "página oficial";
   const prompt = `Você extrai CONTATOS institucionais da Secretaria de Educação de ${municipio}/${uf} a partir de ${fonteLbl}.
-
+${modo === "ai-overview" ? "\nATENÇÃO: A Visão Geral por IA é uma síntese do Google. Ela pode conter erros. Só devolva confiança 'alta' se as fontes citadas forem do domínio oficial do município (.gov.br) ou domínio já confirmado; caso contrário, use 'media' ou 'baixa'.\n" : ""}
 ${nomeAlvo ? `NOME CONFIRMADO: "${nomeAlvo}". Priorize contatos vinculados a essa pessoa/secretaria.\n` : ""}FOCO (${etapa}): ${focoEtapa}
 
 REGRAS GERAIS:
