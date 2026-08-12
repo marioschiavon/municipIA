@@ -391,20 +391,25 @@ class ProviderSearchError extends Error {
 
 const QUOTA_RE = /(insufficient credits|payment required|quota|rate limit|402|401|403|unauthorized|forbidden)/i;
 
+export type SearchOutcome = {
+  cands: SearchCandidate[];
+  serpExtras: SerpExtras;
+};
+
 /** Motor de busca da OpenAI (Responses API + web_search) — usado quando o Apify
- * fica indisponível (cota/crédito/token). Devolve [] se a OpenAI também falhar. */
+ * fica indisponível (cota/crédito/token). Devolve cands vazio se a OpenAI também falhar. */
 async function openaiSearch(
   query: string,
   emit: Emit,
   etapa: EtapaTag,
   opts: { limit?: number; timeoutMs?: number; uf?: string } = {},
-): Promise<SearchCandidate[]> {
+): Promise<SearchOutcome> {
   const { openaiWebSearch } = await import("./openai.server");
   emit("info", etapa, `OpenAI web search: "${query}"`);
   const r = await openaiWebSearch(query, { limit: opts.limit ?? 10, timeoutMs: opts.timeoutMs ?? 60_000 });
   if (!r.ok) {
     emit("warn", etapa, `OpenAI web search indisponível (${r.reason.slice(0, 160)})`);
-    return [];
+    return { cands: [], serpExtras: {} };
   }
   const ufLow = opts.uf?.toLowerCase();
   const cands: SearchCandidate[] = r.hits
@@ -413,7 +418,7 @@ async function openaiSearch(
   emit("info", etapa, `OpenAI trouxe ${cands.length} resultado(s) em ${(r.elapsedMs / 1000).toFixed(1)}s`, {
     candidatos: cands.slice(0, 5).map((c) => ({ url: c.url, snippet: `${c.title} — ${c.description}`.slice(0, 260) })),
   });
-  return cands;
+  return { cands, serpExtras: {} };
 }
 
 
@@ -425,11 +430,11 @@ async function geminiSearch(
   emit: Emit,
   etapa: EtapaTag,
   opts: { limit?: number; uf?: string } = {},
-): Promise<SearchCandidate[]> {
+): Promise<SearchOutcome> {
   const key = process.env.LOVABLE_API_KEY;
   if (!key) {
     emit("warn", etapa, "Gemini indisponível (LOVABLE_API_KEY ausente)");
-    return [];
+    return { cands: [], serpExtras: {} };
   }
   emit("info", etapa, `Gemini (Lovable AI) sugerindo fontes para: "${query}"`);
   try {
@@ -461,10 +466,10 @@ Responda apenas com JSON válido no schema.`,
       `Gemini sugeriu ${cands.length} fonte(s) (baixa confiança — sem busca real na web)`,
       { candidatos: cands.slice(0, 5).map((c) => c.url) },
     );
-    return cands;
+    return { cands, serpExtras: {} };
   } catch (e) {
     emit("warn", etapa, "Gemini falhou ao sugerir fontes", String(e));
-    return [];
+    return { cands: [], serpExtras: {} };
   }
 }
 
@@ -474,21 +479,22 @@ async function fallbackSearch(
   emit: Emit,
   etapa: EtapaTag,
   opts: { limit?: number; timeoutMs?: number; uf?: string } = {},
-): Promise<SearchCandidate[]> {
+): Promise<SearchOutcome> {
   const viaOpenai = await openaiSearch(query, emit, etapa, opts);
-  if (viaOpenai.length > 0) return viaOpenai;
+  if (viaOpenai.cands.length > 0) return viaOpenai;
   emit("warn", etapa, "OpenAI não trouxe resultados — última tentativa pelo Gemini");
   return geminiSearch(query, emit, etapa, { limit: opts.limit, uf: opts.uf });
 }
 
 /** Google SERP Scraper do Apify — motor principal de busca.
- * Se falhar ou vier vazio, cai para OpenAI (web_search) e, por último, Gemini. */
+ * Se falhar ou vier vazio, cai para OpenAI (web_search) e, por último, Gemini.
+ * Também devolve os "extras" do SERP (AI Overview, People Also Ask, etc.). */
 async function apifySearch(
   query: string,
   emit: Emit,
   etapa: EtapaTag,
   opts: { limit?: number; timeoutMs?: number; uf?: string } = {},
-): Promise<SearchCandidate[]> {
+): Promise<SearchOutcome> {
   const limit = opts.limit ?? 10;
   emit("info", etapa, `Apify Google SERP: "${query}"`);
   const r = await googleSerp(query, { resultsPerPage: limit, timeoutMs: opts.timeoutMs ?? 45_000 });
@@ -514,12 +520,13 @@ async function apifySearch(
       url: c.url,
       snippet: `${c.title} — ${c.description}`.slice(0, 260),
     })),
+    aiOverview: r.serpExtras.aiOverview?.text ? "presente" : "ausente",
   });
   if (cands.length === 0) {
     emit("warn", etapa, "Apify retornou SERP vazio — tentando OpenAI web search");
     return fallbackSearch(query, emit, etapa, opts);
   }
-  return cands;
+  return { cands, serpExtras: r.serpExtras };
 }
 
 
@@ -527,7 +534,7 @@ type SearchFn = (
   query: string,
   etapa: EtapaTag,
   opts?: { limit?: number; tbs?: string; withScrape?: boolean; timeoutMs?: number; uf?: string },
-) => Promise<SearchCandidate[]>;
+) => Promise<SearchOutcome>;
 
 /** Fábrica do dispatcher de busca — cadeia única em todos os fluxos:
  * Apify (SERP) → OpenAI (web_search) → Gemini (Lovable AI, baixa confiança). */
@@ -539,6 +546,7 @@ function makeSearchDispatcher(emit: Emit): SearchFn {
       uf: opts.uf,
     });
 }
+
 
 /** Leitura de página com timeout duro — devolve null se estourar.
  * Ordem: fetch nativo → Apify (navegador real). */
