@@ -628,9 +628,13 @@ export const adminResolveRevisao = createServerFn({ method: "POST" })
       .eq("ibge_id", data.ibge_id)
       .maybeSingle()) as any;
 
-    const prefix = `${data.fase}:`;
+    // "completo" cobre as três fases de uma vez — limpa todos os motivos.
+    const prefixes =
+      data.fase === "completo"
+        ? ["dominio:", "secretario:", "contato:", "completo:"]
+        : [`${data.fase}:`];
     const revisao_motivos = (existente?.revisao_motivos ?? []).filter(
-      (m: string) => !m.startsWith(prefix),
+      (m: string) => !prefixes.some((p) => m.startsWith(p)),
     );
     const patch: Record<string, unknown> = {
       revisao_motivos,
@@ -644,17 +648,23 @@ export const adminResolveRevisao = createServerFn({ method: "POST" })
       let emails: string[] = existente?.emails ?? [];
       let telefones: string[] = existente?.telefones ?? [];
 
-      if (data.fase === "dominio") {
+      const tocaDominio = data.fase === "dominio" || data.fase === "completo";
+      const tocaSecretario = data.fase === "secretario" || data.fase === "completo";
+      const tocaContato = data.fase === "contato" || data.fase === "completo";
+
+      if (tocaDominio && data.patch.dominio_oficial !== undefined) {
         const { normalizeHost } = await import("./scraper.server");
         patch.dominio_oficial = normalizeHost(data.patch.dominio_oficial ?? null);
         patch.dominio_confirmado_em = now;
-      } else if (data.fase === "secretario") {
+      }
+      if (tocaSecretario && (data.patch.secretario !== undefined || data.patch.cargo !== undefined)) {
         secretario = data.patch.secretario ?? null;
         cargo = data.patch.cargo ?? null;
         patch.secretario = secretario;
         patch.cargo = cargo;
         patch.secretario_confirmado_em = now;
-      } else {
+      }
+      if (tocaContato && (data.patch.emails !== undefined || data.patch.telefones !== undefined)) {
         emails = data.patch.emails ?? [];
         telefones = data.patch.telefones ?? [];
         patch.emails = emails;
