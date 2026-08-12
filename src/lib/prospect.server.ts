@@ -1789,6 +1789,7 @@ export async function prospectar(
   const queryAiOverview = await getQueryAiOverview(municipio, uf);
   const dominioParaFonte = dominioConfirmado ?? dominioOficial ?? null;
   let aiOverviewPre = await buscarAiOverviewRenderizado(queryAiOverview, emit, "nome", { timeoutMs: 120_000 });
+  if (aiOverviewPre?.sources?.length) aiOverviewFontes = aiOverviewPre.sources;
   let aiOverviewPreExt: Extracted | null = null;
   if (aiOverviewPre?.text) {
     const aiExt = await extractFromAiOverview(aiOverviewPre, municipio, uf, emit, {
@@ -2039,6 +2040,7 @@ export async function prospectar(
   if (!aiOverviewBloco?.text && outNome0.serpExtras.aiOverview?.text) {
     aiOverviewBloco = outNome0.serpExtras.aiOverview;
     aiOverviewPre = aiOverviewBloco;
+    if (aiOverviewBloco?.sources?.length) aiOverviewFontes = aiOverviewBloco.sources;
   }
 
   let aiOverviewShort: Extracted | null = aiOverviewPreExt;
