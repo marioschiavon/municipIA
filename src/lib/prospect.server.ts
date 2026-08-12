@@ -269,6 +269,16 @@ function slugify(s: string): string {
     .replace(/[^a-z0-9]+/g, "");
 }
 
+function normalizeName(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Timeout duro genérico — resolve null se estourar o limite.
 async function withTimeout<T>(
   promise: Promise<T>,
