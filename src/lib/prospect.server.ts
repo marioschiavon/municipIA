@@ -1740,6 +1740,10 @@ export async function prospectar(
     return { dominio, pagina: result.hierarquia === "educacao" ? result.fonteUrl : null };
   };
 
+  // Fontes citadas pela Visão Geral por IA nesta run — anexadas ao resultado
+  // final para o admin conseguir julgar se o dado é do mandato atual.
+  let aiOverviewFontes: Array<{ url?: string; title?: string }> | null = null;
+
   const sendFinal = (result: ProspectResult) => {
     const { dominio, pagina } = dominioParaConfirmar(result);
     const merged: ProspectResult = {
@@ -1747,7 +1751,20 @@ export async function prospectar(
       equipe: dedupeEquipe([...(result.equipe ?? []), ...equipePool]),
       dominioOficialConfirmado: dominio,
       paginaEducacaoUrl: pagina,
+      fontesAiOverview: aiOverviewFontes ?? result.fontesAiOverview ?? null,
     };
+    // Regra de atualidade: se a informação tem data de referência de anos
+    // anteriores (mandato antigo), não pode ser gravada como confiável.
+    const anoRef = Number((merged.dataReferencia ?? "").match(/(19|20)\d{2}/)?.[0] ?? 0);
+    if (anoRef && anoRef < new Date().getFullYear() - 1) {
+      merged.revisar = true;
+      merged.motivoRevisao = [
+        merged.motivoRevisao,
+        `possível dado desatualizado (referência ${anoRef})`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    }
     onEvent?.({ kind: "final", result: merged, ts: Date.now(), elapsedMs: Date.now() - t0 });
     return merged;
   };
