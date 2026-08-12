@@ -18,7 +18,7 @@ export type ProspectResult = {
   fonteUrl: string | null;
   contexto: string | null;
   /** Origem do NOME do secretário, quando aplicável. */
-  nomeFonte?: "site" | "diario" | "busca-nome" | "snippet" | null;
+  nomeFonte?: "site" | "diario" | "busca-nome" | "snippet" | "ai-overview" | null;
   /** Data/período de referência da informação (ex.: "2025-11", "abril/2025"). */
   dataReferencia?: string | null;
   /** Horário de atendimento, quando aparece literalmente na fonte (ex.: "Seg a Sex 8h–17h"). */
