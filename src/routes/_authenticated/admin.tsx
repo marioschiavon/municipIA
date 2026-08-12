@@ -6,7 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { APP_VERSION } from "@/lib/version";
-import { Database, Home, Sliders, LogOut, Loader2, ShieldAlert, Upload, ListChecks } from "lucide-react";
+import { Database, Home, Sliders, LogOut, Loader2, ShieldAlert, Upload, ListChecks, SearchCode } from "lucide-react";
 import { ProspeccaoLoteProvider, useProspeccaoLote } from "@/lib/prospeccao-lote-context";
 
 export const Route = createFileRoute("/_authenticated/admin")({
@@ -59,6 +59,7 @@ function AdminLayout() {
                 <NavLink to="/admin/municipios" icon={<Database className="h-4 w-4" />}>Municípios</NavLink>
                 <NavLink to="/admin/prospeccao" icon={<ListChecks className="h-4 w-4" />}>Prospecção em lotes</NavLink>
                 <NavLink to="/admin/import" icon={<Upload className="h-4 w-4" />}>Importar</NavLink>
+                <NavLink to="/admin/queries" icon={<SearchCode className="h-4 w-4" />}>Teste de queries</NavLink>
                 <NavLink to="/admin/score" icon={<Sliders className="h-4 w-4" />}>Pesos do score</NavLink>
               </nav>
             </div>
