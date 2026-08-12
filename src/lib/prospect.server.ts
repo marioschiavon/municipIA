@@ -2470,7 +2470,8 @@ export async function prospectar(
   // ============================================================
   async function runFallback(etapa: Hierarquia, query: string, label: string): Promise<ProspectResult | null> {
     emit("info", etapa, `${label} — snippet-only`);
-    const cands = filterForeignMunicipio(await search(query, etapa, { limit: 8, timeoutMs: 5000, uf }), slug, emit, etapa);
+    const { cands: rawCands } = await search(query, etapa, { limit: 8, timeoutMs: 5000, uf });
+    const cands = filterForeignMunicipio(rawCands, slug, emit, etapa);
     addToPool(cands);
     const ranked = preferGov(cands, undefined, ufLow);
     if (ranked.length === 0) return null;
