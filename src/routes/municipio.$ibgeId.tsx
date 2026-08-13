@@ -232,8 +232,8 @@ function MunicipioPage() {
             </div>
           </div>
           <div className="flex justify-end">
-            <Button variant="outline" onClick={() => { stream.cancel(); setDialogOpen(false); }} disabled={!stream.running}>
-              Cancelar
+            <Button variant="outline" onClick={() => { stream.cancel(); setDialogOpen(false); }}>
+              {stream.running ? "Cancelar" : "Fechar"}
             </Button>
           </div>
         </DialogContent>
