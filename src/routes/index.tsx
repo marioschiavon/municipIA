@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, useMemo } from "react";
-import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download } from "lucide-react";
+import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download, Sparkles, CheckCircle2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,6 +20,9 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { APP_VERSION } from "@/lib/version";
 import { listMunicipios, getCatalogStats, exportMunicipios, EXPORT_MAX } from "@/lib/catalog.functions";
 import { exportMunicipiosCSV, exportMunicipiosXLSX } from "@/lib/export";
+import { useProspectStream } from "@/lib/use-prospect-stream";
+import { resumirResultado } from "@/lib/prospect-completeness";
+import type { ProspectResult } from "@/lib/prospect.types";
 
 export const Route = createFileRoute("/")({
   head: () => ({
