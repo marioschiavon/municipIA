@@ -48,10 +48,12 @@ const PAGE_SIZE = 50;
 
 function CatalogPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const listFn = useServerFn(listMunicipios);
   const statsFn = useServerFn(getCatalogStats);
   const exportFn = useServerFn(exportMunicipios);
   const stream = useProspectStream();
+
 
   const [uf, setUf] = useState<string>("all");
   const [faixa, setFaixa] = useState<string>("all");
