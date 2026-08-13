@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ManualRouteImport } from './routes/manual'
 import { Route as DebugRouteImport } from './routes/debug'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
@@ -27,10 +28,16 @@ import { Route as ApiAdminImportRouteImport } from './routes/api/admin/import'
 import { Route as AuthenticatedAdminScoreRouteImport } from './routes/_authenticated/admin.score'
 import { Route as AuthenticatedAdminQueriesRouteImport } from './routes/_authenticated/admin.queries'
 import { Route as AuthenticatedAdminProspeccaoRouteImport } from './routes/_authenticated/admin.prospeccao'
+import { Route as AuthenticatedAdminManualRouteImport } from './routes/_authenticated/admin.manual'
 import { Route as AuthenticatedAdminImportRouteImport } from './routes/_authenticated/admin.import'
 import { Route as AuthenticatedAdminMunicipiosIndexRouteImport } from './routes/_authenticated/admin.municipios.index'
 import { Route as AuthenticatedAdminMunicipiosIbgeIdRouteImport } from './routes/_authenticated/admin.municipios.$ibgeId'
 
+const ManualRoute = ManualRouteImport.update({
+  id: '/manual',
+  path: '/manual',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DebugRoute = DebugRouteImport.update({
   id: '/debug',
   path: '/debug',
@@ -122,6 +129,12 @@ const AuthenticatedAdminProspeccaoRoute =
     path: '/prospeccao',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
+const AuthenticatedAdminManualRoute =
+  AuthenticatedAdminManualRouteImport.update({
+    id: '/manual',
+    path: '/manual',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminImportRoute =
   AuthenticatedAdminImportRouteImport.update({
     id: '/import',
@@ -145,12 +158,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/debug': typeof DebugRouteWithChildren
+  '/manual': typeof ManualRoute
   '/admin': typeof AuthenticatedAdminRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
   '/debug/openai': typeof DebugOpenaiRoute
   '/municipio/$ibgeId': typeof MunicipioIbgeIdRoute
   '/admin/import': typeof AuthenticatedAdminImportRoute
+  '/admin/manual': typeof AuthenticatedAdminManualRoute
   '/admin/prospeccao': typeof AuthenticatedAdminProspeccaoRoute
   '/admin/queries': typeof AuthenticatedAdminQueriesRoute
   '/admin/score': typeof AuthenticatedAdminScoreRoute
@@ -167,11 +182,13 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/debug': typeof DebugRouteWithChildren
+  '/manual': typeof ManualRoute
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
   '/debug/openai': typeof DebugOpenaiRoute
   '/municipio/$ibgeId': typeof MunicipioIbgeIdRoute
   '/admin/import': typeof AuthenticatedAdminImportRoute
+  '/admin/manual': typeof AuthenticatedAdminManualRoute
   '/admin/prospeccao': typeof AuthenticatedAdminProspeccaoRoute
   '/admin/queries': typeof AuthenticatedAdminQueriesRoute
   '/admin/score': typeof AuthenticatedAdminScoreRoute
@@ -190,12 +207,14 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/debug': typeof DebugRouteWithChildren
+  '/manual': typeof ManualRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
   '/debug/openai': typeof DebugOpenaiRoute
   '/municipio/$ibgeId': typeof MunicipioIbgeIdRoute
   '/_authenticated/admin/import': typeof AuthenticatedAdminImportRoute
+  '/_authenticated/admin/manual': typeof AuthenticatedAdminManualRoute
   '/_authenticated/admin/prospeccao': typeof AuthenticatedAdminProspeccaoRoute
   '/_authenticated/admin/queries': typeof AuthenticatedAdminQueriesRoute
   '/_authenticated/admin/score': typeof AuthenticatedAdminScoreRoute
@@ -214,12 +233,14 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/debug'
+    | '/manual'
     | '/admin'
     | '/api/prospect'
     | '/debug/apify'
     | '/debug/openai'
     | '/municipio/$ibgeId'
     | '/admin/import'
+    | '/admin/manual'
     | '/admin/prospeccao'
     | '/admin/queries'
     | '/admin/score'
@@ -236,11 +257,13 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/debug'
+    | '/manual'
     | '/api/prospect'
     | '/debug/apify'
     | '/debug/openai'
     | '/municipio/$ibgeId'
     | '/admin/import'
+    | '/admin/manual'
     | '/admin/prospeccao'
     | '/admin/queries'
     | '/admin/score'
@@ -258,12 +281,14 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/debug'
+    | '/manual'
     | '/_authenticated/admin'
     | '/api/prospect'
     | '/debug/apify'
     | '/debug/openai'
     | '/municipio/$ibgeId'
     | '/_authenticated/admin/import'
+    | '/_authenticated/admin/manual'
     | '/_authenticated/admin/prospeccao'
     | '/_authenticated/admin/queries'
     | '/_authenticated/admin/score'
@@ -282,6 +307,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   DebugRoute: typeof DebugRouteWithChildren
+  ManualRoute: typeof ManualRoute
   ApiProspectRoute: typeof ApiProspectRoute
   MunicipioIbgeIdRoute: typeof MunicipioIbgeIdRoute
   ApiAdminImportRoute: typeof ApiAdminImportRoute
@@ -293,6 +319,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/manual': {
+      id: '/manual'
+      path: '/manual'
+      fullPath: '/manual'
+      preLoaderRoute: typeof ManualRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/debug': {
       id: '/debug'
       path: '/debug'
@@ -419,6 +452,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminProspeccaoRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
+    '/_authenticated/admin/manual': {
+      id: '/_authenticated/admin/manual'
+      path: '/manual'
+      fullPath: '/admin/manual'
+      preLoaderRoute: typeof AuthenticatedAdminManualRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
     '/_authenticated/admin/import': {
       id: '/_authenticated/admin/import'
       path: '/import'
@@ -445,6 +485,7 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedAdminRouteChildren {
   AuthenticatedAdminImportRoute: typeof AuthenticatedAdminImportRoute
+  AuthenticatedAdminManualRoute: typeof AuthenticatedAdminManualRoute
   AuthenticatedAdminProspeccaoRoute: typeof AuthenticatedAdminProspeccaoRoute
   AuthenticatedAdminQueriesRoute: typeof AuthenticatedAdminQueriesRoute
   AuthenticatedAdminScoreRoute: typeof AuthenticatedAdminScoreRoute
@@ -455,6 +496,7 @@ interface AuthenticatedAdminRouteChildren {
 
 const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
   AuthenticatedAdminImportRoute: AuthenticatedAdminImportRoute,
+  AuthenticatedAdminManualRoute: AuthenticatedAdminManualRoute,
   AuthenticatedAdminProspeccaoRoute: AuthenticatedAdminProspeccaoRoute,
   AuthenticatedAdminQueriesRoute: AuthenticatedAdminQueriesRoute,
   AuthenticatedAdminScoreRoute: AuthenticatedAdminScoreRoute,
@@ -496,6 +538,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   DebugRoute: DebugRouteWithChildren,
+  ManualRoute: ManualRoute,
   ApiProspectRoute: ApiProspectRoute,
   MunicipioIbgeIdRoute: MunicipioIbgeIdRoute,
   ApiAdminImportRoute: ApiAdminImportRoute,

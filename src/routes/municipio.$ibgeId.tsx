@@ -96,6 +96,7 @@ function MunicipioPage() {
             <ArrowLeft className="h-4 w-4" /> Catálogo
           </Link>
           <div className="flex items-center gap-3">
+            <Link to="/manual" className="text-sm text-muted-foreground hover:text-foreground">Manual</Link>
             {statusMessage && (
               <span className="hidden text-sm text-emerald-700 sm:inline-flex">
                 <CheckCircle2 className="mr-1 h-4 w-4" /> {statusMessage}
