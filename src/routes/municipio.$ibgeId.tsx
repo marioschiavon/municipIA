@@ -4,12 +4,17 @@ import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import {
   ArrowLeft, RefreshCw, Loader2, User, Mail, Phone, Clock, Users, ExternalLink,
-  Building2, TrendingUp, GraduationCap, Wallet, MapPin,
+  Building2, TrendingUp, GraduationCap, Wallet, MapPin, Search, CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
 import { getMunicipio } from "@/lib/catalog.functions";
 import { FAIXA_LABEL } from "@/lib/catalog-score";
+import { useProspectStream } from "@/lib/use-prospect-stream";
+import { isDadosCompletos, camposFaltando, resumirResultado } from "@/lib/prospect-completeness";
 
 export const Route = createFileRoute("/municipio/$ibgeId")({
   head: ({ params }) => ({
@@ -29,6 +34,7 @@ function MunicipioPage() {
   const { ibgeId } = useParams({ from: "/municipio/$ibgeId" });
   const id = parseInt(ibgeId, 10);
   const getFn = useServerFn(getMunicipio);
+  const stream = useProspectStream();
 
   const q = useQuery({
     queryKey: ["municipio", id],
@@ -36,14 +42,31 @@ function MunicipioPage() {
   });
 
   const [verifying, setVerifying] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
-  // Leitura pura do catálogo — a prospecção de verdade (que tem custo real de
-  // busca/IA) só roda pelo admin. Esse botão só relê o banco, dando a sensação
-  // de "conferir se está atualizado" sem disparar nenhuma busca paga.
   async function verificarDados() {
     setVerifying(true);
+    setStatusMessage(null);
     try {
       await q.refetch();
+      const educacao = q.data?.educacao;
+      if (isDadosCompletos(educacao)) {
+        setStatusMessage("Dados estão atualizados no catálogo.");
+        return;
+      }
+      setDialogOpen(true);
+      const faltando = camposFaltando(educacao);
+      const nome = q.data?.nome ?? "";
+      const uf = q.data?.uf ?? "";
+      await stream.run(nome, uf, id);
+      await q.refetch();
+      if (stream.result) {
+        const resumo = resumirResultado(stream.result);
+        setStatusMessage(resumo.mensagem);
+      } else if (faltando.length > 0) {
+        setStatusMessage(`Buscamos, mas ainda faltou: ${faltando.join(", ")}.`);
+      }
     } finally {
       setVerifying(false);
     }
@@ -71,13 +94,26 @@ function MunicipioPage() {
           <Link to="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
             <ArrowLeft className="h-4 w-4" /> Catálogo
           </Link>
-          <Button variant="outline" onClick={verificarDados} disabled={verifying}>
-            {verifying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verificando…</> : <><RefreshCw className="mr-2 h-4 w-4" /> Verificar dados</>}
-          </Button>
+          <div className="flex items-center gap-3">
+            {statusMessage && (
+              <span className="hidden text-sm text-emerald-700 sm:inline-flex">
+                <CheckCircle2 className="mr-1 h-4 w-4" /> {statusMessage}
+              </span>
+            )}
+            <Button variant="outline" onClick={verificarDados} disabled={verifying || stream.running}>
+              {verifying || stream.running ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Prospectando…</> : <><Search className="mr-2 h-4 w-4" /> Verificar dados</>}
+            </Button>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-5xl px-6 py-8">
+        {statusMessage && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+            <CheckCircle2 className="h-4 w-4" /> {statusMessage}
+          </div>
+        )}
+
         <div className="mb-8 rounded-xl border border-border bg-white p-6">
           <div className="flex items-start justify-between gap-6">
             <div>
@@ -101,7 +137,7 @@ function MunicipioPage() {
         <div className="grid gap-6 md:grid-cols-2">
           <Card icon={<Building2 className="h-5 w-5" />} title="Secretaria de Educação">
             {edu.status === "sem_dados" ? (
-              <p className="text-sm text-muted-foreground">Sem dados coletados ainda — nossa equipe está atualizando o catálogo.</p>
+              <p className="text-sm text-muted-foreground">Sem dados coletados ainda — estamos atualizando o catálogo.</p>
             ) : (
               <div className="space-y-3">
                 <Field icon={<User className="h-4 w-4" />} label="Secretário(a)" value={edu.secretario} />
@@ -159,6 +195,39 @@ function MunicipioPage() {
           </Card>
         </div>
       </main>
+
+      <Dialog open={dialogOpen} onOpenChange={(open) => {
+        if (!open) stream.cancel();
+        setDialogOpen(open);
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Prospectando {m.nome}</DialogTitle>
+            <DialogDescription>
+              Estamos buscando as informações de contato da Secretaria de Educação. Isso pode levar até 2 minutos.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-8">
+            <div className="flex flex-col items-center justify-center text-center">
+              <div className="relative mb-4">
+                <div className="h-16 w-16 rounded-full border-4 border-primary/20" />
+                <Loader2 className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 animate-spin text-primary" />
+              </div>
+              <p className="text-lg font-medium text-foreground">
+                {stream.step?.message ?? "Buscando informações…"}
+              </p>
+              {stream.error && (
+                <p className="mt-2 text-sm text-red-600">{stream.error}</p>
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button variant="outline" onClick={() => { stream.cancel(); setDialogOpen(false); }} disabled={!stream.running}>
+              Cancelar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

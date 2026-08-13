@@ -1,8 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, useMemo } from "react";
-import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download } from "lucide-react";
+import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download, Sparkles, CheckCircle2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,6 +20,9 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { APP_VERSION } from "@/lib/version";
 import { listMunicipios, getCatalogStats, exportMunicipios, EXPORT_MAX } from "@/lib/catalog.functions";
 import { exportMunicipiosCSV, exportMunicipiosXLSX } from "@/lib/export";
+import { useProspectStream } from "@/lib/use-prospect-stream";
+import { resumirResultado } from "@/lib/prospect-completeness";
+import type { ProspectResult } from "@/lib/prospect.types";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -45,9 +48,12 @@ const PAGE_SIZE = 50;
 
 function CatalogPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const listFn = useServerFn(listMunicipios);
   const statsFn = useServerFn(getCatalogStats);
   const exportFn = useServerFn(exportMunicipios);
+  const stream = useProspectStream();
+
 
   const [uf, setUf] = useState<string>("all");
   const [faixa, setFaixa] = useState<string>("all");
@@ -56,6 +62,10 @@ function CatalogPage() {
   const [qInput, setQInput] = useState<string>("");
   const [page, setPage] = useState(0);
   const [orderBy, setOrderBy] = useState<"score" | "populacao" | "nome" | "matriculas_total">("score");
+  const [prospectOpen, setProspectOpen] = useState(false);
+  const [prospectItem, setProspectItem] = useState<{ ibge_id: number; nome: string; uf: string } | null>(null);
+  const [prospectDone, setProspectDone] = useState<ProspectResult | null>(null);
+
 
   const [exportOpen, setExportOpen] = useState(false);
   const [exportQtd, setExportQtd] = useState(500);
@@ -93,6 +103,17 @@ function CatalogPage() {
     queryFn: () => statsFn(),
   });
 
+  async function iniciarProspect(m: { ibge_id: number; nome: string; uf: string }) {
+    setProspectItem(m);
+    setProspectDone(null);
+    setProspectOpen(true);
+    await stream.run(m.nome, m.uf, m.ibge_id);
+    setProspectDone(stream.result);
+    // Invalida o catálogo para refletir novos dados e score
+    queryClient.invalidateQueries({ queryKey: ["municipios"] });
+    queryClient.invalidateQueries({ queryKey: ["stats"] });
+  }
+
   const filters = useMemo(() => ({
     uf: uf === "all" ? undefined : uf,
     faixa: faixa === "all" ? undefined : (faixa as any),
@@ -103,6 +124,7 @@ function CatalogPage() {
     orderBy,
     orderDir: "desc" as const,
   }), [uf, faixa, status, q, page, orderBy]);
+
 
   const list = useQuery({
     queryKey: ["municipios", filters],
@@ -323,6 +345,51 @@ function CatalogPage() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={prospectOpen} onOpenChange={(open) => { if (!open) stream.cancel(); setProspectOpen(open); }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>
+                {stream.result || stream.step?.kind === "final" ? "Pronto!" : `Prospectando ${prospectItem?.nome}`}
+              </DialogTitle>
+              <DialogDescription>
+                Estamos buscando as informações de contato da Secretaria de Educação. Isso pode levar até 2 minutos.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-8">
+              <div className="flex flex-col items-center justify-center text-center">
+                {stream.result || stream.step?.kind === "final" ? (
+                  <div className="mb-4 rounded-full bg-emerald-100 p-3">
+                    <CheckCircle2 className="h-8 w-8 text-emerald-600" />
+                  </div>
+                ) : (
+                  <div className="relative mb-4">
+                    <div className="h-16 w-16 rounded-full border-4 border-primary/20" />
+                    <Loader2 className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 animate-spin text-primary" />
+                  </div>
+                )}
+                <p className="text-lg font-medium text-foreground">
+                  {stream.result || stream.step?.kind === "final"
+                    ? resumirResultado(stream.result ?? stream.step?.result).mensagem
+                    : (stream.step?.message ?? "Buscando informações…")}
+                </p>
+                {stream.error && !stream.result && stream.step?.kind !== "final" && (
+                  <p className="mt-2 text-sm text-red-600">{stream.error}</p>
+                )}
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                onClick={() => { stream.cancel(); setProspectOpen(false); }}
+                disabled={stream.running}
+              >
+                {stream.running ? "Cancelar" : "Fechar"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+
         {orderBy === "matriculas_total" && matriculasCoberturaBaixa && (
           <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -371,10 +438,23 @@ function CatalogPage() {
                   <TableCell><StatusBadge status={m.status} /></TableCell>
                   <TableCell><ScoreBadge score={m.score} faixa={m.faixa} /></TableCell>
                   <TableCell className="text-right">
-                    <MapPin className="ml-auto h-4 w-4 text-muted-foreground" />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 px-2 text-primary hover:bg-primary/10"
+                      disabled={stream.running && prospectItem?.ibge_id === m.ibge_id}
+                      onClick={(e) => { e.stopPropagation(); iniciarProspect(m); }}
+                    >
+                      {stream.running && prospectItem?.ibge_id === m.ibge_id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-4 w-4" />
+                      )}
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
+
             </TableBody>
           </Table>
 
