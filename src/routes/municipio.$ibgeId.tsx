@@ -15,6 +15,7 @@ import { getMunicipio } from "@/lib/catalog.functions";
 import { FAIXA_LABEL } from "@/lib/catalog-score";
 import { useProspectStream } from "@/lib/use-prospect-stream";
 import { isDadosCompletos, camposFaltando, resumirResultado } from "@/lib/prospect-completeness";
+import { ProspectResultFields } from "@/components/ProspectResultFields";
 
 export const Route = createFileRoute("/municipio/$ibgeId")({
   head: ({ params }) => ({
@@ -209,21 +210,30 @@ function MunicipioPage() {
           </DialogHeader>
           <div className="py-8">
             <div className="flex flex-col items-center justify-center text-center">
-              <div className="relative mb-4">
-                <div className="h-16 w-16 rounded-full border-4 border-primary/20" />
-                <Loader2 className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 animate-spin text-primary" />
-              </div>
+              {stream.result || stream.step?.kind === "final" ? (
+                <div className="mb-4 rounded-full bg-emerald-100 p-3">
+                  <CheckCircle2 className="h-8 w-8 text-emerald-600" />
+                </div>
+              ) : (
+                <div className="relative mb-4">
+                  <div className="h-16 w-16 rounded-full border-4 border-primary/20" />
+                  <Loader2 className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 animate-spin text-primary" />
+                </div>
+              )}
               <p className="text-lg font-medium text-foreground">
-                {stream.step?.message ?? "Buscando informações…"}
+                {stream.result || stream.step?.kind === "final"
+                  ? resumirResultado(stream.result ?? stream.step?.result).mensagem
+                  : (stream.step?.message ?? "Buscando informações…")}
               </p>
-              {stream.error && (
+              {stream.error && !stream.result && stream.step?.kind !== "final" && (
                 <p className="mt-2 text-sm text-red-600">{stream.error}</p>
               )}
+              <ProspectResultFields result={stream.result ?? stream.step?.result} />
             </div>
           </div>
           <div className="flex justify-end">
-            <Button variant="outline" onClick={() => { stream.cancel(); setDialogOpen(false); }} disabled={!stream.running}>
-              Cancelar
+            <Button variant="outline" onClick={() => { stream.cancel(); setDialogOpen(false); }}>
+              {stream.running ? "Cancelar" : "Fechar"}
             </Button>
           </div>
         </DialogContent>
