@@ -21,6 +21,7 @@ import { APP_VERSION } from "@/lib/version";
 import { listMunicipios, getCatalogStats, exportMunicipios, EXPORT_MAX } from "@/lib/catalog.functions";
 import { exportMunicipiosCSV, exportMunicipiosXLSX } from "@/lib/export";
 import { useProspectStream } from "@/lib/use-prospect-stream";
+import { ProspectResultFields } from "@/components/ProspectResultFields";
 import { resumirResultado } from "@/lib/prospect-completeness";
 import type { ProspectResult } from "@/lib/prospect.types";
 
