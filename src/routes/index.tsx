@@ -51,6 +51,7 @@ function CatalogPage() {
   const listFn = useServerFn(listMunicipios);
   const statsFn = useServerFn(getCatalogStats);
   const exportFn = useServerFn(exportMunicipios);
+  const stream = useProspectStream();
 
   const [uf, setUf] = useState<string>("all");
   const [faixa, setFaixa] = useState<string>("all");
@@ -59,6 +60,10 @@ function CatalogPage() {
   const [qInput, setQInput] = useState<string>("");
   const [page, setPage] = useState(0);
   const [orderBy, setOrderBy] = useState<"score" | "populacao" | "nome" | "matriculas_total">("score");
+  const [prospectOpen, setProspectOpen] = useState(false);
+  const [prospectItem, setProspectItem] = useState<{ ibge_id: number; nome: string; uf: string } | null>(null);
+  const [prospectDone, setProspectDone] = useState<ProspectResult | null>(null);
+
 
   const [exportOpen, setExportOpen] = useState(false);
   const [exportQtd, setExportQtd] = useState(500);
