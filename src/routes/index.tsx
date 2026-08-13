@@ -393,10 +393,23 @@ function CatalogPage() {
                   <TableCell><StatusBadge status={m.status} /></TableCell>
                   <TableCell><ScoreBadge score={m.score} faixa={m.faixa} /></TableCell>
                   <TableCell className="text-right">
-                    <MapPin className="ml-auto h-4 w-4 text-muted-foreground" />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 px-2 text-primary hover:bg-primary/10"
+                      disabled={stream.running && prospectItem?.ibge_id === m.ibge_id}
+                      onClick={(e) => { e.stopPropagation(); iniciarProspect(m); }}
+                    >
+                      {stream.running && prospectItem?.ibge_id === m.ibge_id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-4 w-4" />
+                      )}
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
+
             </TableBody>
           </Table>
 
