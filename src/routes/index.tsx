@@ -375,6 +375,7 @@ function CatalogPage() {
                 {stream.error && !stream.result && stream.step?.kind !== "final" && (
                   <p className="mt-2 text-sm text-red-600">{stream.error}</p>
                 )}
+                <ProspectResultFields result={stream.result ?? stream.step?.result} />
               </div>
             </div>
             <div className="flex justify-end">
