@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, useMemo } from "react";
-import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download, Sparkles, CheckCircle2, X } from "lucide-react";
+import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download, Sparkles, CheckCircle2, X, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -163,7 +163,10 @@ function CatalogPage() {
             <StatChip label="Municípios" value={stats.data?.total ?? 0} />
             <StatChip label="Score alto" value={stats.data?.alto ?? 0} accent="emerald" />
             <StatChip label="Validados" value={stats.data?.validado ?? 0} accent="blue" />
-            <Link to="/admin" className="ml-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent">
+            <Link to="/manual" className="ml-2 inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent">
+              <BookOpen className="h-3.5 w-3.5" /> Manual
+            </Link>
+            <Link to="/admin" className="rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent">
               Admin
             </Link>
           </div>
