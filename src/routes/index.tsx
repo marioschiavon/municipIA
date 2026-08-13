@@ -101,6 +101,17 @@ function CatalogPage() {
     queryFn: () => statsFn(),
   });
 
+  async function iniciarProspect(m: { ibge_id: number; nome: string; uf: string }) {
+    setProspectItem(m);
+    setProspectDone(null);
+    setProspectOpen(true);
+    await stream.run(m.nome, m.uf, m.ibge_id);
+    setProspectDone(stream.result);
+    // Invalida o catálogo para refletir novos dados e score
+    queryClient.invalidateQueries({ queryKey: ["municipios"] });
+    queryClient.invalidateQueries({ queryKey: ["stats"] });
+  }
+
   const filters = useMemo(() => ({
     uf: uf === "all" ? undefined : uf,
     faixa: faixa === "all" ? undefined : (faixa as any),
@@ -111,6 +122,7 @@ function CatalogPage() {
     orderBy,
     orderDir: "desc" as const,
   }), [uf, faixa, status, q, page, orderBy]);
+
 
   const list = useQuery({
     queryKey: ["municipios", filters],
