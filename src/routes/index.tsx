@@ -345,6 +345,36 @@ function CatalogPage() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={prospectOpen} onOpenChange={(open) => { if (!open) stream.cancel(); setProspectOpen(open); }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Prospectando {prospectItem?.nome}</DialogTitle>
+              <DialogDescription>
+                Estamos buscando as informações de contato da Secretaria de Educação. Isso pode levar até 2 minutos.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-8">
+              <div className="flex flex-col items-center justify-center text-center">
+                <div className="relative mb-4">
+                  <div className="h-16 w-16 rounded-full border-4 border-primary/20" />
+                  <Loader2 className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 animate-spin text-primary" />
+                </div>
+                <p className="text-lg font-medium text-foreground">
+                  {stream.step?.message ?? "Buscando informações…"}
+                </p>
+                {stream.error && (
+                  <p className="mt-2 text-sm text-red-600">{stream.error}</p>
+                )}
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button variant="outline" onClick={() => { stream.cancel(); setProspectOpen(false); }} disabled={!stream.running}>
+                Cancelar
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         {orderBy === "matriculas_total" && matriculasCoberturaBaixa && (
           <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
