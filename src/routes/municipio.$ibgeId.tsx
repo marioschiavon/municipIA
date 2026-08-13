@@ -15,6 +15,7 @@ import { getMunicipio } from "@/lib/catalog.functions";
 import { FAIXA_LABEL } from "@/lib/catalog-score";
 import { useProspectStream } from "@/lib/use-prospect-stream";
 import { isDadosCompletos, camposFaltando, resumirResultado } from "@/lib/prospect-completeness";
+import { ProspectResultFields } from "@/components/ProspectResultFields";
 
 export const Route = createFileRoute("/municipio/$ibgeId")({
   head: ({ params }) => ({
