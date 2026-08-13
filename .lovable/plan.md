@@ -6,7 +6,7 @@ Trazer de volta o botão de prospectar em tempo real para quem acessa o catálog
 
 ### 1. Catálogo público (`/`)
 - Nova coluna/ação "Prospectar" em cada linha da tabela, aberta a qualquer visitante (sem login).
-- Ao clicar, abre um painel com o progresso em tempo real (mesmos passos que hoje aparecem no admin) e, ao final, o resultado com secretário, e-mail, telefone e equipe.
+- Ao clicar, abre um painel leve e visual mostrando o progresso — sem termos técnicos. Apenas frases simples do tipo "Buscando site oficial…", "Procurando secretário…", "Achando contato…", com um indicador animado, para quem está prospectando saber que algo está acontecendo. Ao final, exibe o resultado com secretário, e-mail, telefone e equipe.
 - O resultado é gravado no catálogo (mesma persistência do lote), então a linha atualiza status e score depois da execução.
 
 ### 2. Ficha do município (`/municipio/:ibgeId`)
