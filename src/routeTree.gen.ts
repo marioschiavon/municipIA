@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ManualRouteImport } from './routes/manual'
 import { Route as DebugRouteImport } from './routes/debug'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
@@ -31,6 +32,11 @@ import { Route as AuthenticatedAdminImportRouteImport } from './routes/_authenti
 import { Route as AuthenticatedAdminMunicipiosIndexRouteImport } from './routes/_authenticated/admin.municipios.index'
 import { Route as AuthenticatedAdminMunicipiosIbgeIdRouteImport } from './routes/_authenticated/admin.municipios.$ibgeId'
 
+const ManualRoute = ManualRouteImport.update({
+  id: '/manual',
+  path: '/manual',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DebugRoute = DebugRouteImport.update({
   id: '/debug',
   path: '/debug',
@@ -145,6 +151,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/debug': typeof DebugRouteWithChildren
+  '/manual': typeof ManualRoute
   '/admin': typeof AuthenticatedAdminRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
@@ -167,6 +174,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/debug': typeof DebugRouteWithChildren
+  '/manual': typeof ManualRoute
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
   '/debug/openai': typeof DebugOpenaiRoute
@@ -190,6 +198,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/debug': typeof DebugRouteWithChildren
+  '/manual': typeof ManualRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
   '/api/prospect': typeof ApiProspectRoute
   '/debug/apify': typeof DebugApifyRoute
@@ -214,6 +223,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/debug'
+    | '/manual'
     | '/admin'
     | '/api/prospect'
     | '/debug/apify'
@@ -236,6 +246,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/debug'
+    | '/manual'
     | '/api/prospect'
     | '/debug/apify'
     | '/debug/openai'
@@ -258,6 +269,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/debug'
+    | '/manual'
     | '/_authenticated/admin'
     | '/api/prospect'
     | '/debug/apify'
@@ -282,6 +294,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   DebugRoute: typeof DebugRouteWithChildren
+  ManualRoute: typeof ManualRoute
   ApiProspectRoute: typeof ApiProspectRoute
   MunicipioIbgeIdRoute: typeof MunicipioIbgeIdRoute
   ApiAdminImportRoute: typeof ApiAdminImportRoute
@@ -293,6 +306,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/manual': {
+      id: '/manual'
+      path: '/manual'
+      fullPath: '/manual'
+      preLoaderRoute: typeof ManualRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/debug': {
       id: '/debug'
       path: '/debug'
@@ -496,6 +516,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   DebugRoute: DebugRouteWithChildren,
+  ManualRoute: ManualRoute,
   ApiProspectRoute: ApiProspectRoute,
   MunicipioIbgeIdRoute: MunicipioIbgeIdRoute,
   ApiAdminImportRoute: ApiAdminImportRoute,
