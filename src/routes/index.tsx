@@ -458,10 +458,94 @@ function CatalogPage() {
           </div>
         )}
 
+        {selecionados.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+            <div className="text-sm">
+              <span className="font-medium">{selecionados.length} de {MAX_LOTE}</span> município(s) selecionado(s)
+              <span className="ml-2 text-xs text-muted-foreground">
+                {selecionados.map((s) => `${s.nome}/${s.uf}`).join(", ")}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setSelecionados([])}>
+                Limpar
+              </Button>
+              <Button size="sm" onClick={iniciarLote} disabled={loteRunning}>
+                <Sparkles className="mr-1.5 h-4 w-4" />
+                Prospectar selecionados ({selecionados.length})
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <Dialog
+          open={loteOpen}
+          onOpenChange={(open) => { if (!open) cancelarLote(); setLoteOpen(open); }}
+        >
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>
+                {loteRunning ? `Prospectando ${loteIdx + 1} de ${loteTotal}` : "Prospecção concluída"}
+              </DialogTitle>
+              <DialogDescription>
+                Buscamos um município por vez. Pode levar alguns minutos — mantenha esta janela aberta.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-3">
+              {loteRunning && (
+                <div className="flex items-center gap-3 rounded-md border border-border bg-slate-50 p-3">
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  <div>
+                    <p className="text-sm font-medium">{loteAtual?.nome} / {loteAtual?.uf}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {stream.step?.message ?? "Buscando informações…"}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="max-h-64 space-y-2 overflow-y-auto">
+                {loteResultados.map((r) => {
+                  const resumo = resumirResultado(r.result);
+                  const ok = resumo.faltando.length === 0;
+                  return (
+                    <div key={r.ibge_id} className="rounded-md border border-border p-2.5">
+                      <div className="flex items-center gap-2">
+                        {ok ? (
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                        ) : (
+                          <X className="h-4 w-4 text-amber-600" />
+                        )}
+                        <span className="text-sm font-medium">{r.nome} / {r.uf}</span>
+                      </div>
+                      <p className="mt-0.5 pl-6 text-xs text-muted-foreground">{resumo.mensagem}</p>
+                      <div className="pl-6">
+                        <ProspectResultFields result={r.result ?? undefined} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <DialogFooter>
+              {loteRunning ? (
+                <Button variant="outline" onClick={cancelarLote}>Cancelar</Button>
+              ) : (
+                <Button variant="outline" onClick={() => { setLoteOpen(false); setSelecionados([]); }}>
+                  Fechar
+                </Button>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <div className="rounded-lg border border-border bg-white">
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-[40px]"></TableHead>
                 <TableHead>Município</TableHead>
                 <TableHead>UF</TableHead>
                 <TableHead className="text-right">População</TableHead>
