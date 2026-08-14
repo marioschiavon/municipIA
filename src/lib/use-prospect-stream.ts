@@ -29,7 +29,8 @@ export function useProspectStream() {
     uf: string,
     ibgeId: number,
     options: { endpoint?: string; token?: string | null } = {},
-  ) => {
+  ): Promise<ProspectResult | null> => {
+    let finalResult: ProspectResult | null = null;
     const endpoint = options.endpoint ?? "/api/public/prospect";
     const controller = new AbortController();
     abortRef.current = controller;
