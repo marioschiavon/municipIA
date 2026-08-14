@@ -558,18 +558,28 @@ function CatalogPage() {
             </TableHeader>
             <TableBody>
               {list.isLoading && (
-                <TableRow><TableCell colSpan={8} className="h-32 text-center">
+                <TableRow><TableCell colSpan={9} className="h-32 text-center">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
                 </TableCell></TableRow>
               )}
               {!list.isLoading && list.data?.items.length === 0 && (
-                <TableRow><TableCell colSpan={8} className="h-32 text-center text-sm text-muted-foreground">
+                <TableRow><TableCell colSpan={9} className="h-32 text-center text-sm text-muted-foreground">
                   {empty ? "Popule o catálogo para começar." : "Nenhum município encontrado com esses filtros."}
                 </TableCell></TableRow>
               )}
-              {list.data?.items.map((m) => (
+              {list.data?.items.map((m) => {
+                const marcado = selecionados.some((s) => s.ibge_id === m.ibge_id);
+                return (
                 <TableRow key={m.ibge_id} className="cursor-pointer hover:bg-slate-50"
                   onClick={() => navigate({ to: "/municipio/$ibgeId", params: { ibgeId: String(m.ibge_id) } })}>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={marcado}
+                      disabled={!marcado && selecionados.length >= MAX_LOTE}
+                      onCheckedChange={() => toggleSelecionado(m)}
+                      aria-label={`Selecionar ${m.nome}`}
+                    />
+                  </TableCell>
                   <TableCell className="font-medium">{m.nome}</TableCell>
                   <TableCell><span className="font-mono text-xs">{m.uf}</span></TableCell>
                   <TableCell className="text-right tabular-nums">{m.populacao.toLocaleString("pt-BR")}</TableCell>
