@@ -32,6 +32,7 @@ const SECOES: ManualSecao[] = [
   { id: "score", titulo: "Entendendo o Score" },
   { id: "status", titulo: "Entendendo o Status" },
   { id: "prospectar", titulo: "Como prospectar em tempo real" },
+  { id: "prospectar-varios", titulo: "Prospectar vários municípios de uma vez" },
   { id: "ficha", titulo: "A ficha do município" },
   { id: "exportar", titulo: "Como exportar leads" },
   { id: "faq", titulo: "Perguntas frequentes" },
