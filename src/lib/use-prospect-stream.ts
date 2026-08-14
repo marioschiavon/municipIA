@@ -66,6 +66,7 @@ export function useProspectStream() {
           try {
             const evt = JSON.parse(s);
             if (evt.kind === "final") {
+              finalResult = evt.result ?? null;
               setResult(evt.result);
               setStep({ kind: "final", result: evt.result });
             } else if (evt.kind === "progress") {
