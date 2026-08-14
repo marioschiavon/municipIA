@@ -605,7 +605,8 @@ function CatalogPage() {
                     </Button>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
 
             </TableBody>
           </Table>
