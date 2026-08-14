@@ -90,6 +90,7 @@ export function useProspectStream() {
       setRunning(false);
       abortRef.current = null;
     }
+    return finalResult;
   }, []);
 
   const cancel = useCallback(() => {
