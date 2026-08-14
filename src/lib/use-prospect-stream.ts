@@ -29,7 +29,8 @@ export function useProspectStream() {
     uf: string,
     ibgeId: number,
     options: { endpoint?: string; token?: string | null } = {},
-  ) => {
+  ): Promise<ProspectResult | null> => {
+    let finalResult: ProspectResult | null = null;
     const endpoint = options.endpoint ?? "/api/public/prospect";
     const controller = new AbortController();
     abortRef.current = controller;
@@ -65,6 +66,7 @@ export function useProspectStream() {
           try {
             const evt = JSON.parse(s);
             if (evt.kind === "final") {
+              finalResult = evt.result ?? null;
               setResult(evt.result);
               setStep({ kind: "final", result: evt.result });
             } else if (evt.kind === "progress") {
@@ -88,6 +90,7 @@ export function useProspectStream() {
       setRunning(false);
       abortRef.current = null;
     }
+    return finalResult;
   }, []);
 
   const cancel = useCallback(() => {

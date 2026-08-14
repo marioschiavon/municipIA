@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download, Sparkles, CheckCircle2, X, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
 import { APP_VERSION } from "@/lib/version";
 import { listMunicipios, getCatalogStats, exportMunicipios, EXPORT_MAX } from "@/lib/catalog.functions";
 import { exportMunicipiosCSV, exportMunicipiosXLSX } from "@/lib/export";
@@ -66,6 +67,58 @@ function CatalogPage() {
   const [prospectOpen, setProspectOpen] = useState(false);
   const [prospectItem, setProspectItem] = useState<{ ibge_id: number; nome: string; uf: string } | null>(null);
   const [prospectDone, setProspectDone] = useState<ProspectResult | null>(null);
+
+  // Prospecção em lote (até 10 municípios) na página inicial
+  const MAX_LOTE = 10;
+  const [selecionados, setSelecionados] = useState<Array<{ ibge_id: number; nome: string; uf: string }>>([]);
+  const [loteOpen, setLoteOpen] = useState(false);
+  const [loteAtual, setLoteAtual] = useState<{ nome: string; uf: string } | null>(null);
+  const [loteIdx, setLoteIdx] = useState(0);
+  const [loteTotal, setLoteTotal] = useState(0);
+  const [loteRunning, setLoteRunning] = useState(false);
+  const [loteResultados, setLoteResultados] = useState<
+    Array<{ ibge_id: number; nome: string; uf: string; result: ProspectResult | null }>
+  >([]);
+  const loteCancelRef = useRef(false);
+
+  function toggleSelecionado(m: { ibge_id: number; nome: string; uf: string }) {
+    setSelecionados((prev) => {
+      const existe = prev.some((s) => s.ibge_id === m.ibge_id);
+      if (existe) return prev.filter((s) => s.ibge_id !== m.ibge_id);
+      if (prev.length >= MAX_LOTE) return prev;
+      return [...prev, { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf }];
+    });
+  }
+
+  async function iniciarLote() {
+    const items = selecionados.slice(0, MAX_LOTE);
+    if (items.length === 0) return;
+    loteCancelRef.current = false;
+    setLoteResultados([]);
+    setLoteTotal(items.length);
+    setLoteIdx(0);
+    setLoteRunning(true);
+    setLoteOpen(true);
+    for (let i = 0; i < items.length; i++) {
+      if (loteCancelRef.current) break;
+      const m = items[i];
+      setLoteAtual({ nome: m.nome, uf: m.uf });
+      setLoteIdx(i);
+      const result = await stream.run(m.nome, m.uf, m.ibge_id);
+      setLoteResultados((prev) => [...prev, { ...m, result }]);
+      setLoteIdx(i + 1);
+    }
+    setLoteRunning(false);
+    setLoteAtual(null);
+    queryClient.invalidateQueries({ queryKey: ["municipios"] });
+    queryClient.invalidateQueries({ queryKey: ["stats"] });
+  }
+
+  function cancelarLote() {
+    loteCancelRef.current = true;
+    stream.cancel();
+    setLoteRunning(false);
+  }
 
 
   const [exportOpen, setExportOpen] = useState(false);
@@ -405,10 +458,94 @@ function CatalogPage() {
           </div>
         )}
 
+        {selecionados.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+            <div className="text-sm">
+              <span className="font-medium">{selecionados.length} de {MAX_LOTE}</span> município(s) selecionado(s)
+              <span className="ml-2 text-xs text-muted-foreground">
+                {selecionados.map((s) => `${s.nome}/${s.uf}`).join(", ")}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setSelecionados([])}>
+                Limpar
+              </Button>
+              <Button size="sm" onClick={iniciarLote} disabled={loteRunning}>
+                <Sparkles className="mr-1.5 h-4 w-4" />
+                Prospectar selecionados ({selecionados.length})
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <Dialog
+          open={loteOpen}
+          onOpenChange={(open) => { if (!open) cancelarLote(); setLoteOpen(open); }}
+        >
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>
+                {loteRunning ? `Prospectando ${loteIdx + 1} de ${loteTotal}` : "Prospecção concluída"}
+              </DialogTitle>
+              <DialogDescription>
+                Buscamos um município por vez. Pode levar alguns minutos — mantenha esta janela aberta.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-3">
+              {loteRunning && (
+                <div className="flex items-center gap-3 rounded-md border border-border bg-slate-50 p-3">
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  <div>
+                    <p className="text-sm font-medium">{loteAtual?.nome} / {loteAtual?.uf}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {stream.step?.message ?? "Buscando informações…"}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="max-h-64 space-y-2 overflow-y-auto">
+                {loteResultados.map((r) => {
+                  const resumo = resumirResultado(r.result);
+                  const ok = resumo.faltando.length === 0;
+                  return (
+                    <div key={r.ibge_id} className="rounded-md border border-border p-2.5">
+                      <div className="flex items-center gap-2">
+                        {ok ? (
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                        ) : (
+                          <X className="h-4 w-4 text-amber-600" />
+                        )}
+                        <span className="text-sm font-medium">{r.nome} / {r.uf}</span>
+                      </div>
+                      <p className="mt-0.5 pl-6 text-xs text-muted-foreground">{resumo.mensagem}</p>
+                      <div className="pl-6">
+                        <ProspectResultFields result={r.result ?? undefined} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <DialogFooter>
+              {loteRunning ? (
+                <Button variant="outline" onClick={cancelarLote}>Cancelar</Button>
+              ) : (
+                <Button variant="outline" onClick={() => { setLoteOpen(false); setSelecionados([]); }}>
+                  Fechar
+                </Button>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <div className="rounded-lg border border-border bg-white">
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-[40px]"></TableHead>
                 <TableHead>Município</TableHead>
                 <TableHead>UF</TableHead>
                 <TableHead className="text-right">População</TableHead>
@@ -421,18 +558,28 @@ function CatalogPage() {
             </TableHeader>
             <TableBody>
               {list.isLoading && (
-                <TableRow><TableCell colSpan={8} className="h-32 text-center">
+                <TableRow><TableCell colSpan={9} className="h-32 text-center">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
                 </TableCell></TableRow>
               )}
               {!list.isLoading && list.data?.items.length === 0 && (
-                <TableRow><TableCell colSpan={8} className="h-32 text-center text-sm text-muted-foreground">
+                <TableRow><TableCell colSpan={9} className="h-32 text-center text-sm text-muted-foreground">
                   {empty ? "Popule o catálogo para começar." : "Nenhum município encontrado com esses filtros."}
                 </TableCell></TableRow>
               )}
-              {list.data?.items.map((m) => (
+              {list.data?.items.map((m) => {
+                const marcado = selecionados.some((s) => s.ibge_id === m.ibge_id);
+                return (
                 <TableRow key={m.ibge_id} className="cursor-pointer hover:bg-slate-50"
                   onClick={() => navigate({ to: "/municipio/$ibgeId", params: { ibgeId: String(m.ibge_id) } })}>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={marcado}
+                      disabled={!marcado && selecionados.length >= MAX_LOTE}
+                      onCheckedChange={() => toggleSelecionado(m)}
+                      aria-label={`Selecionar ${m.nome}`}
+                    />
+                  </TableCell>
                   <TableCell className="font-medium">{m.nome}</TableCell>
                   <TableCell><span className="font-mono text-xs">{m.uf}</span></TableCell>
                   <TableCell className="text-right tabular-nums">{m.populacao.toLocaleString("pt-BR")}</TableCell>
@@ -458,7 +605,8 @@ function CatalogPage() {
                     </Button>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
 
             </TableBody>
           </Table>
