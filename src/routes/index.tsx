@@ -68,6 +68,58 @@ function CatalogPage() {
   const [prospectItem, setProspectItem] = useState<{ ibge_id: number; nome: string; uf: string } | null>(null);
   const [prospectDone, setProspectDone] = useState<ProspectResult | null>(null);
 
+  // Prospecção em lote (até 10 municípios) na página inicial
+  const MAX_LOTE = 10;
+  const [selecionados, setSelecionados] = useState<Array<{ ibge_id: number; nome: string; uf: string }>>([]);
+  const [loteOpen, setLoteOpen] = useState(false);
+  const [loteAtual, setLoteAtual] = useState<{ nome: string; uf: string } | null>(null);
+  const [loteIdx, setLoteIdx] = useState(0);
+  const [loteTotal, setLoteTotal] = useState(0);
+  const [loteRunning, setLoteRunning] = useState(false);
+  const [loteResultados, setLoteResultados] = useState<
+    Array<{ ibge_id: number; nome: string; uf: string; result: ProspectResult | null }>
+  >([]);
+  const loteCancelRef = useRef(false);
+
+  function toggleSelecionado(m: { ibge_id: number; nome: string; uf: string }) {
+    setSelecionados((prev) => {
+      const existe = prev.some((s) => s.ibge_id === m.ibge_id);
+      if (existe) return prev.filter((s) => s.ibge_id !== m.ibge_id);
+      if (prev.length >= MAX_LOTE) return prev;
+      return [...prev, { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf }];
+    });
+  }
+
+  async function iniciarLote() {
+    const items = selecionados.slice(0, MAX_LOTE);
+    if (items.length === 0) return;
+    loteCancelRef.current = false;
+    setLoteResultados([]);
+    setLoteTotal(items.length);
+    setLoteIdx(0);
+    setLoteRunning(true);
+    setLoteOpen(true);
+    for (let i = 0; i < items.length; i++) {
+      if (loteCancelRef.current) break;
+      const m = items[i];
+      setLoteAtual({ nome: m.nome, uf: m.uf });
+      setLoteIdx(i);
+      const result = await stream.run(m.nome, m.uf, m.ibge_id);
+      setLoteResultados((prev) => [...prev, { ...m, result }]);
+      setLoteIdx(i + 1);
+    }
+    setLoteRunning(false);
+    setLoteAtual(null);
+    queryClient.invalidateQueries({ queryKey: ["municipios"] });
+    queryClient.invalidateQueries({ queryKey: ["stats"] });
+  }
+
+  function cancelarLote() {
+    loteCancelRef.current = true;
+    stream.cancel();
+    setLoteRunning(false);
+  }
+
 
   const [exportOpen, setExportOpen] = useState(false);
   const [exportQtd, setExportQtd] = useState(500);
