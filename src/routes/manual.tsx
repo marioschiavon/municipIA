@@ -238,6 +238,58 @@ function ManualPage() {
           </Caixa>
         </Secao>
 
+        <Secao id="prospectar-varios" titulo="Prospectar vários municípios de uma vez">
+          <P>
+            Se você precisa dos contatos de várias cidades, não é preciso clicar em uma de cada vez. Na
+            página inicial dá para <strong>selecionar até 10 municípios</strong> e mandar o sistema
+            prospectar todos, um atrás do outro, sem você acompanhar clique por clique.
+          </P>
+          <Passos
+            itens={[
+              <>
+                Na tabela da página inicial, marque a <strong>caixinha de seleção</strong> que fica na
+                primeira coluna de cada linha. Você pode marcar quantas quiser, até o limite de 10.
+              </>,
+              <>
+                Assim que você marca a primeira caixinha, aparece uma <strong>barra flutuante</strong> na
+                parte de baixo da tela mostrando quantos municípios estão selecionados.
+              </>,
+              <>
+                Clique em <strong>Prospectar selecionados</strong>. Abre uma janela com a lista dos
+                municípios escolhidos.
+              </>,
+              <>
+                O sistema trabalha <strong>um município por vez</strong>, na ordem da lista. O que está
+                sendo pesquisado no momento aparece com o círculo girando e as frases de progresso; os já
+                concluídos aparecem com sinal verde e os contatos encontrados logo abaixo do nome.
+              </>,
+              <>
+                Como cada cidade leva de 30 segundos a 2 minutos, 10 municípios podem levar algo em torno
+                de <strong>10 a 20 minutos</strong>. Deixe a janela aberta enquanto isso.
+              </>,
+              <>
+                Se quiser parar no meio, clique em <strong>Cancelar</strong>. Tudo que já tinha sido
+                encontrado até ali fica salvo; apenas os municípios ainda não processados são
+                descartados.
+              </>,
+              <>
+                Ao terminar, clique em <strong>Fechar</strong>. A tabela já mostra os Status e Scores
+                atualizados, e esses contatos entram normalmente na exportação de leads.
+              </>,
+            ]}
+          />
+          <Caixa tipo="dica" titulo="Por que só 10 por vez">
+            Cada busca consulta várias fontes na internet. O limite de 10 evita que a janela fique aberta
+            tempo demais e garante que nenhuma busca seja cortada pela metade. Terminou uma leva? Basta
+            desmarcar e selecionar os próximos 10.
+          </Caixa>
+          <Caixa tipo="aviso" titulo="Não feche a aba">
+            A prospecção em lote acontece no seu navegador. Se você fechar a aba ou o computador
+            hibernar, as buscas que ainda não terminaram são interrompidas (as concluídas continuam
+            salvas).
+          </Caixa>
+        </Secao>
+
         <Secao id="ficha" titulo="A ficha do município">
           <P>
             Clique no nome de qualquer município na tabela para abrir a ficha dele. A ficha reúne tudo o
