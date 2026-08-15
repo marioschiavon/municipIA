@@ -561,9 +561,19 @@ function CatalogPage() {
               {loteRunning ? (
                 <Button variant="outline" onClick={cancelarLote}>Cancelar</Button>
               ) : (
-                <Button variant="outline" onClick={() => { setLoteOpen(false); setSelecionados([]); }}>
-                  Fechar
-                </Button>
+                <div className="flex w-full flex-wrap justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={enviarLoteParaLeaderei}
+                    disabled={leadereiSending || !leaderei.connected || loteResultados.length === 0}
+                  >
+                    {leadereiSending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Send className="mr-1.5 h-4 w-4" />}
+                    Enviar para Leaderei
+                  </Button>
+                  <Button variant="outline" onClick={() => { setLoteOpen(false); setSelecionados([]); }}>
+                    Fechar
+                  </Button>
+                </div>
               )}
             </DialogFooter>
           </DialogContent>
