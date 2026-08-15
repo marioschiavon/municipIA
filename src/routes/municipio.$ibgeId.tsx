@@ -5,6 +5,7 @@ import { useState } from "react";
 import {
   ArrowLeft, RefreshCw, Loader2, User, Mail, Phone, Clock, Users, ExternalLink,
   Building2, TrendingUp, GraduationCap, Wallet, MapPin, Search, CheckCircle2,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +17,8 @@ import { FAIXA_LABEL } from "@/lib/catalog-score";
 import { useProspectStream } from "@/lib/use-prospect-stream";
 import { isDadosCompletos, camposFaltando, resumirResultado } from "@/lib/prospect-completeness";
 import { ProspectResultFields } from "@/components/ProspectResultFields";
+import { useLeaderei } from "@/hooks/useLeaderei";
+import { buildLeadereiRow, rowTemContato } from "@/lib/leaderei";
 
 export const Route = createFileRoute("/municipio/$ibgeId")({
   head: ({ params }) => ({
