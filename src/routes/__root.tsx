@@ -12,6 +12,7 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { Toaster } from "@/components/ui/sonner";
+import { LeadereiGate } from "@/components/LeadereiGate";
 
 function NotFoundComponent() {
   return (
@@ -81,6 +82,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "MunicipIA — Coleta inteligente de contatos municipais" },
       { name: "description", content: "Prospecção automatizada de contatos das Secretarias de Educação municipais brasileiras com fallback hierárquico." },
       { name: "author", content: "Lovable" },
+      { name: "robots", content: "noindex, nofollow" },
       { property: "og:title", content: "MunicipIA — Coleta inteligente de contatos municipais" },
       { property: "og:description", content: "Prospecção automatizada de contatos das Secretarias de Educação municipais brasileiras com fallback hierárquico." },
       { property: "og:type", content: "website" },
@@ -124,7 +126,9 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
+      <LeadereiGate>
+        <Outlet />
+      </LeadereiGate>
       <Toaster position="bottom-right" />
     </QueryClientProvider>
   );
