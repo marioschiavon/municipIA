@@ -124,6 +124,25 @@ function CatalogPage() {
     setLoteRunning(false);
   }
 
+  async function enviarLoteParaLeaderei() {
+    if (!loteResultados.length || leadereiSending) return;
+    setLeadereiSending(true);
+    try {
+      const rows = loteResultados
+        .filter((r) => r.result)
+        .map((r) =>
+          buildLeadereiRow(r.nome, r.uf, new Date().toISOString(), {
+            ...r.result,
+            hierarquia: r.result?.hierarquia ?? "educacao",
+          }),
+        )
+        .filter(rowTemContato);
+      await leaderei.sendRows(rows);
+    } finally {
+      setLeadereiSending(false);
+    }
+  }
+
 
   const [exportOpen, setExportOpen] = useState(false);
   const [exportQtd, setExportQtd] = useState(500);
