@@ -37,12 +37,34 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
   });
 }
 
+// Permite que o MunicipIA seja exibido dentro do iframe do Leaderei
+// (e de qualquer preview .lovable.app), bloqueando outros sites.
+const FRAME_ANCESTORS =
+  "frame-ancestors 'self' https://*.lovable.app https://*.lovableproject.com";
+
+function allowLeadereiFraming(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.delete("x-frame-options");
+  const existing = headers.get("content-security-policy");
+  headers.set(
+    "content-security-policy",
+    existing
+      ? `${existing.replace(/frame-ancestors[^;]*;?/gi, "").trim()}; ${FRAME_ANCESTORS}`
+      : FRAME_ANCESTORS,
+  );
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
-      return await normalizeCatastrophicSsrResponse(response);
+      return allowLeadereiFraming(await normalizeCatastrophicSsrResponse(response));
     } catch (error) {
       console.error(error);
       return new Response(renderErrorPage(), {
