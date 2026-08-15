@@ -27,8 +27,37 @@ export function onLeadereiSession(cb: (s: Session | null) => void) {
   };
 }
 
+export type LeadereiGateStatus = "aguardando" | "conectado" | "bloqueado";
+
+let gateStatus: LeadereiGateStatus = "aguardando";
+const gateListeners = new Set<(s: LeadereiGateStatus) => void>();
+let bridgeStarted = false;
+
+function setGateStatus(next: LeadereiGateStatus) {
+  if (gateStatus === next) return;
+  gateStatus = next;
+  gateListeners.forEach((cb) => cb(next));
+}
+
+export function getLeadereiGateStatus() {
+  return gateStatus;
+}
+
+export function subscribeLeadereiGate(cb: (s: LeadereiGateStatus) => void) {
+  gateListeners.add(cb);
+  return () => {
+    gateListeners.delete(cb);
+  };
+}
+
 export function initLeadereiBridge() {
-  if (typeof window === "undefined" || !isEmbeddedInLeaderei()) return;
+  if (typeof window === "undefined") return;
+  if (!isEmbeddedInLeaderei()) {
+    setGateStatus("bloqueado");
+    return;
+  }
+  if (bridgeStarted) return;
+  bridgeStarted = true;
 
   const handler = (event: MessageEvent) => {
     if (!LEADEREI_ORIGINS.includes(event.origin)) return;
@@ -40,6 +69,7 @@ export function initLeadereiBridge() {
       ingest_url: event.data.ingest_url,
     };
     listeners.forEach((cb) => cb(session));
+    setGateStatus("conectado");
   };
   window.addEventListener("message", handler);
 
@@ -48,8 +78,13 @@ export function initLeadereiBridge() {
   const ping = () => {
     LEADEREI_ORIGINS.forEach((o) => window.parent.postMessage({ type: "municipia:ready" }, o));
     if (++tries < 5 && !session) setTimeout(ping, 800);
+    else if (!session) setGateStatus("bloqueado");
   };
   ping();
+  // Após ~4s sem sessão, bloqueia.
+  setTimeout(() => {
+    if (!session) setGateStatus("bloqueado");
+  }, 4500);
 
   return () => window.removeEventListener("message", handler);
 }
