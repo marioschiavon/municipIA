@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, useMemo, useRef } from "react";
-import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download, Sparkles, CheckCircle2, X, BookOpen } from "lucide-react";
+import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download, Sparkles, CheckCircle2, X, BookOpen, Plug, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +24,8 @@ import { exportMunicipiosCSV, exportMunicipiosXLSX } from "@/lib/export";
 import { useProspectStream } from "@/lib/use-prospect-stream";
 import { ProspectResultFields } from "@/components/ProspectResultFields";
 import { resumirResultado } from "@/lib/prospect-completeness";
+import { useLeaderei } from "@/hooks/useLeaderei";
+import { buildLeadereiRow, rowTemContato } from "@/lib/leaderei";
 import type { ProspectResult } from "@/lib/prospect.types";
 
 export const Route = createFileRoute("/")({
@@ -55,6 +57,8 @@ function CatalogPage() {
   const statsFn = useServerFn(getCatalogStats);
   const exportFn = useServerFn(exportMunicipios);
   const stream = useProspectStream();
+  const leaderei = useLeaderei();
+  const [leadereiSending, setLeadereiSending] = useState(false);
 
 
   const [uf, setUf] = useState<string>("all");
@@ -118,6 +122,25 @@ function CatalogPage() {
     loteCancelRef.current = true;
     stream.cancel();
     setLoteRunning(false);
+  }
+
+  async function enviarLoteParaLeaderei() {
+    if (!loteResultados.length || leadereiSending) return;
+    setLeadereiSending(true);
+    try {
+      const rows = loteResultados
+        .filter((r) => r.result)
+        .map((r) =>
+          buildLeadereiRow(r.nome, r.uf, new Date().toISOString(), {
+            ...r.result,
+            hierarquia: r.result?.hierarquia ?? "educacao",
+          }),
+        )
+        .filter(rowTemContato);
+      await leaderei.sendRows(rows);
+    } finally {
+      setLeadereiSending(false);
+    }
   }
 
 
@@ -216,6 +239,11 @@ function CatalogPage() {
             <StatChip label="Municípios" value={stats.data?.total ?? 0} />
             <StatChip label="Score alto" value={stats.data?.alto ?? 0} accent="emerald" />
             <StatChip label="Validados" value={stats.data?.validado ?? 0} accent="blue" />
+            {leaderei.connected && (
+              <span className="hidden items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 sm:inline-flex">
+                <Plug className="h-3.5 w-3.5" /> Conectado ao Leaderei
+              </span>
+            )}
             <Link to="/manual" className="ml-2 inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent">
               <BookOpen className="h-3.5 w-3.5" /> Manual
             </Link>
@@ -533,9 +561,19 @@ function CatalogPage() {
               {loteRunning ? (
                 <Button variant="outline" onClick={cancelarLote}>Cancelar</Button>
               ) : (
-                <Button variant="outline" onClick={() => { setLoteOpen(false); setSelecionados([]); }}>
-                  Fechar
-                </Button>
+                <div className="flex w-full flex-wrap justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={enviarLoteParaLeaderei}
+                    disabled={leadereiSending || !leaderei.connected || loteResultados.length === 0}
+                  >
+                    {leadereiSending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Send className="mr-1.5 h-4 w-4" />}
+                    Enviar para Leaderei
+                  </Button>
+                  <Button variant="outline" onClick={() => { setLoteOpen(false); setSelecionados([]); }}>
+                    Fechar
+                  </Button>
+                </div>
               )}
             </DialogFooter>
           </DialogContent>

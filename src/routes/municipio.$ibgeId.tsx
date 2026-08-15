@@ -1,10 +1,12 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
+import { toast } from "sonner";
 import {
   ArrowLeft, RefreshCw, Loader2, User, Mail, Phone, Clock, Users, ExternalLink,
   Building2, TrendingUp, GraduationCap, Wallet, MapPin, Search, CheckCircle2,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +18,8 @@ import { FAIXA_LABEL } from "@/lib/catalog-score";
 import { useProspectStream } from "@/lib/use-prospect-stream";
 import { isDadosCompletos, camposFaltando, resumirResultado } from "@/lib/prospect-completeness";
 import { ProspectResultFields } from "@/components/ProspectResultFields";
+import { useLeaderei } from "@/hooks/useLeaderei";
+import { buildLeadereiRow, rowTemContato } from "@/lib/leaderei";
 
 export const Route = createFileRoute("/municipio/$ibgeId")({
   head: ({ params }) => ({
@@ -35,7 +39,10 @@ function MunicipioPage() {
   const { ibgeId } = useParams({ from: "/municipio/$ibgeId" });
   const id = parseInt(ibgeId, 10);
   const getFn = useServerFn(getMunicipio);
+  const queryClient = useQueryClient();
   const stream = useProspectStream();
+  const leaderei = useLeaderei();
+  const [leadereiSending, setLeadereiSending] = useState(false);
 
   const q = useQuery({
     queryKey: ["municipio", id],
@@ -73,6 +80,33 @@ function MunicipioPage() {
     }
   }
 
+  async function enviarParaLeaderei() {
+    if (!q.data || leadereiSending) return;
+    setLeadereiSending(true);
+    try {
+      await q.refetch();
+      const edu = q.data.educacao;
+      const row = buildLeadereiRow(q.data.nome, q.data.uf, edu.atualizado_em, {
+        secretario: edu.secretario,
+        cargo: edu.cargo,
+        emails: edu.emails,
+        telefones: edu.telefones,
+        horarioAtendimento: edu.horario,
+        equipe: edu.equipe,
+        fonteUrl: edu.fonte_url,
+        fonte: edu.fonte,
+        hierarquia: "educacao",
+      });
+      if (!rowTemContato(row)) {
+        toast.error?.("Sem contato para enviar", { description: "Este município ainda não tem e-mail ou telefone." });
+        return;
+      }
+      await leaderei.sendRows([row]);
+    } finally {
+      setLeadereiSending(false);
+    }
+  }
+
   if (q.isLoading) {
     return <div className="flex min-h-screen items-center justify-center"><Loader2 className="h-6 w-6 animate-spin" /></div>;
   }
@@ -102,6 +136,14 @@ function MunicipioPage() {
                 <CheckCircle2 className="mr-1 h-4 w-4" /> {statusMessage}
               </span>
             )}
+            <Button
+              variant="outline"
+              onClick={enviarParaLeaderei}
+              disabled={leadereiSending || !leaderei.connected}
+            >
+              {leadereiSending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+              Enviar para Leaderei
+            </Button>
             <Button variant="outline" onClick={verificarDados} disabled={verifying || stream.running}>
               {verifying || stream.running ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Prospectando…</> : <><Search className="mr-2 h-4 w-4" /> Verificar dados</>}
             </Button>
