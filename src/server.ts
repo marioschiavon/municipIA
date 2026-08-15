@@ -40,7 +40,7 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 // Permite que o MunicipIA seja exibido dentro do iframe do Leaderei
 // (e de qualquer preview .lovable.app), bloqueando outros sites.
 const FRAME_ANCESTORS =
-  "frame-ancestors 'self' https://*.lovable.app https://*.lovableproject.com";
+  "frame-ancestors 'self' https://app.leaderei.com.br https://leaderei-app.lovable.app https://*.lovable.app https://*.lovableproject.com";
 
 function allowLeadereiFraming(response: Response): Response {
   const headers = new Headers(response.headers);

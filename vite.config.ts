@@ -7,6 +7,14 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
+  vite: {
+    server: {
+      headers: {
+        "Content-Security-Policy":
+          "frame-ancestors 'self' https://app.leaderei.com.br https://leaderei-app.lovable.app https://*.lovable.app https://*.lovableproject.com",
+      },
+    },
+  },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
