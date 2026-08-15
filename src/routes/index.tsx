@@ -239,6 +239,11 @@ function CatalogPage() {
             <StatChip label="Municípios" value={stats.data?.total ?? 0} />
             <StatChip label="Score alto" value={stats.data?.alto ?? 0} accent="emerald" />
             <StatChip label="Validados" value={stats.data?.validado ?? 0} accent="blue" />
+            {leaderei.connected && (
+              <span className="hidden items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 sm:inline-flex">
+                <Plug className="h-3.5 w-3.5" /> Conectado ao Leaderei
+              </span>
+            )}
             <Link to="/manual" className="ml-2 inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent">
               <BookOpen className="h-3.5 w-3.5" /> Manual
             </Link>
