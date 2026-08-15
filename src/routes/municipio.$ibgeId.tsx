@@ -136,6 +136,14 @@ function MunicipioPage() {
                 <CheckCircle2 className="mr-1 h-4 w-4" /> {statusMessage}
               </span>
             )}
+            <Button
+              variant="outline"
+              onClick={enviarParaLeaderei}
+              disabled={leadereiSending || !leaderei.connected}
+            >
+              {leadereiSending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+              Enviar para Leaderei
+            </Button>
             <Button variant="outline" onClick={verificarDados} disabled={verifying || stream.running}>
               {verifying || stream.running ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Prospectando…</> : <><Search className="mr-2 h-4 w-4" /> Verificar dados</>}
             </Button>
