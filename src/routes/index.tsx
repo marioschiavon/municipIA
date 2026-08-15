@@ -1,8 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState, useMemo, useRef } from "react";
-import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download, Sparkles, CheckCircle2, X, BookOpen } from "lucide-react";
+import { useState, useMemo } from "react";
+import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download, Sparkles, CheckCircle2, X, BookOpen, Plug, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +24,8 @@ import { exportMunicipiosCSV, exportMunicipiosXLSX } from "@/lib/export";
 import { useProspectStream } from "@/lib/use-prospect-stream";
 import { ProspectResultFields } from "@/components/ProspectResultFields";
 import { resumirResultado } from "@/lib/prospect-completeness";
+import { useLeaderei } from "@/hooks/useLeaderei";
+import { buildLeadereiRow, rowTemContato } from "@/lib/leaderei";
 import type { ProspectResult } from "@/lib/prospect.types";
 
 export const Route = createFileRoute("/")({
