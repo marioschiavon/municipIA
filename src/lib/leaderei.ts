@@ -47,10 +47,9 @@ export function buildLeadereiRow(
   buscadoEm: string | null | undefined,
   result: Partial<ProspectResult> & {
     fonteUrl?: string | null;
-    atualizado_em?: string | null;
   },
 ): LeadereiRow {
-  const data = buscadoEm ?? result.atualizado_em ?? result.dataReferencia ?? new Date().toISOString();
+  const data = buscadoEm ?? result.dataReferencia ?? new Date().toISOString();
   return {
     municipio: nome.trim(),
     uf: uf.trim().toUpperCase(),
@@ -60,7 +59,7 @@ export function buildLeadereiRow(
       cargo: result.cargo ?? null,
       emails: result.emails ?? [],
       telefones: result.telefones ?? [],
-      horarioAtendimento: result.horarioAtendimento ?? result.horario ?? null,
+      horarioAtendimento: result.horarioAtendimento ?? null,
       equipe: (result.equipe ?? []).map((m) => ({
         nome: m.nome,
         cargo: m.cargo ?? null,
