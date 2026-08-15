@@ -38,7 +38,10 @@ function MunicipioPage() {
   const { ibgeId } = useParams({ from: "/municipio/$ibgeId" });
   const id = parseInt(ibgeId, 10);
   const getFn = useServerFn(getMunicipio);
+  const queryClient = useQueryClient();
   const stream = useProspectStream();
+  const leaderei = useLeaderei();
+  const [leadereiSending, setLeadereiSending] = useState(false);
 
   const q = useQuery({
     queryKey: ["municipio", id],
@@ -73,6 +76,33 @@ function MunicipioPage() {
       }
     } finally {
       setVerifying(false);
+    }
+  }
+
+  async function enviarParaLeaderei() {
+    if (!q.data || leadereiSending) return;
+    setLeadereiSending(true);
+    try {
+      await q.refetch();
+      const edu = q.data.educacao;
+      const row = buildLeadereiRow(q.data.nome, q.data.uf, edu.atualizado_em, {
+        secretario: edu.secretario,
+        cargo: edu.cargo,
+        emails: edu.emails,
+        telefones: edu.telefones,
+        horarioAtendimento: edu.horario,
+        equipe: edu.equipe,
+        fonteUrl: edu.fonte_url,
+        fonte: edu.fonte,
+        hierarquia: "educacao",
+      });
+      if (!rowTemContato(row)) {
+        toast.error?.("Sem contato para enviar", { description: "Este município ainda não tem e-mail ou telefone." });
+        return;
+      }
+      await leaderei.sendRows([row]);
+    } finally {
+      setLeadereiSending(false);
     }
   }
 
