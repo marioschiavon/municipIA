@@ -57,6 +57,8 @@ function CatalogPage() {
   const statsFn = useServerFn(getCatalogStats);
   const exportFn = useServerFn(exportMunicipios);
   const stream = useProspectStream();
+  const leaderei = useLeaderei();
+  const [leadereiSending, setLeadereiSending] = useState(false);
 
 
   const [uf, setUf] = useState<string>("all");
