@@ -25,7 +25,7 @@ import { useProspectStream } from "@/lib/use-prospect-stream";
 import { ProspectResultFields } from "@/components/ProspectResultFields";
 import { resumirResultado } from "@/lib/prospect-completeness";
 import { useLeaderei } from "@/hooks/useLeaderei";
-import { buildLeadereiRow, rowTemContato } from "@/lib/leaderei";
+import { buildLeadereiRow, rowTemContato, type LeadereiRow } from "@/lib/leaderei";
 import type { ProspectResult } from "@/lib/prospect.types";
 
 export const Route = createFileRoute("/")({
@@ -151,6 +151,7 @@ function CatalogPage() {
   const [exportScoreMax, setExportScoreMax] = useState<string>("");
   const [exportContato, setExportContato] = useState<"secretario" | "equipe" | "ambos">("ambos");
   const [exportCount, setExportCount] = useState<number | null>(null);
+  const [exportEnviando, setExportEnviando] = useState(false);
 
   const exportMut = useMutation({
     mutationFn: async (formato: "csv" | "xlsx") => {
@@ -174,6 +175,46 @@ function CatalogPage() {
     },
     onSuccess: (count) => setExportCount(count),
   });
+
+  async function enviarExportacaoParaLeaderei() {
+    if (exportEnviando || exportMut.isPending) return;
+    setExportEnviando(true);
+    try {
+      const { items } = await exportFn({
+        data: {
+          uf: uf === "all" ? undefined : uf,
+          status: status === "all" ? undefined : (status as any),
+          q: q || undefined,
+          faixa: exportFaixa === "all" ? undefined : (exportFaixa as any),
+          scoreMin: exportScoreMin ? Number(exportScoreMin) : undefined,
+          scoreMax: exportScoreMax ? Number(exportScoreMax) : undefined,
+          contato: exportContato,
+          quantidade: exportQtd,
+          orderBy,
+          orderDir: "desc",
+        },
+      });
+
+      const rows: LeadereiRow[] = items
+        .map((it) =>
+          buildLeadereiRow(it.nome, it.uf, it.atualizado_em ?? new Date().toISOString(), {
+            secretario: it.secretario,
+            cargo: it.cargo,
+            emails: it.emails ?? [],
+            telefones: it.telefones ?? [],
+            horarioAtendimento: it.horario ?? null,
+            equipe: (it.equipe ?? []) as any,
+            hierarquia: "educacao",
+          } as any),
+        )
+        .filter(rowTemContato);
+
+      const res = await leaderei.sendRows(rows);
+      if (res.success) setExportOpen(false);
+    } finally {
+      setExportEnviando(false);
+    }
+  }
 
   const stats = useQuery({
     queryKey: ["stats"],
@@ -413,19 +454,33 @@ function CatalogPage() {
             <DialogFooter>
               <Button
                 variant="outline"
-                disabled={exportMut.isPending}
+                disabled={exportMut.isPending || exportEnviando}
                 onClick={() => exportMut.mutate("csv")}
               >
                 {exportMut.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Exportar CSV
               </Button>
               <Button
-                disabled={exportMut.isPending}
+                variant="outline"
+                disabled={exportMut.isPending || exportEnviando}
                 onClick={() => exportMut.mutate("xlsx")}
               >
                 {exportMut.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Exportar Excel (.xlsx)
               </Button>
+              {leaderei.connected && (
+                <Button
+                  disabled={exportMut.isPending || exportEnviando}
+                  onClick={enviarExportacaoParaLeaderei}
+                >
+                  {exportEnviando ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="mr-2 h-4 w-4" />
+                  )}
+                  Enviar para o Leaderei
+                </Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
