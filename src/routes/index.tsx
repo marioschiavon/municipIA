@@ -361,15 +361,15 @@ function CatalogPage() {
         </div>
 
         <Dialog open={exportOpen} onOpenChange={setExportOpen}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
+          <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden sm:max-w-lg">
+            <DialogHeader className="shrink-0 text-left">
               <DialogTitle>Exportar leads</DialogTitle>
               <DialogDescription>
                 Escolha a quantidade e os filtros. Os filtros de UF, status e busca já ativos na tela também são aplicados.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4">
+            <div className="-mr-1 flex-1 space-y-4 overflow-y-auto pr-1">
               <div className="space-y-1.5">
                 <Label htmlFor="export-qtd">Quantidade</Label>
                 <Input
@@ -451,9 +451,10 @@ function CatalogPage() {
               )}
             </div>
 
-            <DialogFooter>
+            <DialogFooter className="shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end sm:gap-2">
               <Button
                 variant="outline"
+                className="w-full whitespace-nowrap sm:w-auto"
                 disabled={exportMut.isPending || exportEnviando}
                 onClick={() => exportMut.mutate("csv")}
               >
@@ -462,6 +463,7 @@ function CatalogPage() {
               </Button>
               <Button
                 variant="outline"
+                className="w-full whitespace-nowrap sm:w-auto"
                 disabled={exportMut.isPending || exportEnviando}
                 onClick={() => exportMut.mutate("xlsx")}
               >
@@ -470,6 +472,7 @@ function CatalogPage() {
               </Button>
               {leaderei.connected && (
                 <Button
+                  className="w-full whitespace-nowrap sm:w-auto"
                   disabled={exportMut.isPending || exportEnviando}
                   onClick={enviarExportacaoParaLeaderei}
                 >
