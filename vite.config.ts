@@ -11,7 +11,7 @@ export default defineConfig({
     server: {
       headers: {
         "Content-Security-Policy":
-          "frame-ancestors 'self' https://app.leaderei.com.br https://leaderei-app.lovable.app https://*.lovable.app https://*.lovableproject.com",
+          "frame-ancestors 'self' https://app.leaderei.com.br https://leaderei-app.lovable.app https://*.lovable.app https://*.lovableproject.com https://lovable.dev https://*.lovable.dev",
       },
     },
   },
