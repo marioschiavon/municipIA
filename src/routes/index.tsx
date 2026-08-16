@@ -451,9 +451,10 @@ function CatalogPage() {
               )}
             </div>
 
-            <DialogFooter>
+            <DialogFooter className="shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end sm:gap-2">
               <Button
                 variant="outline"
+                className="w-full whitespace-nowrap sm:w-auto"
                 disabled={exportMut.isPending || exportEnviando}
                 onClick={() => exportMut.mutate("csv")}
               >
@@ -462,6 +463,7 @@ function CatalogPage() {
               </Button>
               <Button
                 variant="outline"
+                className="w-full whitespace-nowrap sm:w-auto"
                 disabled={exportMut.isPending || exportEnviando}
                 onClick={() => exportMut.mutate("xlsx")}
               >
@@ -470,6 +472,7 @@ function CatalogPage() {
               </Button>
               {leaderei.connected && (
                 <Button
+                  className="w-full whitespace-nowrap sm:w-auto"
                   disabled={exportMut.isPending || exportEnviando}
                   onClick={enviarExportacaoParaLeaderei}
                 >
