@@ -1,11 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Loader2, Lock } from "lucide-react";
-import {
-  initLeadereiBridge,
-  subscribeLeadereiGate,
-  getLeadereiGateStatus,
-  type LeadereiGateStatus,
-} from "@/lib/leaderei-bridge";
+import { useLeaderei } from "@/hooks/useLeaderei";
 
 const LEADEREI_URL = "https://app.leaderei.com.br";
 
@@ -18,17 +13,22 @@ function Shell({ children }: { children: ReactNode }) {
 }
 
 export function LeadereiGate({ children }: { children: ReactNode }) {
-  const [status, setStatus] = useState<LeadereiGateStatus | null>(null);
+  const leaderei = useLeaderei();
+  const [status, setStatus] = useState<"aguardando" | "conectado" | "bloqueado">("aguardando");
 
   useEffect(() => {
-    setStatus(getLeadereiGateStatus());
-    const off = subscribeLeadereiGate(setStatus);
-    const cleanup = initLeadereiBridge();
-    return () => {
-      off();
-      cleanup?.();
-    };
-  }, []);
+    if (leaderei.connected) {
+      setStatus("conectado");
+      return;
+    }
+    // Fora de um iframe: não há como receber sessão do Leaderei.
+    if (typeof window !== "undefined" && window.parent === window.self) {
+      setStatus("bloqueado");
+      return;
+    }
+    const t = setTimeout(() => setStatus("bloqueado"), 4500);
+    return () => clearTimeout(t);
+  }, [leaderei.connected]);
 
   if (status === "conectado") return <>{children}</>;
 
