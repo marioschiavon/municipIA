@@ -361,15 +361,15 @@ function CatalogPage() {
         </div>
 
         <Dialog open={exportOpen} onOpenChange={setExportOpen}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
+          <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden sm:max-w-lg">
+            <DialogHeader className="shrink-0 text-left">
               <DialogTitle>Exportar leads</DialogTitle>
               <DialogDescription>
                 Escolha a quantidade e os filtros. Os filtros de UF, status e busca já ativos na tela também são aplicados.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4">
+            <div className="-mr-1 flex-1 space-y-4 overflow-y-auto pr-1">
               <div className="space-y-1.5">
                 <Label htmlFor="export-qtd">Quantidade</Label>
                 <Input
