@@ -73,10 +73,21 @@ export function initLeadereiBridge() {
   };
   window.addEventListener("message", handler);
 
-  // avisa o Leaderei que estamos prontos (repete algumas vezes caso o pai ainda não escute)
+  // avisa o Leaderei que estamos prontos (repete algumas vezes caso o pai ainda não escute).
+  // Em cenário de iframe aninhado (preview do Lovable), avisa também a janela do topo.
   let tries = 0;
+  const targets: Window[] = [window.parent];
+  if (window.top && window.top !== window.parent) targets.push(window.top);
   const ping = () => {
-    LEADEREI_ORIGINS.forEach((o) => window.parent.postMessage({ type: "municipia:ready" }, o));
+    targets.forEach((w) =>
+      LEADEREI_ORIGINS.forEach((o) => {
+        try {
+          w.postMessage({ type: "municipia:ready" }, o);
+        } catch {
+          /* origem não corresponde: ignora */
+        }
+      }),
+    );
     if (++tries < 5 && !session) setTimeout(ping, 800);
     else if (!session) setGateStatus("bloqueado");
   };
