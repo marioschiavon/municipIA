@@ -3,9 +3,15 @@ import type { ProspectResult } from "./prospect.types";
 /** Origens que podem envolver a aplicação MunicipIA dentro do Leaderei. */
 export function isLeadereiOrigin(origin: string): boolean {
   try {
-    const url = new URL(origin);
-    // Aceita preview e publicação do Leaderei (todos os subdomínios .lovable.app).
-    return url.hostname.endsWith(".lovable.app");
+    const h = new URL(origin).hostname;
+    // Aceita o domínio próprio do Leaderei, previews e publicações Lovable.
+    return (
+      h === "leaderei.com.br" ||
+      h.endsWith(".leaderei.com.br") ||
+      h.endsWith(".lovable.app") ||
+      h.endsWith(".lovableproject.com") ||
+      h.endsWith(".lovable.dev")
+    );
   } catch {
     return false;
   }
