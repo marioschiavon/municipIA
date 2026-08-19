@@ -26,7 +26,9 @@ export function LeadereiGate({ children }: { children: ReactNode }) {
       setStatus("bloqueado");
       return;
     }
-    const t = setTimeout(() => setStatus("bloqueado"), 4500);
+    // Dentro de um iframe: espera mais tempo, mas continua ouvindo depois
+    // (se a sessão chegar mais tarde, o efeito roda de novo e libera).
+    const t = setTimeout(() => setStatus("bloqueado"), 12000);
     return () => clearTimeout(t);
   }, [leaderei.connected]);
 
