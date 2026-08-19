@@ -10,23 +10,41 @@ export function useLeaderei() {
     if (typeof window === "undefined") return;
     if (window.parent === window.self) return;
 
+    let timer: ReturnType<typeof setInterval> | undefined;
+
+    const ping = () => {
+      const msg = { type: "municipia:ready" };
+      try { window.parent.postMessage(msg, "*"); } catch { /* noop */ }
+      try { if (window.top && window.top !== window.parent) window.top.postMessage(msg, "*"); } catch { /* noop */ }
+    };
+
     const handler = (event: MessageEvent) => {
       if (!isLeadereiOrigin(event.origin)) return;
       if (event.data?.type !== "leaderei:session") return;
       const payload = event.data as LeadereiSession & { type: string };
       if (!payload.token || !payload.ingest_url || !payload.company_id) return;
       setSession(payload);
+      sentRef.current = true;
+      if (timer) clearInterval(timer);
+      // Confirma o recebimento para o Leaderei parar de reenviar.
+      const source = event.source as Window | null;
+      try { source?.postMessage({ type: "municipia:session-ok" }, event.origin); } catch { /* noop */ }
+      try { window.parent.postMessage({ type: "municipia:session-ok" }, "*"); } catch { /* noop */ }
     };
 
     window.addEventListener("message", handler);
 
-    if (!sentRef.current) {
-      sentRef.current = true;
-      // O parent (Leaderei) responde com o token de ingestão.
-      window.parent.postMessage({ type: "municipia:ready" }, "*");
-    }
+    // Reenvia o "ready" enquanto a sessão não chega (o pai pode montar depois).
+    ping();
+    timer = setInterval(() => {
+      if (sentRef.current) { if (timer) clearInterval(timer); return; }
+      ping();
+    }, 700);
 
-    return () => window.removeEventListener("message", handler);
+    return () => {
+      window.removeEventListener("message", handler);
+      if (timer) clearInterval(timer);
+    };
   }, []);
 
   const sendRows = useCallback(async (rows: LeadereiRow[]) => {
