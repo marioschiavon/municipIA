@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { Search, Loader2, Database, TrendingUp, MapPin, AlertTriangle, Download, Sparkles, CheckCircle2, X, BookOpen, Plug, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,9 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { APP_VERSION } from "@/lib/version";
-import { listMunicipios, getCatalogStats, exportMunicipios, EXPORT_MAX } from "@/lib/catalog.functions";
+import { listMunicipios, getCatalogStats, exportMunicipios, getMunicipiosParaLeaderei, EXPORT_MAX } from "@/lib/catalog.functions";
+import { getEnviados, marcarEnviados, foiEnviado } from "@/lib/leaderei-enviados";
+import { toast } from "sonner";
 import { exportMunicipiosCSV, exportMunicipiosXLSX } from "@/lib/export";
 import { useProspectStream } from "@/lib/use-prospect-stream";
 import { ProspectResultFields } from "@/components/ProspectResultFields";
@@ -74,6 +76,11 @@ function CatalogPage() {
 
   // Prospecção em lote (até 10 municípios) na página inicial
   const MAX_LOTE = 10;
+  const MAX_SELECAO = 200;
+  const leadereiParaSelecionadosFn = useServerFn(getMunicipiosParaLeaderei);
+  const [enviados, setEnviados] = useState<Record<string, string>>({});
+  const [enviandoSelecionados, setEnviandoSelecionados] = useState(false);
+  useEffect(() => { setEnviados(getEnviados()); }, []);
   const [selecionados, setSelecionados] = useState<Array<{ ibge_id: number; nome: string; uf: string }>>([]);
   const [loteOpen, setLoteOpen] = useState(false);
   const [loteAtual, setLoteAtual] = useState<{ nome: string; uf: string } | null>(null);
@@ -89,7 +96,7 @@ function CatalogPage() {
     setSelecionados((prev) => {
       const existe = prev.some((s) => s.ibge_id === m.ibge_id);
       if (existe) return prev.filter((s) => s.ibge_id !== m.ibge_id);
-      if (prev.length >= MAX_LOTE) return prev;
+      if (prev.length >= MAX_SELECAO) return prev;
       return [...prev, { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf }];
     });
   }
@@ -124,6 +131,74 @@ function CatalogPage() {
     setLoteRunning(false);
   }
 
+  function selecionarPagina() {
+    const pageItems = list.data?.items ?? [];
+    setSelecionados((prev) => {
+      const mapa = new Map(prev.map((s) => [s.ibge_id, s]));
+      for (const m of pageItems) {
+        if (mapa.size >= MAX_SELECAO) break;
+        if (!mapa.has(m.ibge_id)) mapa.set(m.ibge_id, { ibge_id: m.ibge_id, nome: m.nome, uf: m.uf });
+      }
+      return [...mapa.values()];
+    });
+  }
+
+  function selecionarPrimeiros(n: number) {
+    const pageItems = list.data?.items ?? [];
+    setSelecionados(pageItems.slice(0, n).map((m) => ({ ibge_id: m.ibge_id, nome: m.nome, uf: m.uf })));
+  }
+
+  function selecionarNaoEnviados(n: number) {
+    const pageItems = list.data?.items ?? [];
+    setSelecionados(
+      pageItems
+        .filter((m) => !foiEnviado(enviados, m.ibge_id))
+        .slice(0, n)
+        .map((m) => ({ ibge_id: m.ibge_id, nome: m.nome, uf: m.uf })),
+    );
+  }
+
+  async function enviarSelecionadosParaLeaderei() {
+    if (enviandoSelecionados || selecionados.length === 0) return;
+    setEnviandoSelecionados(true);
+    try {
+      const { items } = await leadereiParaSelecionadosFn({
+        data: { ibgeIds: selecionados.map((s) => s.ibge_id) },
+      });
+      const rows: LeadereiRow[] = items
+        .map((it) =>
+          buildLeadereiRow(it.nome, it.uf, it.atualizado_em ?? new Date().toISOString(), {
+            secretario: it.secretario,
+            cargo: it.cargo,
+            emails: it.emails ?? [],
+            telefones: it.telefones ?? [],
+            horarioAtendimento: it.horario ?? null,
+            equipe: (it.equipe ?? []) as any,
+            hierarquia: "educacao",
+          } as any),
+        )
+        .filter(rowTemContato);
+
+      if (rows.length === 0) {
+        toast.error("Nenhum contato encontrado", {
+          description: "Prospecte os municípios selecionados antes de enviar.",
+        });
+        return;
+      }
+
+      const res = await leaderei.sendRows(rows);
+      if (res.success) {
+        const enviadosIds = items
+          .filter((it) => rows.some((r) => r.municipio === it.nome && r.uf === it.uf))
+          .map((it) => it.ibge_id);
+        setEnviados(marcarEnviados(enviadosIds));
+        setSelecionados([]);
+      }
+    } finally {
+      setEnviandoSelecionados(false);
+    }
+  }
+
   async function enviarLoteParaLeaderei() {
     if (!loteResultados.length || leadereiSending) return;
     setLeadereiSending(true);
@@ -137,7 +212,10 @@ function CatalogPage() {
           }),
         )
         .filter(rowTemContato);
-      await leaderei.sendRows(rows);
+      const res = await leaderei.sendRows(rows);
+      if (res?.success) {
+        setEnviados(marcarEnviados(loteResultados.filter((r) => r.result).map((r) => r.ibge_id)));
+      }
     } finally {
       setLeadereiSending(false);
     }
@@ -544,25 +622,37 @@ function CatalogPage() {
           </div>
         )}
 
-        {selecionados.length > 0 && (
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
-            <div className="text-sm">
-              <span className="font-medium">{selecionados.length} de {MAX_LOTE}</span> município(s) selecionado(s)
-              <span className="ml-2 text-xs text-muted-foreground">
-                {selecionados.map((s) => `${s.nome}/${s.uf}`).join(", ")}
-              </span>
-            </div>
-            <div className="flex gap-2">
-              <Button size="sm" variant="ghost" onClick={() => setSelecionados([])}>
-                Limpar
-              </Button>
-              <Button size="sm" onClick={iniciarLote} disabled={loteRunning}>
-                <Sparkles className="mr-1.5 h-4 w-4" />
-                Prospectar selecionados ({selecionados.length})
-              </Button>
-            </div>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Seleção rápida:</span>
+            <Button size="sm" variant="outline" onClick={selecionarPagina}>
+              Página atual ({(list.data?.items ?? []).length})
+            </Button>
+            {[10, 25, 50].map((n) => (
+              <Button key={n} size="sm" variant="outline" onClick={() => selecionarPrimeiros(n)}>{n}</Button>
+            ))}
+            <Button size="sm" variant="outline" onClick={() => selecionarNaoEnviados(50)}>50 não enviados</Button>
+            {selecionados.length > 0 && (
+              <Button size="sm" variant="ghost" onClick={() => setSelecionados([])}>Limpar</Button>
+            )}
           </div>
-        )}
+
+          {selecionados.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">{selecionados.length} selecionado(s)</span>
+              <Button size="sm" variant="outline" onClick={iniciarLote} disabled={loteRunning}>
+                <Sparkles className="mr-1.5 h-4 w-4" />
+                Prospectar ({Math.min(selecionados.length, MAX_LOTE)})
+              </Button>
+              {leaderei.connected && (
+                <Button size="sm" onClick={enviarSelecionadosParaLeaderei} disabled={enviandoSelecionados}>
+                  {enviandoSelecionados ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Send className="mr-1.5 h-4 w-4" />}
+                  Enviar {selecionados.length} para o Leaderei
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
 
         <Dialog
           open={loteOpen}
@@ -671,12 +761,21 @@ function CatalogPage() {
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                       checked={marcado}
-                      disabled={!marcado && selecionados.length >= MAX_LOTE}
+                      disabled={!marcado && selecionados.length >= MAX_SELECAO}
                       onCheckedChange={() => toggleSelecionado(m)}
                       aria-label={`Selecionar ${m.nome}`}
                     />
                   </TableCell>
-                  <TableCell className="font-medium">{m.nome}</TableCell>
+                  <TableCell className="font-medium">
+                    <div className="flex items-center gap-2">
+                      <span>{m.nome}</span>
+                      {foiEnviado(enviados, m.ibge_id) && (
+                        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">
+                          Enviado
+                        </Badge>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell><span className="font-mono text-xs">{m.uf}</span></TableCell>
                   <TableCell className="text-right tabular-nums">{m.populacao.toLocaleString("pt-BR")}</TableCell>
                   <TableCell className="text-right tabular-nums">{m.matriculas_total.toLocaleString("pt-BR")}</TableCell>
