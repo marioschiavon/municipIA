@@ -357,3 +357,43 @@ export const getCatalogStats = createServerFn({ method: "GET" }).handler(async (
   ]);
   return { total: total ?? 0, alto: alto ?? 0, validado: validado ?? 0, comMatriculas: comMatriculas ?? 0 };
 });
+
+// ============ SELEÇÃO → LEADEREI ============
+const ByIdsInput = z.object({
+  ibgeIds: z.array(z.number().int()).min(1).max(500),
+});
+
+export const getMunicipiosParaLeaderei = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => ByIdsInput.parse(data))
+  .handler(async ({ data }): Promise<{ items: ExportMunicipioRow[] }> => {
+    const { supabase } = await import("@/integrations/supabase/client");
+    const { data: rows, error } = await supabase
+      .from("municipios_educacao")
+      .select(
+        "ibge_id, score, faixa, status, secretario, cargo, emails, telefones, horario, equipe, atualizado_em, " +
+          "municipios!inner(nome, uf, slug, populacao, matriculas_total, escolas, fnde_anual)",
+      )
+      .in("ibge_id", data.ibgeIds);
+    if (error) throw new Error(error.message);
+
+    const items = (rows ?? []).map((r: any) => ({
+      ibge_id: r.ibge_id,
+      nome: r.municipios.nome,
+      uf: r.municipios.uf,
+      populacao: r.municipios.populacao ?? 0,
+      matriculas_total: r.municipios.matriculas_total ?? 0,
+      fnde_anual: Number(r.municipios.fnde_anual ?? 0),
+      score: r.score ?? 0,
+      faixa: r.faixa ?? "baixo",
+      status: r.status ?? "sem_dados",
+      secretario: r.secretario ?? null,
+      cargo: r.cargo ?? null,
+      emails: r.emails ?? [],
+      telefones: r.telefones ?? [],
+      horario: r.horario ?? null,
+      equipe: r.equipe ?? [],
+      atualizado_em: r.atualizado_em ?? null,
+    })) as ExportMunicipioRow[];
+
+    return { items };
+  });
