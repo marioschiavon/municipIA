@@ -27,7 +27,7 @@ import { useProspectStream } from "@/lib/use-prospect-stream";
 import { ProspectResultFields } from "@/components/ProspectResultFields";
 import { resumirResultado } from "@/lib/prospect-completeness";
 import { useLeaderei } from "@/hooks/useLeaderei";
-import { buildLeadereiRow, rowTemContato, type LeadereiRow } from "@/lib/leaderei";
+import { buildLeadereiRow, rowTemContato, filtrarSomenteCelular, rowTemEmailOuTelefone, type LeadereiRow } from "@/lib/leaderei";
 import type { ProspectResult } from "@/lib/prospect.types";
 
 export const Route = createFileRoute("/")({
@@ -230,6 +230,58 @@ function CatalogPage() {
   const [exportContato, setExportContato] = useState<"secretario" | "equipe" | "ambos">("ambos");
   const [exportCount, setExportCount] = useState<number | null>(null);
   const [exportEnviando, setExportEnviando] = useState(false);
+  const [exportSomenteContato, setExportSomenteContato] = useState(true);
+  const [exportSomenteCelular, setExportSomenteCelular] = useState(false);
+  const [exportListName, setExportListName] = useState("");
+
+  const exportFiltros = {
+    uf: uf === "all" ? undefined : uf,
+    status: status === "all" ? undefined : (status as any),
+    q: q || undefined,
+    faixa: exportFaixa === "all" ? undefined : (exportFaixa as any),
+    scoreMin: exportScoreMin ? Number(exportScoreMin) : undefined,
+    scoreMax: exportScoreMax ? Number(exportScoreMax) : undefined,
+    contato: exportContato,
+    quantidade: exportQtd,
+    orderBy,
+    orderDir: "desc" as const,
+  };
+
+  useEffect(() => {
+    if (!exportOpen) return;
+    const d = new Date();
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const alvo = [uf === "all" ? "BR" : uf, "Educação", q ? `"${q}"` : ""].filter(Boolean).join(" ");
+    setExportListName(`MunicipIA ${dd}/${mm} – ${alvo}`);
+  }, [exportOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function montarRowsLeaderei(items: any[]) {
+    let rows: LeadereiRow[] = items.map((it) =>
+      buildLeadereiRow(it.nome, it.uf, it.atualizado_em ?? new Date().toISOString(), {
+        secretario: it.secretario,
+        cargo: it.cargo,
+        emails: it.emails ?? [],
+        telefones: it.telefones ?? [],
+        horarioAtendimento: it.horario ?? null,
+        equipe: (it.equipe ?? []) as any,
+        hierarquia: "educacao",
+      } as any),
+    );
+    if (exportSomenteCelular) rows = rows.map(filtrarSomenteCelular);
+    const total = rows.length;
+    rows = exportSomenteContato ? rows.filter(rowTemEmailOuTelefone) : rows.filter(rowTemContato);
+    const comContato = rows.filter(rowTemEmailOuTelefone).length;
+    return { rows, comContato, semContato: total - comContato };
+  }
+
+  const exportPreview = useQuery({
+    queryKey: ["export-preview", exportFiltros],
+    queryFn: () => exportFn({ data: exportFiltros }),
+    enabled: exportOpen && leaderei.connected,
+    staleTime: 30_000,
+  });
+  const previewResumo = exportPreview.data ? montarRowsLeaderei(exportPreview.data.items) : null;
 
   const exportMut = useMutation({
     mutationFn: async (formato: "csv" | "xlsx") => {
@@ -258,36 +310,13 @@ function CatalogPage() {
     if (exportEnviando || exportMut.isPending) return;
     setExportEnviando(true);
     try {
-      const { items } = await exportFn({
-        data: {
-          uf: uf === "all" ? undefined : uf,
-          status: status === "all" ? undefined : (status as any),
-          q: q || undefined,
-          faixa: exportFaixa === "all" ? undefined : (exportFaixa as any),
-          scoreMin: exportScoreMin ? Number(exportScoreMin) : undefined,
-          scoreMax: exportScoreMax ? Number(exportScoreMax) : undefined,
-          contato: exportContato,
-          quantidade: exportQtd,
-          orderBy,
-          orderDir: "desc",
-        },
-      });
-
-      const rows: LeadereiRow[] = items
-        .map((it) =>
-          buildLeadereiRow(it.nome, it.uf, it.atualizado_em ?? new Date().toISOString(), {
-            secretario: it.secretario,
-            cargo: it.cargo,
-            emails: it.emails ?? [],
-            telefones: it.telefones ?? [],
-            horarioAtendimento: it.horario ?? null,
-            equipe: (it.equipe ?? []) as any,
-            hierarquia: "educacao",
-          } as any),
-        )
-        .filter(rowTemContato);
-
-      const res = await leaderei.sendRows(rows);
+      const { items } = await exportFn({ data: exportFiltros });
+      const { rows } = montarRowsLeaderei(items);
+      if (rows.length === 0) {
+        toast.error("Nenhum contato para enviar", { description: "Ajuste os filtros ou desmarque as opções de contato." });
+        return;
+      }
+      const res = await leaderei.sendRows(rows, { listName: exportListName });
       if (res.success) setExportOpen(false);
     } finally {
       setExportEnviando(false);
@@ -518,6 +547,29 @@ function CatalogPage() {
                   </label>
                 </RadioGroup>
               </div>
+
+              {leaderei.connected && (
+                <div className="space-y-3 rounded-md border p-3">
+                  <p className="text-sm font-medium">Envio para o Leaderei</p>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={exportSomenteContato} onCheckedChange={(v) => setExportSomenteContato(!!v)} />
+                    Somente com contato (e-mail ou telefone)
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={exportSomenteCelular} onCheckedChange={(v) => setExportSomenteCelular(!!v)} />
+                    Somente com celular (provável WhatsApp)
+                  </label>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="export-list-name">Nome da lista</Label>
+                    <Input id="export-list-name" value={exportListName} onChange={(e) => setExportListName(e.target.value)} />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {exportPreview.isFetching || !previewResumo
+                      ? "Calculando resumo…"
+                      : `${previewResumo.comContato.toLocaleString("pt-BR")} com contato serão enviados, ${previewResumo.semContato.toLocaleString("pt-BR")} sem contato ficarão de fora.`}
+                  </p>
+                </div>
+              )}
 
               {exportMut.isError && (
                 <p className="text-sm text-red-600">

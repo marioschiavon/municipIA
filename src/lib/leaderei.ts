@@ -85,3 +85,30 @@ export function rowTemContato(row: LeadereiRow): boolean {
   if (r.secretario || r.equipe.some((m) => m.email || m.telefone)) return true;
   return false;
 }
+
+/** Celular provável (WhatsApp): sem DDD, 9 dígitos começando com 9. */
+export function isCelular(tel: string): boolean {
+  let d = (tel || "").replace(/\D/g, "");
+  if (d.startsWith("55") && d.length >= 12) d = d.slice(2);
+  if (d.startsWith("0")) d = d.replace(/^0+/, "");
+  if (d.length === 11) d = d.slice(2);
+  return d.length === 9 && d.startsWith("9");
+}
+
+/** Mantém apenas telefones celulares na linha (principal e equipe). */
+export function filtrarSomenteCelular(row: LeadereiRow): LeadereiRow {
+  return {
+    ...row,
+    result: {
+      ...row.result,
+      telefones: row.result.telefones.filter(isCelular),
+      equipe: row.result.equipe.map((m) => ({ ...m, telefone: m.telefone && isCelular(m.telefone) ? m.telefone : null })),
+    },
+  };
+}
+
+/** Tem ao menos um e-mail ou telefone (principal ou equipe). */
+export function rowTemEmailOuTelefone(row: LeadereiRow): boolean {
+  const r = row.result;
+  return r.emails.length > 0 || r.telefones.length > 0 || r.equipe.some((m) => !!m.email || !!m.telefone);
+}

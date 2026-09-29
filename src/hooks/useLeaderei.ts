@@ -5,6 +5,7 @@ import { isLeadereiOrigin, buildLeadereiRow, type LeadereiSession, type Leaderei
 export function useLeaderei() {
   const [session, setSession] = useState<LeadereiSession | null>(null);
   const sentRef = useRef(false);
+  const parentOriginRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -24,6 +25,7 @@ export function useLeaderei() {
       const payload = event.data as LeadereiSession & { type: string };
       if (!payload.token || !payload.ingest_url || !payload.company_id) return;
       setSession(payload);
+      parentOriginRef.current = event.origin;
       sentRef.current = true;
       if (timer) clearInterval(timer);
       // Confirma o recebimento para o Leaderei parar de reenviar.
@@ -47,7 +49,13 @@ export function useLeaderei() {
     };
   }, []);
 
-  const sendRows = useCallback(async (rows: LeadereiRow[]) => {
+  const openLeads = useCallback((listId?: string | null) => {
+    try {
+      window.parent.postMessage({ type: "municipia:open-leads", list_id: listId ?? null }, parentOriginRef.current || "*");
+    } catch { /* noop */ }
+  }, []);
+
+  const sendRows = useCallback(async (rows: LeadereiRow[], opts?: { listName?: string }) => {
     if (!session) {
       toast.error("Integração Leaderei", { description: "Aplicativo não está dentro do Leaderei." });
       return { success: false, error: "Sem sessão Leaderei" };
@@ -63,17 +71,32 @@ export function useLeaderei() {
           "Content-Type": "application/json",
           "x-municipia-token": session.token,
         },
-        body: JSON.stringify({ rows, include_team: true }),
+        body: JSON.stringify({
+          rows,
+          include_team: true,
+          ...(opts?.listName?.trim() ? { list_name: opts.listName.trim() } : {}),
+        }),
       });
-      const data = (await res.json().catch(() => ({}))) as { error?: string; created?: number; updated?: number; skipped?: number };
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string; created?: number; updated?: number; skipped?: number;
+        no_contact?: number; protected?: number; list_id?: string | null; list_name?: string | null;
+        whatsapp_verification?: string | null;
+      };
       if (!res.ok) {
         const msg = data.error || `HTTP ${res.status}`;
         toast.error("Erro ao enviar para Leaderei", { description: msg });
         return { success: false, error: msg };
       }
-      const total = (data.created ?? 0) + (data.updated ?? 0);
-      toast.success("Enviado para Leaderei", {
-        description: `${total} lead(s) importado(s).${data.skipped ? ` ${data.skipped} pulado(s).` : ""}`,
+      const partes: string[] = [`${data.created ?? 0} criado(s), ${data.updated ?? 0} atualizado(s).`];
+      if (data.no_contact) partes.push(`${data.no_contact} sem contato ignorados.`);
+      if (data.protected) partes.push(`${data.protected} protegidos (não prospectar).`);
+      if (data.skipped) partes.push(`${data.skipped} pulado(s).`);
+      if (data.whatsapp_verification === "queued") partes.push("WhatsApp sendo verificado automaticamente.");
+      else if (data.whatsapp_verification === "no_instance") partes.push("Conecte o WhatsApp no Leaderei para verificar os números.");
+      toast.success(data.list_name ? `Enviado para Leaderei — ${data.list_name}` : "Enviado para Leaderei", {
+        description: partes.join(" "),
+        duration: 10000,
+        action: { label: "Abrir no Leaderei", onClick: () => openLeads(data.list_id) },
       });
       return { success: true, data };
     } catch (e) {
@@ -83,5 +106,5 @@ export function useLeaderei() {
     }
   }, [session]);
 
-  return { connected: !!session, session, sendRows, buildLeadereiRow };
+  return { connected: !!session, session, sendRows, openLeads, buildLeadereiRow };
 }
