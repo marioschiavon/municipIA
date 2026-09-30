@@ -87,11 +87,11 @@ export const listMunicipios = createServerFn({ method: "POST" })
       q = q.order("score", { ascending: data.orderDir === "asc" }).order("ibge_id", { ascending: true });
     } else if (data.orderBy === "nome") {
       q = q
-        .order("nome", { referencedTable: "municipios", ascending: data.orderDir === "asc" })
+        .order("municipios(nome)", { ascending: data.orderDir === "asc" })
         .order("ibge_id", { ascending: true });
     } else {
       q = q
-        .order(data.orderBy, { referencedTable: "municipios", ascending: data.orderDir === "asc" })
+        .order(`municipios(${data.orderBy})`, { ascending: data.orderDir === "asc" })
         .order("ibge_id", { ascending: true });
     }
 
@@ -186,11 +186,11 @@ export const exportMunicipios = createServerFn({ method: "POST" })
         q = q.order("score", { ascending: data.orderDir === "asc" }).order("ibge_id", { ascending: true });
       } else if (data.orderBy === "nome") {
         q = q
-          .order("nome", { referencedTable: "municipios", ascending: data.orderDir === "asc" })
+          .order("municipios(nome)", { ascending: data.orderDir === "asc" })
           .order("ibge_id", { ascending: true });
       } else {
         q = q
-          .order(data.orderBy, { referencedTable: "municipios", ascending: data.orderDir === "asc" })
+          .order(`municipios(${data.orderBy})`, { ascending: data.orderDir === "asc" })
           .order("ibge_id", { ascending: true });
       }
 
