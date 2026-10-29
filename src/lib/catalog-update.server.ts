@@ -261,6 +261,22 @@ async function persistFaseIsolada(
     patch.contato_confirmado_em = now;
   }
 
+  // Titular nunca é apagado nem fica perdido na equipe.
+  {
+    const tit = normalizarTitular({
+      secretario,
+      cargo,
+      equipe: equipe as EquipeMembro[],
+      secretarioAnterior: existente?.secretario ?? null,
+      cargoAnterior: existente?.cargo ?? null,
+    });
+    if (tit.secretario !== (existente?.secretario ?? null)) patch.secretario = tit.secretario;
+    if (tit.cargo !== (existente?.cargo ?? null)) patch.cargo = tit.cargo;
+    if (tit.equipe.length !== (equipe as unknown[]).length) patch.equipe = tit.equipe;
+    secretario = tit.secretario;
+    cargo = tit.cargo;
+    equipe = tit.equipe;
+  }
   const campos = contarCampos({ secretario, cargo, emails, telefones, horario: existente?.horario ?? null, equipe });
   const { score, faixa, breakdown } = calcularScore({
     populacao: mun?.populacao ?? 0,
