@@ -2,6 +2,7 @@
 // Server-only.
 import type { ProspectResult } from "./prospect.types";
 import { calcularScore, contarCampos } from "./catalog-score";
+import { normalizarTitular } from "./titular";
 
 export type ProspectFase = "completo" | "dominio" | "secretario" | "contato";
 
@@ -116,14 +117,23 @@ export async function persistProspectResult(ibgeId: number, result: ProspectResu
   const existiaDadoBom = !!(existente?.secretario || (existente?.emails?.length ?? 0) > 0 || (existente?.telefones?.length ?? 0) > 0);
   const preservar = result.status === "not_found" && existiaDadoBom;
 
-  const secretario = preservar ? existente!.secretario : result.secretario;
-  const cargo = preservar ? existente!.cargo : result.cargo;
   const emails = preservar ? (existente!.emails ?? []) : (result.emails ?? []);
   const telefones = preservar ? (existente!.telefones ?? []) : (result.telefones ?? []);
   // Equipe nunca é apagada: mescla o que já existia com o que veio agora.
-  const equipe = preservar
+  const equipeBruta = preservar
     ? (existente!.equipe ?? [])
     : mergeEquipe(existente?.equipe ?? [], result.equipe);
+  // Titular nunca é "rebaixado" para a equipe nem apagado por uma busca sem nome.
+  const tit = normalizarTitular({
+    secretario: preservar ? existente!.secretario : result.secretario,
+    cargo: preservar ? existente!.cargo : result.cargo,
+    equipe: equipeBruta as EquipeMembro[],
+    secretarioAnterior: existente?.secretario ?? null,
+    cargoAnterior: existente?.cargo ?? null,
+  });
+  const secretario = tit.secretario;
+  const cargo = tit.cargo;
+  const equipe = tit.equipe;
   const horario = preservar ? existente!.horario : (result.horarioAtendimento ?? null);
   const fonte = preservar ? existente!.fonte : result.fonte;
   const fonte_url = preservar ? existente!.fonte_url : result.fonteUrl;
